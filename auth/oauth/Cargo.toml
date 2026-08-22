@@ -1,0 +1,28 @@
+[package]
+name = "hew-ecosystem-auth-oauth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.auth.oauth — OAuth 2.0 client flows for Hew"
+keywords = ["oauth", "pkce", "authentication", "authorization"]
+categories = ["authentication"]
+
+[lib]
+name = "hew_hew_auth_oauth"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+hew-cabi.workspace = true
+ureq = { version = "2", features = ["native-tls", "json"] }
+serde_json = "1"
+libc.workspace = true
+base64 = "0.22"
+getrandom = "0.2"
+sha2 = "0.10"
+
+[features]
+integration = []
+
+[lints]
+workspace = true

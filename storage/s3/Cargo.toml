@@ -1,0 +1,27 @@
+[package]
+name = "hew-ecosystem-storage-s3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Actor-owned S3-compatible object storage with typed errors"
+readme = "README.md"
+keywords = ["s3", "storage", "object-storage", "minio"]
+categories = ["database"]
+
+[lib]
+name = "hew_hew_storage_s3"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+hew-cabi.workspace = true
+rusty-s3 = "0.5"
+ureq = { version = "2", features = ["native-tls"] }
+url = "2"
+libc.workspace = true
+
+[features]
+integration = []
+
+[lints]
+workspace = true

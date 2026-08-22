@@ -1,0 +1,50 @@
+import std.testing;
+
+import hew.db.mysql;
+
+import hew.db.mysql.{MysqlError, CellValue, Row, QueryResult};
+
+fn error_variants_preserve_diagnostics() {
+    testing.assert_eq_str(mysql.error_message(mysql.MysqlError.Connect("connect")), "connect");
+    testing.assert_eq_str(mysql.error_message(mysql.MysqlError.InvalidInput("input")), "input");
+    testing.assert_eq_str(mysql.error_message(mysql.MysqlError.Query("query")), "query");
+    testing.assert_eq_str(mysql.error_message(mysql.MysqlError.Closed("closed")), "closed");
+    testing.assert_eq_str(mysql.error_message(mysql.MysqlError.Internal("internal")), "internal");
+}
+
+fn invalid_url_and_explicit_close_return_typed_errors() {
+    let db = spawn mysql.Conn(url: "not-a-mysql-url");
+    match await db.query("SELECT 1") {
+        .Ok(.Err(.Connect(message))) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+    let _ = db.close();
+    match await db.query("SELECT 1") {
+        .Ok(.Err(.Closed(message))) => testing.assert_eq_str(message, "MySQL connection is closed"),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn wire_values_distinguish_null_empty_and_no_rows() {
+    let values: Vec<CellValue> = Vec.new();
+    values.push(CellValue.Null);
+    values.push(CellValue.Text(bytes.new()));
+    let rows: Vec<Row> = Vec.new();
+    rows.push(Row { values: values });
+    let result = QueryResult { columns: Vec.new(), rows: rows };
+    testing.assert_eq(result.rows.len(), 1);
+    match result.rows[0].values[0] {
+        .Null => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+    match result.rows[0].values[1] {
+        .Text(value) => testing.assert_eq(value.len(), 0),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn main() {
+    error_variants_preserve_diagnostics();
+    invalid_url_and_explicit_close_return_typed_errors();
+    wire_values_distinguish_null_empty_and_no_rows();
+}

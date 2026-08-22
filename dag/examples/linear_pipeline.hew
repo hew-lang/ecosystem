@@ -1,0 +1,50 @@
+// linear_pipeline.hew — load a DAG spec at runtime and route a value through it.
+//
+// The spec is a string parsed AT RUNTIME (not built in code): three nodes in a
+// chain. This example uses `route_with`, the import-friendly seam: each node is
+// driven by a caller-supplied dispatch closure.
+//
+//   node0 (add 1) ──> node1 (multiply 10) ──> node2 (add 100)
+//
+// Input 5 flows through the topological order:
+//   node0: 5 + 1   = 6
+//   node1: 6 * 10  = 60
+//   node2: 60 + 100 = 160
+//
+// Run (needs the ecosystem `hew/dag` package tree on the search path):
+//   hew run linear_pipeline.hew      # from a dir whose `hew/dag/dag.hew` resolves
+import hew.dag;
+
+fn main() {
+    let spec_text = "add:1 multiply:10 add:100 | 0->1 ; 1->2";
+    println(f"loading spec: {spec_text}");
+    match dag.parse_spec(spec_text) {
+        .Ok(spec) => {
+            // Route input 5; the dispatch reads each node's bound op + operand
+            // from the spec and applies it via the library's pure kernel.
+            let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 {
+                let ns = dag.node_at(spec, node);
+                match dag.op_of_code(ns.op_code) {
+                    .Ok(op) => dag.apply_op(op, input, ns.operand),
+                    .Err(_) => input,
+                }
+            });
+            match report {
+                .Ok(r) => {
+                    println(f"node0 output = {dag.output_at(r, 0)}"); // 6
+                    println(f"node1 output = {dag.output_at(r, 1)}"); // 60
+                    println(f"node2 output = {dag.output_at(r, 2)}"); // 160
+                    let sink = dag.sink_output(r);
+                    println(f"sink output  = {sink}"); // 160
+                    assert_eq(sink, 160);
+                    println("linear_pipeline: routed through topo order, all assertions passed");
+                },
+                .Err(f) => {
+                    let msg = dag.describe(dag.error_of(f));
+                    println(f"unexpected failure: {msg}");
+                },
+            }
+        },
+        .Err(e) => println(dag.describe(e)),
+    }
+}

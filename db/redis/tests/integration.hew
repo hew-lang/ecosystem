@@ -1,0 +1,347 @@
+//! Service-backed public API coverage. CI provides Redis on 127.0.0.1:6379.
+
+import std.testing;
+
+import hew.db.redis;
+
+extern "C" {
+    fn hew_actor_stop(pid: LocalPid<redis.Conn>);
+    fn hew_redis_connection_count() -> i64;
+}
+
+fn binary(text: string) -> bytes {
+    text.to_bytes()
+}
+
+fn nul_value() -> bytes {
+    let value: bytes = bytes.new();
+    value.push(65);
+    value.push(0);
+    value.push(66);
+    value
+}
+
+fn assert_bytes(actual: bytes, expected: bytes) {
+    testing.assert_eq(actual.len(), expected.len());
+    for i in 0 .. expected.len() {
+        match actual.get(i) {
+            .Some(left) => match expected.get(i) {
+                .Some(right) => testing.assert_eq(left as i64, right as i64),
+                .None => testing.assert_true(false),
+            },
+            .None => testing.assert_true(false),
+        }
+    }
+}
+
+fn assert_i64(result: Result<i64, redis.RedisError>, expected: i64) {
+    match result {
+        .Ok(value) => testing.assert_eq(value, expected),
+        .Err(_) => testing.assert_true(false),
+    }
+}
+
+fn assert_bool(result: Result<bool, redis.RedisError>, expected: bool) {
+    match result {
+        .Ok(value) => testing.assert_true(value == expected),
+        .Err(_) => testing.assert_true(false),
+    }
+}
+
+fn assert_value(result: Result<redis.Lookup, redis.RedisError>, expected: bytes) {
+    match result {
+        .Ok(.Value(value)) => assert_bytes(value, expected),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn assert_missing(result: Result<redis.Lookup, redis.RedisError>) {
+    match result {
+        .Ok(.Missing) => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn assert_error<T>(result: Result<T, redis.RedisError>) {
+    match result {
+        .Ok(_) => testing.assert_true(false),
+        .Err(error) => testing.assert_true(!redis.error_message(error).is_empty()),
+    }
+}
+
+fn assert_bytes_result(result: Result<bytes, redis.RedisError>, expected: bytes) {
+    match result {
+        .Ok(value) => assert_bytes(value, expected),
+        .Err(_) => testing.assert_true(false),
+    }
+}
+
+fn client_actor() -> LocalPid<redis.Conn> {
+    spawn redis.Conn(options: Options { url: "redis://127.0.0.1:6379/" })
+}
+
+actor DelayedPublisher {
+    let client: LocalPid<redis.Conn>;
+
+    receive fn publish(channel: string, message: bytes) {
+        sleep(50ms);
+        let _ = await client.publish(channel, message);
+    }
+}
+
+fn unavailable_endpoint_returns_connection_error() {
+    let client = spawn redis.Conn(options: Options { url: "redis://127.0.0.1:1/" });
+    match await client.get("key") {
+        .Ok(result) => match result {
+            .Ok(_) => testing.assert_true(false),
+            .Err(error) => testing.assert_true(!redis.error_message(error).is_empty()),
+        },
+        .Err(_) => testing.assert_true(false),
+    }
+}
+
+fn string_commands_preserve_missing_empty_and_nul() {
+    let client = client_actor();
+    let prefix = "hew:redis:beta:string";
+    let _ = await client.del(f"{prefix}:value");
+    match await client.set(f"{prefix}:value", nul_value()) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.get(f"{prefix}:value") {
+        .Ok(result) => assert_value(result, nul_value()),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.get(f"{prefix}:missing") {
+        .Ok(result) => assert_missing(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.set(f"{prefix}:empty", bytes.new()) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.get(f"{prefix}:empty") {
+        .Ok(result) => assert_value(result, bytes.new()),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.del(f"{prefix}:empty") {
+        .Ok(result) => assert_i64(result, 1),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn expiration_commands_return_typed_outcomes() {
+    let client = client_actor();
+    let key = "hew:redis:beta:expiration";
+    match await client.set_ex(key, binary("ttl"), 10) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.expire(key, 20) {
+        .Ok(result) => assert_bool(result, true),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.ttl(key) {
+        .Ok(.Ok(.Seconds(seconds))) => testing.assert_true(seconds > 0),
+        _ => testing.assert_true(false),
+    }
+    match await client.ttl("hew:redis:beta:missing-ttl") {
+        .Ok(.Ok(.Missing)) => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+    match await client.set_ex(key, binary("bad"), 0) {
+        .Ok(result) => assert_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn increment_returns_exact_new_value() {
+    let client = client_actor();
+    let key = "hew:redis:beta:counter";
+    match await client.set(key, binary("40")) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.incr(key) {
+        .Ok(result) => assert_i64(result, 41),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn list_commands_preserve_nul_and_empty_outcome() {
+    let client = client_actor();
+    let key = "hew:redis:beta:list";
+    let _ = await client.del(key);
+    match await client.lpush(key, nul_value()) {
+        .Ok(result) => assert_i64(result, 1),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.rpop(key) {
+        .Ok(result) => assert_value(result, nul_value()),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.rpop(key) {
+        .Ok(result) => assert_missing(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn hash_commands_preserve_nul_and_missing_outcome() {
+    let client = client_actor();
+    let key = "hew:redis:beta:hash";
+    let _ = await client.del(key);
+    match await client.hset(key, "field", nul_value()) {
+        .Ok(result) => assert_bool(result, true),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.hget(key, "field") {
+        .Ok(result) => assert_value(result, nul_value()),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.hget(key, "missing") {
+        .Ok(result) => assert_missing(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.hgetall(key) {
+        .Ok(.Ok(entries)) => {
+            testing.assert_eq(entries.len(), 1);
+            assert_bytes(entries[0].value, nul_value());
+        },
+        _ => testing.assert_true(false),
+    }
+    match await client.hdel(key, "field") {
+        .Ok(result) => assert_bool(result, true),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn set_commands_preserve_binary_members() {
+    let client = client_actor();
+    let key = "hew:redis:beta:set";
+    let _ = await client.del(key);
+    match await client.sadd(key, nul_value()) {
+        .Ok(result) => assert_bool(result, true),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.sismember(key, nul_value()) {
+        .Ok(result) => assert_bool(result, true),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.smembers(key) {
+        .Ok(.Ok(members)) => {
+            testing.assert_eq(members.len(), 1);
+            assert_bytes(members[0].value, nul_value());
+        },
+        _ => testing.assert_true(false),
+    }
+    match await client.srem(key, nul_value()) {
+        .Ok(result) => assert_bool(result, true),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn pipeline_executes_or_reports_command_error() {
+    let client = client_actor();
+    let commands: Vec<redis.PipelineCommand> = Vec.new();
+    commands.push(redis.PipelineCommand.Set("hew:redis:beta:pipeline", binary("done")));
+    commands.push(redis.PipelineCommand.Hset("hew:redis:beta:pipeline-hash", "field", nul_value()));
+    commands.push(redis.PipelineCommand.Del("hew:redis:beta:pipeline-delete"));
+    match await client.pipeline_exec(commands) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await client.get("hew:redis:beta:pipeline") {
+        .Ok(result) => assert_value(result, binary("done")),
+        .Err(_) => testing.assert_true(false),
+    }
+    let ping: Vec<redis.PipelineCommand> = Vec.new();
+    ping.push(redis.PipelineCommand.Ping);
+    match await client.pipeline_exec(ping) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    let invalid: Vec<redis.PipelineCommand> = Vec.new();
+    invalid.push(redis.PipelineCommand.Hset("hew:redis:beta:pipeline", "field", binary("wrong-type")));
+    match await client.pipeline_exec(invalid) {
+        .Ok(result) => assert_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn pubsub_preserves_binary_messages_and_times_out_typed() {
+    let subscriber = client_actor();
+    let publisher = client_actor();
+    let delayed = spawn DelayedPublisher(client: publisher);
+    let _ = delayed.publish("hew:redis:beta:channel", nul_value());
+    match await subscriber.subscribe_once("hew:redis:beta:channel", 1000) {
+        .Ok(result) => assert_bytes_result(result, nul_value()),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await subscriber.subscribe_once("hew:redis:beta:timeout", 1) {
+        .Ok(result) => assert_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await publisher.publish("hew:redis:beta:no-subscribers", binary("message")) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = subscriber.close();
+    let _ = publisher.close();
+}
+
+fn explicit_close_makes_later_work_fail_typed() {
+    let client = client_actor();
+    let _ = client.close();
+    match await client.get("hew:redis:beta:closed") {
+        .Ok(result) => assert_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+}
+
+fn create_actor_without_explicit_close(previous_count: i64) -> LocalPid<redis.Conn> {
+    let client = client_actor();
+    match await client.set("hew:redis:beta:abandoned", binary("released")) {
+        .Ok(result) => assert_i64(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    testing.assert_eq(unsafe {
+        hew_redis_connection_count()
+    }, previous_count + 1);
+    client
+}
+
+fn abandoned_actor_releases_connection_on_stop() {
+    let previous_count = unsafe {
+        hew_redis_connection_count()
+    };
+    testing.assert_true(previous_count >= 0);
+    let client = create_actor_without_explicit_close(previous_count);
+    unsafe {
+        hew_actor_stop(client);
+    };
+    sleep(20ms);
+    testing.assert_eq(unsafe {
+        hew_redis_connection_count()
+    }, previous_count);
+}
+
+fn main() {
+    unavailable_endpoint_returns_connection_error();
+    string_commands_preserve_missing_empty_and_nul();
+    expiration_commands_return_typed_outcomes();
+    increment_returns_exact_new_value();
+    list_commands_preserve_nul_and_empty_outcome();
+    hash_commands_preserve_nul_and_missing_outcome();
+    set_commands_preserve_binary_members();
+    pipeline_executes_or_reports_command_error();
+    pubsub_preserves_binary_messages_and_times_out_typed();
+    explicit_close_makes_later_work_fail_typed();
+    abandoned_actor_releases_connection_on_stop();
+}

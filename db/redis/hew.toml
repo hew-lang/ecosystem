@@ -1,0 +1,15 @@
+[package]
+name = "hew.db.redis"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Actor-owned Redis client with typed errors, explicit misses, pipelines, and bounded pub/sub"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["database", "redis", "cache"]
+repository = "https://github.com/hew-lang/ecosystem"
+
+[native]
+crate = "."
+lib = "hew_hew_db_redis"
+kind = "staticlib"

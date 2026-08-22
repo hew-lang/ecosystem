@@ -1,0 +1,24 @@
+[package]
+name = "hew-ecosystem-db-postgres"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.db.postgres — actor-owned PostgreSQL client for Hew"
+readme = "README.md"
+keywords = ["database", "postgresql", "sql"]
+categories = ["database"]
+
+[lib]
+name = "hew_hew_db_postgres"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+postgres = "0.19"
+libc.workspace = true
+
+[features]
+integration = []
+
+[lints]
+workspace = true

@@ -1,0 +1,94 @@
+import std.testing;
+
+import hew.queue.mqtt;
+
+import hew.queue.mqtt.{Options, Receive};
+
+extern "C" {
+    fn hew_actor_stop(pid: LocalPid<mqtt.Conn>);
+    fn hew_mqtt_connection_count() -> i64;
+    fn hew_mqtt_message_count() -> i64;
+}
+
+fn options(client_id: string) -> Options {
+    Options { host: "127.0.0.1", port: 11883, client_id: client_id, keepalive_seconds: 30 }
+}
+
+fn publish_subscribe_preserves_exact_message_and_timeout() {
+    let previous_connections = unsafe {
+        hew_mqtt_connection_count()
+    };
+    let previous_messages = unsafe {
+        hew_mqtt_message_count()
+    };
+    let client = spawn mqtt.Conn(options: options("hew-mqtt-integration"));
+    match await client.subscribe("hew/integration", mqtt.QoS.AtLeastOnce) {
+        .Ok(.Ok(_)) => {},
+        _ => testing.assert_true(false),
+    }
+    sleep(100ms);
+    match await client.publish("hew/integration", "exact payload", mqtt.QoS.AtLeastOnce, false) {
+        .Ok(.Ok(_)) => {},
+        _ => testing.assert_true(false),
+    }
+    match await client.next_message(3000) {
+        .Ok(.Ok(.Message(message))) => {
+            testing.assert_eq_str(message.topic, "hew/integration");
+            testing.assert_eq_str(message.payload, "exact payload");
+        },
+        _ => testing.assert_true(false),
+    }
+    testing.assert_eq(unsafe {
+        hew_mqtt_message_count()
+    }, previous_messages);
+    match await client.next_message(50) {
+        .Ok(.Ok(.Missing)) => {},
+        _ => testing.assert_true(false),
+    }
+    let _ = client.close();
+    var attempts = 0;
+    while unsafe {
+        hew_mqtt_connection_count()
+    } != previous_connections && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_mqtt_connection_count()
+    }, previous_connections);
+}
+
+fn actor_stop_releases_connection_relative_to_registry() {
+    let previous = unsafe {
+        hew_mqtt_connection_count()
+    };
+    let client = spawn mqtt.Conn(options: options("hew-mqtt-stop-cleanup"));
+    var attempts = 0;
+    while unsafe {
+        hew_mqtt_connection_count()
+    } != previous + 1 && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_mqtt_connection_count()
+    }, previous + 1);
+    unsafe {
+        hew_actor_stop(client)
+    };
+    attempts = 0;
+    while unsafe {
+        hew_mqtt_connection_count()
+    } != previous && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_mqtt_connection_count()
+    }, previous);
+}
+
+fn main() {
+    publish_subscribe_preserves_exact_message_and_timeout();
+    actor_stop_releases_connection_relative_to_registry();
+}

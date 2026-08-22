@@ -1,0 +1,458 @@
+//! A small, truthful HTTP/1.1 server for Hew.
+//!
+//! `Server` is an actor, so listener access is serialized. Each `accept_one`
+//! call waits up to 250 milliseconds for one connection and returns an
+//! immutable `Request` snapshot while the actor retains the connection for the
+//! matching response.
+//! Fallible operations return `Result` and never disguise failure as an empty
+//! string or a zero handle.
+//!
+//! # Examples
+//!
+//! ```
+//! import hew.net.http;
+//!
+//! fn main() {
+//!     let server = spawn http.Server(addr: "127.0.0.1:8080");
+//!     match await server.accept_one() {
+//!         .Ok(result) => match result {
+//!             .Ok(request) => {
+//!                 println(f"{request.method()} {request.path()}");
+//!                 match await server.respond_text(200, "Hello from Hew!") {
+//!                     .Ok(response_result) => match response_result {
+//!                         .Ok(_) => {},
+//!                         .Err(error) => println(http.error_message(error)),
+//!                     },
+//!                     .Err(_) => println("HTTP server actor stopped before replying"),
+//!                 }
+//!             },
+//!             .Err(error) => println(http.error_message(error)),
+//!         },
+//!         .Err(_) => println("HTTP server actor stopped before replying"),
+//!     }
+//!     server.close();
+//! }
+//! ```
+
+#[wire]
+pub enum HttpError {
+    /// The actor could not bind its configured address.
+    Listen(string);
+    /// The listener could not accept a connection.
+    Accept(string);
+    /// The peer disconnected or timed out while sending its request.
+    Read(string);
+    /// The incoming request was not supported, valid HTTP/1.1.
+    Parse(string);
+    /// A response could not be written to the peer.
+    Write(string);
+    /// A request header was not present.
+    MissingHeader(string);
+    /// Percent-encoded input was malformed or not UTF-8.
+    Decode(string);
+    /// A form field was not present.
+    MissingFormField(string);
+    /// A response status was outside the final-response range 200 through 599.
+    InvalidStatus(i64);
+    /// A response header value contained CR or LF.
+    InvalidHeaderValue(string);
+    /// A request is already waiting for a response.
+    Busy(string);
+    /// No accepted request is waiting for a header lookup or response.
+    NoPending(string);
+    /// The server has been closed.
+    Closed(string);
+    /// The native layer reported an unclassified failure.
+    Internal(string);
+}
+
+/// Return the diagnostic carried by an `HttpError`.
+pub fn error_message(error: HttpError) -> string {
+    match error {
+        .Listen(message) => message,
+        .Accept(message) => message,
+        .Read(message) => message,
+        .Parse(message) => message,
+        .Write(message) => message,
+        .MissingHeader(name) => f"missing request header: {name}",
+        .Decode(message) => message,
+        .MissingFormField(name) => f"missing form field: {name}",
+        .InvalidStatus(status) => f"invalid HTTP status: {status}",
+        .InvalidHeaderValue(name) => f"invalid HTTP header value: {name}",
+        .Busy(message) => message,
+        .NoPending(message) => message,
+        .Closed(message) => message,
+        .Internal(message) => message,
+    }
+}
+
+fn native_error() -> HttpError {
+    let message = unsafe {
+        hew_ecosystem_http_last_error()
+    };
+    native_error_from(unsafe {
+        hew_ecosystem_http_last_error_kind()
+    }, message)
+}
+
+fn native_error_from(kind: i32, message: string) -> HttpError {
+    match kind {
+        1 => HttpError.Listen(message),
+        2 => HttpError.Accept(message),
+        3 => HttpError.Read(message),
+        4 => HttpError.Parse(message),
+        5 => HttpError.Write(message),
+        6 => HttpError.MissingHeader(message),
+        7 => HttpError.Decode(message),
+        8 => HttpError.MissingFormField(message),
+        _ => HttpError.Internal(message),
+    }
+}
+
+fn valid_status(status: i64) -> Result<i64, HttpError> {
+    if status >= 200 && status <= 599 {
+        Ok(status)
+    } else {
+        Err(HttpError.InvalidStatus(status))
+    }
+}
+
+fn valid_header_value(name: string, value: string) -> Result<string, HttpError> {
+    if value.contains("\r") || value.contains("\n") {
+        Err(HttpError.InvalidHeaderValue(name))
+    } else {
+        Ok(value)
+    }
+}
+
+#[wire]
+pub type Request {
+    verb: string @1,
+    target: string @2,
+    query_text: string @3,
+    body_text: string @4,
+}
+
+/// Methods available on an accepted HTTP request.
+pub trait RequestMethods {
+    /// Return the request method, such as `"GET"`.
+    fn method(self) -> string;
+
+    /// Return the path without its query string.
+    fn path(self) -> string;
+
+    /// Return the query string without its leading `?`.
+    fn query(self) -> string;
+
+    /// Return the request body as UTF-8 text.
+    fn body(self) -> string;
+}
+
+impl RequestMethods for Request {
+    fn method(self) -> string {
+        self.verb
+    }
+
+    fn path(self) -> string {
+        self.target
+    }
+
+    fn query(self) -> string {
+        self.query_text
+    }
+
+    fn body(self) -> string {
+        self.body_text
+    }
+}
+
+/// An actor that owns one HTTP listener.
+///
+/// Every `accept_one()` call waits up to 250 milliseconds for one request. This
+/// deliberately avoids promising a generator or background loop that Hew does
+/// not provide, while keeping actor shutdown bounded when no client arrives.
+pub actor Server {
+    let addr: string;
+    var handle: i64 = 0;
+    var request_handle: i64 = 0;
+    var closed: bool = false;
+
+    /// Decode a percent-encoded UTF-8 string.
+    receive fn url_decode(input: string) -> Result<string, HttpError> {
+        let input_len = input.len();
+        let value = unsafe {
+            hew_ecosystem_http_url_decode(input, input_len)
+        };
+        if unsafe {
+            hew_ecosystem_http_last_status()
+        } == 0 {
+            Ok(value)
+        } else {
+            Err(native_error())
+        }
+    }
+
+    /// Extract and decode one URL-encoded form field.
+    receive fn form_value(body: string, key: string) -> Result<string, HttpError> {
+        let body_len = body.len();
+        let key_len = key.len();
+        let value = unsafe {
+            hew_ecosystem_http_form_value(body, body_len, key, key_len)
+        };
+        if unsafe {
+            hew_ecosystem_http_last_status()
+        } == 0 {
+            Ok(value)
+        } else {
+            match unsafe {
+                hew_ecosystem_http_last_error_kind()
+            } {
+                8 => Err(HttpError.MissingFormField(key)),
+                _ => Err(native_error()),
+            }
+        }
+    }
+
+    /// Accept one request, or return `HttpError.Accept` after 250 milliseconds.
+    ///
+    /// Accept, read, and parse failures are returned as distinct `HttpError`
+    /// variants.
+    receive fn accept_one() -> Result<Request, HttpError> {
+        if closed {
+            return Err(HttpError.Closed("HTTP server is closed"));
+        }
+        if request_handle != 0 {
+            return Err(HttpError.Busy("respond to the current request before accepting another"));
+        }
+        if handle == 0 {
+            let addr_len = addr.len();
+            handle = unsafe {
+                hew_ecosystem_http_listen(addr, addr_len)
+            };
+            if handle == 0 {
+                return Err(native_error());
+            }
+        }
+        request_handle = unsafe {
+            hew_ecosystem_http_server_accept(handle)
+        };
+        if request_handle == 0 {
+            Err(native_error())
+        } else {
+            Ok(Request { verb: unsafe {
+                hew_ecosystem_http_request_method(request_handle)
+            }, target: unsafe {
+                hew_ecosystem_http_request_path(request_handle)
+            }, query_text: unsafe {
+                hew_ecosystem_http_request_query(request_handle)
+            }, body_text: unsafe {
+                hew_ecosystem_http_request_body(request_handle)
+            } })
+        }
+    }
+
+    /// Return one header from the current request.
+    receive fn header(name: string) -> Result<string, HttpError> {
+        if request_handle == 0 {
+            return Err(HttpError.NoPending("no request is waiting for a response"));
+        }
+        let name_len = name.len();
+        let value = unsafe {
+            hew_ecosystem_http_request_header(request_handle, name, name_len)
+        };
+        if unsafe {
+            hew_ecosystem_http_last_status()
+        } == 0 {
+            Ok(value)
+        } else {
+            Err(HttpError.MissingHeader(name))
+        }
+    }
+
+    /// Send a complete response and release the current connection.
+    receive fn respond(status: i64, body: string, content_type: string) -> Result<i64, HttpError> {
+        if request_handle == 0 {
+            return Err(HttpError.NoPending("no request is waiting for a response"));
+        }
+        let checked_status = match valid_status(status) {
+            .Ok(value) => value,
+            .Err(error) => {
+                unsafe {
+                    hew_ecosystem_http_request_free(request_handle)
+                };
+                request_handle = 0;
+                return Err(error);
+            },
+        };
+        let checked_type = match valid_header_value("Content-Type", content_type) {
+            .Ok(value) => value,
+            .Err(error) => {
+                unsafe {
+                    hew_ecosystem_http_request_free(request_handle)
+                };
+                request_handle = 0;
+                return Err(error);
+            },
+        };
+        let body_len = body.len();
+        let checked_type_len = checked_type.len();
+        let written = unsafe {
+            hew_ecosystem_http_request_respond(request_handle, checked_status, body, body_len, checked_type, checked_type_len)
+        };
+        unsafe {
+            hew_ecosystem_http_request_free(request_handle)
+        };
+        request_handle = 0;
+        if written < 0 {
+            Err(native_error())
+        } else {
+            Ok(written)
+        }
+    }
+
+    /// Send a UTF-8 plain-text response and release the current connection.
+    receive fn respond_text(status: i64, body: string) -> Result<i64, HttpError> {
+        if request_handle == 0 {
+            return Err(HttpError.NoPending("no request is waiting for a response"));
+        }
+        let checked_status = match valid_status(status) {
+            .Ok(value) => value,
+            .Err(error) => {
+                unsafe {
+                    hew_ecosystem_http_request_free(request_handle)
+                };
+                request_handle = 0;
+                return Err(error);
+            },
+        };
+        let content_type = "text/plain; charset=utf-8";
+        let body_len = body.len();
+        let content_type_len = content_type.len();
+        let written = unsafe {
+            hew_ecosystem_http_request_respond(request_handle, checked_status, body, body_len, content_type, content_type_len)
+        };
+        unsafe {
+            hew_ecosystem_http_request_free(request_handle)
+        };
+        request_handle = 0;
+        if written < 0 {
+            Err(native_error())
+        } else {
+            Ok(written)
+        }
+    }
+
+    /// Send a UTF-8 HTML response and release the current connection.
+    receive fn respond_html(status: i64, body: string) -> Result<i64, HttpError> {
+        if request_handle == 0 {
+            return Err(HttpError.NoPending("no request is waiting for a response"));
+        }
+        let checked_status = match valid_status(status) {
+            .Ok(value) => value,
+            .Err(error) => {
+                unsafe {
+                    hew_ecosystem_http_request_free(request_handle)
+                };
+                request_handle = 0;
+                return Err(error);
+            },
+        };
+        let content_type = "text/html; charset=utf-8";
+        let body_len = body.len();
+        let content_type_len = content_type.len();
+        let written = unsafe {
+            hew_ecosystem_http_request_respond(request_handle, checked_status, body, body_len, content_type, content_type_len)
+        };
+        unsafe {
+            hew_ecosystem_http_request_free(request_handle)
+        };
+        request_handle = 0;
+        if written < 0 {
+            Err(native_error())
+        } else {
+            Ok(written)
+        }
+    }
+
+    /// Send a 302 redirect and release the current connection.
+    receive fn redirect(location: string) -> Result<i64, HttpError> {
+        if request_handle == 0 {
+            return Err(HttpError.NoPending("no request is waiting for a response"));
+        }
+        let checked_location = match valid_header_value("Location", location) {
+            .Ok(value) => value,
+            .Err(error) => {
+                unsafe {
+                    hew_ecosystem_http_request_free(request_handle)
+                };
+                request_handle = 0;
+                return Err(error);
+            },
+        };
+        let checked_location_len = checked_location.len();
+        let written = unsafe {
+            hew_ecosystem_http_request_redirect(request_handle, checked_location, checked_location_len)
+        };
+        unsafe {
+            hew_ecosystem_http_request_free(request_handle)
+        };
+        request_handle = 0;
+        if written < 0 {
+            Err(native_error())
+        } else {
+            Ok(written)
+        }
+    }
+
+    /// Close the listener. Repeated calls are harmless.
+    receive fn close() {
+        if request_handle != 0 {
+            unsafe {
+                hew_ecosystem_http_request_free(request_handle)
+            };
+            request_handle = 0;
+        }
+        if handle != 0 {
+            unsafe {
+                hew_ecosystem_http_server_close(handle)
+            };
+            handle = 0;
+        }
+        closed = true;
+    }
+
+    #[on(stop)]
+    fn release_native_handles() {
+        if request_handle != 0 {
+            unsafe {
+                hew_ecosystem_http_request_free(request_handle)
+            };
+            request_handle = 0;
+        }
+        if handle != 0 {
+            unsafe {
+                hew_ecosystem_http_server_close(handle)
+            };
+            handle = 0;
+        }
+    }
+}
+
+extern "C" {
+    fn hew_ecosystem_http_listen(addr: string, addr_len: i64) -> i64;
+    fn hew_ecosystem_http_server_accept(server: i64) -> i64;
+    fn hew_ecosystem_http_server_close(server: i64);
+    fn hew_ecosystem_http_request_method(request: i64) -> string;
+    fn hew_ecosystem_http_request_path(request: i64) -> string;
+    fn hew_ecosystem_http_request_query(request: i64) -> string;
+    fn hew_ecosystem_http_request_header(request: i64, name: string, name_len: i64) -> string;
+    fn hew_ecosystem_http_request_body(request: i64) -> string;
+    fn hew_ecosystem_http_request_respond(request: i64, status: i64, body: string, body_len: i64, content_type: string, content_type_len: i64) -> i64;
+    fn hew_ecosystem_http_request_redirect(request: i64, location: string, location_len: i64) -> i64;
+    fn hew_ecosystem_http_request_free(request: i64);
+    fn hew_ecosystem_http_url_decode(input: string, input_len: i64) -> string;
+    fn hew_ecosystem_http_form_value(body: string, body_len: i64, key: string, key_len: i64) -> string;
+    fn hew_ecosystem_http_last_error() -> string;
+    fn hew_ecosystem_http_last_error_kind() -> i32;
+    fn hew_ecosystem_http_last_status() -> i32;
+}

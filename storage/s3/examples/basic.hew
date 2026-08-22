@@ -1,0 +1,28 @@
+//! Upload one object and read it back byte for byte.
+//!
+//! Start the service from the ecosystem checkout with
+//! `docker compose up -d minio minio-init`, then run:
+//! `hew run --pkg-path . storage/s3/examples/basic.hew`
+
+import hew.storage.s3;
+
+fn main() {
+    let store = spawn s3.Bucket(options: Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" });
+    match await store.put("example/hello.txt", "hello".to_bytes(), "text/plain") {
+        .Ok(result) => match result {
+            .Ok(_) => println("uploaded example/hello.txt"),
+            .Err(error) => println(s3.error_message(error)),
+        },
+        .Err(_) => println("S3 actor stopped before replying"),
+    }
+    match await store.get("example/hello.txt") {
+        .Ok(result) => match result {
+            // A missing object is its own outcome, not an empty body.
+            .Ok(.Found(value)) => println(value.to_string()),
+            .Ok(.Missing) => println("example/hello.txt is missing"),
+            .Err(error) => println(s3.error_message(error)),
+        },
+        .Err(_) => println("S3 actor stopped before replying"),
+    }
+    let _ = store.close();
+}

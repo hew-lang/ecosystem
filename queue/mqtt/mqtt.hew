@@ -1,0 +1,275 @@
+//! A typed, actor-owned MQTT 3.1.1 client.
+//!
+//! The actor owns one broker connection and serializes its public operations.
+//! Invalid QoS values are rejected rather than silently downgraded. A bounded
+//! receive reports `Receive.Missing` on timeout, while transport and lifecycle
+//! failures remain typed `Result` errors.
+//!
+//! # Examples
+//!
+//! ```
+//! import hew.queue.mqtt;
+//!
+//! fn main() {
+//!     let client = spawn mqtt.Conn(options: Options {
+//!         host: "127.0.0.1", port: 11883,
+//!         client_id: "hew-example", keepalive_seconds: 30,
+//!     });
+//!     let _ = await client.subscribe("hew/example", mqtt.QoS.AtLeastOnce);
+//!     let _ = await client.publish("hew/example", "hello", mqtt.QoS.AtLeastOnce, false);
+//!     match await client.next_message(1000) {
+//!         .Ok(result) => match result {
+//!             .Ok(.Message(message)) => println(message.payload),
+//!             .Ok(.Missing) => println("no message arrived"),
+//!             .Err(error) => println(mqtt.error_message(error)),
+//!         },
+//!         .Err(_) => println("MQTT actor stopped before replying"),
+//!     }
+//!     let _ = client.close();
+//! }
+//! ```
+
+#[wire]
+pub enum MqttError {
+    /// The broker could not be reached or the connection was lost.
+    Connection(string);
+    /// An option, topic, QoS level, payload, or timeout was invalid.
+    InvalidInput(string);
+    /// The broker or client rejected an operation.
+    Operation(string);
+    /// A bounded operation failed because its deadline elapsed.
+    Timeout(string);
+    /// The actor or native handle is already closed.
+    Closed(string);
+    /// The native layer reported an unclassified failure.
+    Internal(string);
+}
+
+/// Return the diagnostic carried by an MQTT error.
+pub fn error_message(error: MqttError) -> string {
+    match error {
+        .Connection(message) => message,
+        .InvalidInput(message) => message,
+        .Operation(message) => message,
+        .Timeout(message) => message,
+        .Closed(message) => message,
+        .Internal(message) => message,
+    }
+}
+
+#[wire]
+pub enum QoS {
+    /// Deliver at most once (MQTT QoS 0).
+    AtMostOnce;
+    /// Deliver at least once (MQTT QoS 1).
+    AtLeastOnce;
+    /// Deliver exactly once (MQTT QoS 2).
+    ExactlyOnce;
+}
+
+/// Parse a numeric MQTT QoS level without a fail-open default.
+pub fn qos_from_level(level: i32) -> Result<QoS, MqttError> {
+    match level {
+        0 => Ok(QoS.AtMostOnce),
+        1 => Ok(QoS.AtLeastOnce),
+        2 => Ok(QoS.ExactlyOnce),
+        _ => Err(MqttError.InvalidInput("MQTT QoS must be 0, 1, or 2")),
+    }
+}
+
+fn qos_level(qos: QoS) -> i32 {
+    match qos {
+        .AtMostOnce => 0,
+        .AtLeastOnce => 1,
+        .ExactlyOnce => 2,
+    }
+}
+
+#[wire]
+pub type Options {
+    host: string @1,
+    port: i64 @2,
+    client_id: string @3,
+    keepalive_seconds: i64 @4,
+}
+
+#[wire]
+pub type Delivery {
+    topic: string @1,
+    payload: string @2,
+}
+
+#[wire]
+pub enum Receive {
+    /// No message arrived before the deadline.
+    Missing;
+    /// A complete message arrived.
+    Message(Delivery);
+}
+
+fn native_error_from(kind: i32, message: string) -> MqttError {
+    match kind {
+        1 => MqttError.Connection(message),
+        2 => MqttError.InvalidInput(message),
+        3 => MqttError.Operation(message),
+        4 => MqttError.Timeout(message),
+        5 => MqttError.Closed(message),
+        _ => MqttError.Internal(message),
+    }
+}
+
+fn native_error() -> MqttError {
+    let message = unsafe {
+        hew_mqtt_last_error()
+    };
+    native_error_from(unsafe {
+        hew_mqtt_last_error_kind()
+    }, message.clone())
+}
+
+fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, MqttError> {
+    if closed {
+        Err(MqttError.Closed("MQTT connection is closed"))
+    } else if handle == 0 {
+        Err(native_error_from(error_kind, error_message))
+    } else {
+        Ok(handle)
+    }
+}
+
+#[resource]
+type NativeMessage {
+    handle: i64;
+}
+
+impl NativeMessage {
+    fn topic(self) -> string {
+        unsafe {
+            hew_mqtt_message_topic(self.handle)
+        }
+    }
+
+    fn payload(self) -> string {
+        unsafe {
+            hew_mqtt_message_payload(self.handle)
+        }
+    }
+
+    fn close(consuming self) {
+        unsafe {
+            hew_mqtt_message_free(self.handle)
+        };
+    }
+}
+
+/// An actor that owns and serializes one MQTT connection.
+pub actor Conn {
+    var native_handle: i64 = 0;
+    var connect_error_kind: i32 = 0;
+    var connect_error_message: string = "";
+    var closed: bool = false;
+
+    init(options: Options) {
+        native_handle = unsafe {
+            hew_mqtt_connect_len(options.host, options.host.len(), options.port, options.client_id, options.client_id.len(), options.keepalive_seconds)
+        };
+        if native_handle == 0 {
+            connect_error_kind = unsafe {
+                hew_mqtt_last_error_kind()
+            };
+            connect_error_message = match connect_error_kind {
+                1 => "MQTT broker connection failed",
+                2 => "MQTT connection options are invalid",
+                _ => "MQTT connection initialization failed",
+            };
+        }
+    }
+
+    /// Publish a UTF-8 payload to a topic.
+    receive fn publish(topic: string, payload: string, qos: QoS, retain: bool) -> Result<(), MqttError> {
+        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let retain_flag: i32 = if retain {
+            1
+        } else {
+            0
+        };
+        let status = unsafe {
+            hew_mqtt_publish_len(handle, topic, topic.len(), payload, payload.len(), qos_level(qos), retain_flag)
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(native_error())
+        }
+    }
+
+    /// Subscribe to a topic filter, including MQTT `+` and `#` wildcards.
+    receive fn subscribe(topic_filter: string, qos: QoS) -> Result<(), MqttError> {
+        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let status = unsafe {
+            hew_mqtt_subscribe_len(handle, topic_filter, topic_filter.len(), qos_level(qos))
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(native_error())
+        }
+    }
+
+    /// Wait for one delivery, preserving timeout as `Receive.Missing`.
+    receive fn next_message(timeout_ms: i64) -> Result<Receive, MqttError> {
+        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let result = NativeMessage { handle: unsafe {
+            hew_mqtt_next_result(handle, timeout_ms)
+        } };
+        if result.handle == 0 {
+            if unsafe {
+                hew_mqtt_last_error_kind()
+            } == 0 {
+                Ok(Receive.Missing)
+            } else {
+                Err(native_error())
+            }
+        } else {
+            let topic = result.topic();
+            let payload = result.payload();
+            let message = Delivery { topic: topic.clone(), payload: payload.clone() };
+            result.close();
+            Ok(Receive.Message(message))
+        }
+    }
+
+    /// Close the connection. Repeated close calls are harmless.
+    receive fn close() {
+        if native_handle != 0 {
+            unsafe {
+                hew_mqtt_close(native_handle)
+            };
+            native_handle = 0;
+        }
+        closed = true;
+    }
+
+    #[on(stop)]
+    fn release_native_handle() {
+        if native_handle != 0 {
+            unsafe {
+                hew_mqtt_close(native_handle)
+            };
+            native_handle = 0;
+        }
+    }
+}
+
+extern "C" {
+    fn hew_mqtt_last_error_kind() -> i32;
+    fn hew_mqtt_last_error() -> string;
+    fn hew_mqtt_connect_len(host: string, host_len: i64, port: i64, client_id: string, client_id_len: i64, keepalive_seconds: i64) -> i64;
+    fn hew_mqtt_publish_len(connection: i64, topic: string, topic_len: i64, payload: string, payload_len: i64, qos: i32, retain: i32) -> i32;
+    fn hew_mqtt_subscribe_len(connection: i64, topic_filter: string, topic_filter_len: i64, qos: i32) -> i32;
+    fn hew_mqtt_next_result(connection: i64, timeout_ms: i64) -> i64;
+    fn hew_mqtt_message_topic(message: i64) -> string;
+    fn hew_mqtt_message_payload(message: i64) -> string;
+    fn hew_mqtt_message_free(message: i64);
+    fn hew_mqtt_close(connection: i64);
+}

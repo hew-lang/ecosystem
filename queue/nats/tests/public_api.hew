@@ -1,0 +1,36 @@
+import std.testing;
+
+import hew.queue.nats;
+
+import hew.queue.nats.{Delivery, NatsError};
+
+fn error_variants_return_exact_diagnostics() {
+    testing.assert_eq_str(nats.error_message(nats.NatsError.Closed("closed")), "closed");
+    testing.assert_eq_str(nats.error_message(nats.NatsError.InvalidInput("invalid")), "invalid");
+    testing.assert_eq_str(nats.error_message(nats.NatsError.Timeout("late")), "late");
+}
+
+fn unavailable_server_returns_typed_connection_error() {
+    let client = spawn nats.Conn(options: Options { url: "nats://127.0.0.1:1" });
+    match await client.publish("hew.test", "value") {
+        .Ok(.Err(.Connection(message))) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn reply_without_subject_returns_typed_input_error() {
+    let client = spawn nats.Conn(options: Options { url: "nats://127.0.0.1:1" });
+    let message = Delivery { subject: "events", data: "value", reply_to: nats.ReplyTo.Missing };
+    match await client.reply(message, "reply") {
+        .Ok(.Err(.Connection(_))) => {},
+        _ => testing.assert_true(false),
+    }
+    let _ = client.close();
+}
+
+fn main() {
+    error_variants_return_exact_diagnostics();
+    unavailable_server_returns_typed_connection_error();
+    reply_without_subject_returns_typed_input_error();
+}

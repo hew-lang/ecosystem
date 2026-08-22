@@ -1,0 +1,319 @@
+//! An actor-owned S3-compatible object storage client.
+//!
+//! Operations return typed errors, object bodies are exact bytes, and a
+//! missing object is distinct from a present empty object. The bucket actor
+//! releases its native client both on explicit close and actor stop.
+
+#[wire]
+pub enum S3Error {
+    Connection(string);
+    InvalidInput(string);
+    NotFound(string);
+    AccessDenied(string);
+    Throttled(string);
+    ServerError(i64, string);
+    Network(string);
+    HttpStatus(i64, string);
+    Decode(string);
+    Closed(string);
+    Internal(string);
+}
+
+/// Return the diagnostic carried by an S3 error.
+pub fn error_message(error: S3Error) -> string {
+    match error {
+        .Connection(message) => message,
+        .InvalidInput(message) => message,
+        .NotFound(message) => message,
+        .AccessDenied(message) => message,
+        .Throttled(message) => message,
+        .ServerError(_, message) => message,
+        .Network(message) => message,
+        .HttpStatus(_, message) => message,
+        .Decode(message) => message,
+        .Closed(message) => message,
+        .Internal(message) => message,
+    }
+}
+
+#[wire]
+pub enum ObjectLookup {
+    Missing;
+    Found(bytes);
+}
+
+#[wire]
+pub type ObjectInfo {
+    key: string @1,
+    size: i64 @2,
+}
+
+#[wire]
+pub type Options {
+    endpoint: string @1,
+    region: string @2,
+    bucket: string @3,
+    access_key: string @4,
+    secret_key: string @5,
+}
+
+fn native_error_from(kind: i32, status: i32, message: string) -> S3Error {
+    match kind {
+        1 => S3Error.Connection(message),
+        2 => S3Error.InvalidInput(message),
+        3 => S3Error.NotFound(message),
+        4 => S3Error.AccessDenied(message),
+        5 => S3Error.Throttled(message),
+        6 => S3Error.ServerError(status as i64, message),
+        7 => S3Error.Network(message),
+        8 => S3Error.HttpStatus(status as i64, message),
+        9 => S3Error.Decode(message),
+        10 => S3Error.Closed(message),
+        _ => S3Error.Internal(message),
+    }
+}
+
+fn native_error() -> S3Error {
+    let message = unsafe {
+        hew_s3_last_error()
+    };
+    native_error_from(unsafe {
+        hew_s3_last_error_kind()
+    }, unsafe {
+        hew_s3_last_error_status()
+    }, message)
+}
+
+fn bucket_handle(closed: bool, handle: i64, kind: i32, status: i32, message: string) -> Result<i64, S3Error> {
+    if closed {
+        Err(S3Error.Closed("S3 bucket is closed"))
+    } else if handle == 0 {
+        Err(native_error_from(kind, status, message))
+    } else {
+        Ok(handle)
+    }
+}
+
+fn unit_result(status: i32) -> Result<i64, S3Error> {
+    if status == 0 {
+        Ok(0)
+    } else {
+        Err(native_error())
+    }
+}
+
+#[resource]
+type GetResource {
+    handle: i64;
+}
+
+impl GetResource {
+    fn status(self) -> i32 {
+        unsafe {
+            hew_s3_get_status(self.handle)
+        }
+    }
+
+    fn value(self) -> bytes {
+        unsafe {
+            hew_s3_get_value(self.handle)
+        }
+    }
+
+    fn close(consuming self) {
+        unsafe {
+            hew_s3_get_free(self.handle)
+        };
+    }
+}
+
+#[resource]
+type ListResource {
+    handle: i64;
+}
+
+impl ListResource {
+    fn count(self) -> i64 {
+        unsafe {
+            hew_s3_list_count(self.handle)
+        }
+    }
+
+    fn key(self, index: i64) -> string {
+        unsafe {
+            hew_s3_list_key(self.handle, index)
+        }
+    }
+
+    fn size(self, index: i64) -> i64 {
+        unsafe {
+            hew_s3_list_size(self.handle, index)
+        }
+    }
+
+    fn close(consuming self) {
+        unsafe {
+            hew_s3_list_free(self.handle)
+        };
+    }
+}
+
+/// A mailbox-serialized owner of one native S3 bucket client.
+pub actor Bucket {
+    var native_handle: i64 = 0;
+    var connect_error_kind: i32 = 0;
+    var connect_error_status: i32 = 0;
+    var connect_error_message: string = "";
+    var closed: bool = false;
+
+    init(options: Options) {
+        native_handle = unsafe {
+            hew_s3_connect_len(options.endpoint, options.endpoint.len(), options.region, options.region.len(), options.bucket, options.bucket.len(), options.access_key, options.access_key.len(), options.secret_key, options.secret_key.len())
+        };
+        if native_handle == 0 {
+            connect_error_kind = unsafe {
+                hew_s3_last_error_kind()
+            };
+            connect_error_status = unsafe {
+                hew_s3_last_error_status()
+            };
+            connect_error_message = match connect_error_kind {
+                2 => "S3 configuration is invalid",
+                _ => "S3 bucket initialization failed",
+            };
+        }
+    }
+
+    /// Upload exact bytes under `key`.
+    receive fn put(key: string, body: bytes, content_type: string) -> Result<i64, S3Error> {
+        let handle = bucket_handle(closed, native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
+        unit_result(unsafe {
+            hew_s3_put_len(handle, key, key.len(), body, content_type, content_type.len())
+        })
+    }
+
+    /// Download exact bytes, preserving missing versus present-empty.
+    receive fn get(key: string) -> Result<ObjectLookup, S3Error> {
+        let handle = bucket_handle(closed, native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
+        let result = GetResource { handle: unsafe {
+            hew_s3_get_len(handle, key, key.len())
+        } };
+        if result.handle == 0 {
+            return Err(native_error());
+        }
+        let status = result.status();
+        if status == 1 {
+            let value = result.value();
+            result.close();
+            Ok(ObjectLookup.Found(value))
+        } else if status == 0 {
+            result.close();
+            Ok(ObjectLookup.Missing)
+        } else {
+            let error = native_error();
+            result.close();
+            Err(error)
+        }
+    }
+
+    /// Delete an object. Deleting an absent key is successful S3 behavior.
+    receive fn delete(key: string) -> Result<i64, S3Error> {
+        let handle = bucket_handle(closed, native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
+        unit_result(unsafe {
+            hew_s3_delete_len(handle, key, key.len())
+        })
+    }
+
+    /// Return every object under a prefix, following continuation tokens.
+    receive fn list(prefix: string) -> Result<Vec<ObjectInfo>, S3Error> {
+        let handle = bucket_handle(closed, native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
+        let result = ListResource { handle: unsafe {
+            hew_s3_list_len_ffi(handle, prefix, prefix.len())
+        } };
+        if result.handle == 0 {
+            return Err(native_error());
+        }
+        let count = result.count();
+        if count < 0 {
+            let error = native_error();
+            result.close();
+            return Err(error);
+        }
+        let entries: Vec<ObjectInfo> = Vec.new();
+        for index in 0 .. count {
+            entries.push(ObjectInfo { key: result.key(index), size: result.size(index) });
+        }
+        result.close();
+        Ok(entries)
+    }
+
+    /// Return whether an object exists.
+    receive fn exists(key: string) -> Result<bool, S3Error> {
+        let handle = bucket_handle(closed, native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
+        let status = unsafe {
+            hew_s3_exists_len(handle, key, key.len())
+        };
+        if status == 1 {
+            Ok(true)
+        } else if status == 0 {
+            Ok(false)
+        } else {
+            Err(native_error())
+        }
+    }
+
+    /// Generate a signed URL for GET, PUT, DELETE, or HEAD.
+    receive fn presign(key: string, method: string, expires_seconds: i64) -> Result<string, S3Error> {
+        let handle = bucket_handle(closed, native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
+        let url = unsafe {
+            hew_s3_presign_len(handle, key, key.len(), method, method.len(), expires_seconds)
+        };
+        if url.is_empty() {
+            Err(native_error())
+        } else {
+            Ok(url)
+        }
+    }
+
+    /// Close the bucket. Repeated calls are harmless and later work fails typed.
+    receive fn close() {
+        if native_handle != 0 {
+            unsafe {
+                hew_s3_close(native_handle)
+            };
+            native_handle = 0;
+        }
+        closed = true;
+    }
+
+    #[on(stop)]
+    fn release_native_handle() {
+        if native_handle != 0 {
+            unsafe {
+                hew_s3_close(native_handle)
+            };
+            native_handle = 0;
+        }
+    }
+}
+
+extern "C" {
+    fn hew_s3_last_error_kind() -> i32;
+    fn hew_s3_last_error_status() -> i32;
+    fn hew_s3_last_error() -> string;
+    fn hew_s3_connect_len(endpoint: string, endpoint_len: i64, region: string, region_len: i64, bucket: string, bucket_len: i64, access_key: string, access_len: i64, secret_key: string, secret_len: i64) -> i64;
+    fn hew_s3_close(handle: i64);
+    fn hew_s3_put_len(handle: i64, key: string, key_len: i64, body: bytes, content_type: string, content_type_len: i64) -> i32;
+    fn hew_s3_get_len(handle: i64, key: string, key_len: i64) -> i64;
+    fn hew_s3_get_status(result: i64) -> i32;
+    fn hew_s3_get_value(result: i64) -> bytes;
+    fn hew_s3_get_free(result: i64);
+    fn hew_s3_delete_len(handle: i64, key: string, key_len: i64) -> i32;
+    fn hew_s3_exists_len(handle: i64, key: string, key_len: i64) -> i32;
+    fn hew_s3_list_len_ffi(handle: i64, prefix: string, prefix_len: i64) -> i64;
+    fn hew_s3_list_count(result: i64) -> i64;
+    fn hew_s3_list_key(result: i64, index: i64) -> string;
+    fn hew_s3_list_size(result: i64, index: i64) -> i64;
+    fn hew_s3_list_free(result: i64);
+    fn hew_s3_presign_len(handle: i64, key: string, key_len: i64, method: string, method_len: i64, expires_seconds: i64) -> string;
+}

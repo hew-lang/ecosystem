@@ -1,0 +1,21 @@
+[package]
+name = "hew-ecosystem-net-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.net.http — HTTP/1.1 server for Hew"
+readme = "README.md"
+keywords = ["http", "http1", "server", "actor", "networking"]
+categories = ["network-programming", "web-programming::http-server"]
+
+[lib]
+name = "hew_hew_net_http"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+httparse = "1"
+libc.workspace = true
+
+[lints]
+workspace = true

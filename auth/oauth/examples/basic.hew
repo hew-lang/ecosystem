@@ -1,0 +1,55 @@
+//! Start the PKCE authorization-code flow and check a callback state.
+//!
+//! Every step here is local: `auth_url` builds the redirect and retains the
+//! state and PKCE verifier, so the example runs without an authorization
+//! server. Exchanging the code that server sends back is the one step that
+//! needs the network.
+//!
+//! Run from the ecosystem checkout with:
+//! `hew run --pkg-path . auth/oauth/examples/basic.hew`
+
+import hew.auth.oauth;
+
+fn main() {
+    let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
+    match await client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
+        .Ok(result) => match result {
+            .Ok(url) => println(f"send the user to {url}"),
+            .Err(error) => println(oauth.error_message(error)),
+        },
+        .Err(_) => println("OAuth actor stopped before replying"),
+    }
+    // auth_url kept the state it generated, so the callback can be checked
+    // against it without storing anything yourself.
+    let state = match await client.current_state() {
+        .Ok(result) => match result {
+            .Ok(.Some(value)) => value,
+            .Ok(.None) => "",
+            .Err(error) => {
+                println(oauth.error_message(error));
+                ""
+            },
+        },
+        .Err(_) => {
+            println("OAuth actor stopped before replying");
+            ""
+        },
+    };
+    match await client.validate_state(state) {
+        .Ok(result) => match result {
+            .Ok(matched) => println(f"callback state accepted: {matched}"),
+            .Err(error) => println(oauth.error_message(error)),
+        },
+        .Err(_) => println("OAuth actor stopped before replying"),
+    }
+    // A callback that carries no state is rejected as typed input error, not
+    // as a silent mismatch.
+    match await client.validate_state("") {
+        .Ok(result) => match result {
+            .Ok(matched) => println(f"callback state accepted: {matched}"),
+            .Err(error) => println(oauth.error_message(error)),
+        },
+        .Err(_) => println("OAuth actor stopped before replying"),
+    }
+    let _ = client.close();
+}

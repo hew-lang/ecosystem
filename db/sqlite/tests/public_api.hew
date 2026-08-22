@@ -1,0 +1,36 @@
+import std.testing;
+
+import hew.db.sqlite;
+
+import hew.db.sqlite.{CellValue, Row, QueryResult};
+
+fn error_variants_preserve_diagnostics() {
+    testing.assert_eq_str(sqlite.error_message(sqlite.SqliteError.Open("open")), "open");
+    testing.assert_eq_str(sqlite.error_message(sqlite.SqliteError.InvalidInput("input")), "input");
+    testing.assert_eq_str(sqlite.error_message(sqlite.SqliteError.Query("query")), "query");
+    testing.assert_eq_str(sqlite.error_message(sqlite.SqliteError.Closed("closed")), "closed");
+    testing.assert_eq_str(sqlite.error_message(sqlite.SqliteError.Internal("internal")), "internal");
+}
+
+fn wire_values_distinguish_null_empty_and_no_rows() {
+    let values: Vec<CellValue> = Vec.new();
+    values.push(CellValue.Null);
+    values.push(CellValue.Text(bytes.new()));
+    let rows: Vec<Row> = Vec.new();
+    rows.push(Row { values: values });
+    let result = QueryResult { columns: Vec.new(), rows: rows };
+    testing.assert_eq(result.rows.len(), 1);
+    match result.rows[0].values[0] {
+        .Null => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+    match result.rows[0].values[1] {
+        .Text(value) => testing.assert_eq(value.len(), 0),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn main() {
+    error_variants_preserve_diagnostics();
+    wire_values_distinguish_null_empty_and_no_rows();
+}

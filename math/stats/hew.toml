@@ -1,0 +1,10 @@
+[package]
+name = "hew.math.stats"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Statistical functions for Hew — descriptive stats, correlation, regression, streaming"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["math", "statistics", "analytics"]
+repository = "https://github.com/hew-lang/ecosystem"

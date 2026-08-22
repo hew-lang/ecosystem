@@ -1,0 +1,22 @@
+[package]
+name = "hew-ecosystem-metrics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.metrics — Prometheus-compatible metrics for Hew"
+readme = "README.md"
+keywords = ["metrics", "prometheus", "monitoring", "observability"]
+categories = ["development-tools::profiling"]
+
+[lib]
+name = "hew_hew_metrics"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+hew-cabi.workspace = true
+prometheus = "0.13"
+libc.workspace = true
+
+[lints]
+workspace = true

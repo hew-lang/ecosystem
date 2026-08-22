@@ -1,0 +1,10 @@
+[package]
+name = "hew.dag"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Fail-closed runtime DAG parsing, topological sorting, and dependency-ordered value routing for Hew"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["dag", "workflow", "graph", "routing", "topological-sort"]
+repository = "https://github.com/hew-lang/ecosystem"

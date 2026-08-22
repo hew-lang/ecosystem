@@ -1,0 +1,27 @@
+[package]
+name = "hew-ecosystem-db-redis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.db.redis — Redis client for Hew"
+readme = "README.md"
+keywords = ["database", "redis", "cache"]
+categories = ["database"]
+
+[lib]
+name = "hew_hew_db_redis"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+redis = "1"
+libc.workspace = true
+
+[dev-dependencies]
+serial_test = "3"
+
+[features]
+integration = []
+
+[lints]
+workspace = true

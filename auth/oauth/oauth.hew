@@ -1,0 +1,359 @@
+//! OAuth 2.0 client for authentication and authorization flows.
+//!
+//! Supports client credentials (machine-to-machine), PKCE-protected
+//! authorization code URL generation, token exchange, and token refresh. Uses
+//! direct HTTP calls to token endpoints.
+//!
+//! Note: Uses `ureq` directly in the FFI layer rather than `std.net.http_client`
+//! because the stdlib HTTP client does not yet expose response status codes, headers,
+//! or body text. When the stdlib `Response` type gains those capabilities, this
+//! library can be simplified.
+//!
+//! # Examples
+//!
+//! ```
+//! import hew.auth.oauth;
+//!
+//! fn main() {
+//!     // Machine-to-machine: get a token using client credentials
+//!     let client = spawn oauth.Client(
+//!         client_id: "my-service",
+//!         client_secret: "secret123",
+//!     );
+//!
+//!     let token = match await client.client_credentials(
+//!         token_url: "https://auth.example.com/token",
+//!         oauth_scope: "read write",
+//!     ) {
+//!         .Ok(result) => match result {
+//!             .Ok(value) => value,
+//!             .Err(error) => panic(oauth.error_message(error)),
+//!         },
+//!         .Err(_) => panic("OAuth actor stopped"),
+//!     };
+//!     let bearer = token.access_token();
+//!     println(bearer);
+//!     token.free();
+//!
+//!     // Authorization code: generate a PKCE-protected redirect URL for user login.
+//!     // Passing empty state makes the client generate a CSPRNG state.
+//!     let url = match await client.auth_url(
+//!         auth_url: "https://auth.example.com/authorize",
+//!         redirect_uri: "https://myapp.com/callback",
+//!         oauth_scope: "openid profile",
+//!         state: "",
+//!     ) {
+//!         .Ok(result) => match result {
+//!             .Ok(value) => value,
+//!             .Err(error) => panic(oauth.error_message(error)),
+//!         },
+//!         .Err(_) => panic("OAuth actor stopped"),
+//!     };
+//!     println(url);
+//!     let expected_state = match await client.current_state() {
+//!         .Ok(result) => match result {
+//!             .Ok(value) => value,
+//!             .Err(error) => panic(oauth.error_message(error)),
+//!         },
+//!         .Err(_) => panic("OAuth actor stopped"),
+//!     };
+//!     // Compare callback `state` to expected_state before exchanging the code.
+//!     let _ = expected_state;
+//!
+//!     // Exchange authorization code for token; sends the stored PKCE verifier.
+//!     let token2 = match await client.exchange_code(
+//!         token_url: "https://auth.example.com/token",
+//!         code: "auth-code-from-redirect",
+//!         redirect_uri: "https://myapp.com/callback",
+//!     ) {
+//!         .Ok(result) => match result {
+//!             .Ok(value) => value,
+//!             .Err(error) => panic(oauth.error_message(error)),
+//!         },
+//!         .Err(_) => panic("OAuth actor stopped"),
+//!     };
+//!     token2.free();
+//! }
+//! ```
+
+#[wire]
+pub type Token {
+    handle: i64 @1,
+}
+
+#[wire]
+pub enum OAuthError {
+    /// A required URL, code, verifier, or credential was invalid.
+    InvalidInput(string);
+    /// The authorization server could not be reached.
+    Transport(string);
+    /// The token endpoint rejected the request or returned an invalid body.
+    TokenEndpoint(i64, string);
+    /// The client has already been closed.
+    Closed(string);
+    /// The native layer could not complete the operation.
+    Internal(string);
+}
+
+/// Return the diagnostic carried by an `OAuthError`.
+pub fn error_message(error: OAuthError) -> string {
+    match error {
+        .InvalidInput(message) => message,
+        .Transport(message) => message,
+        .TokenEndpoint(_, message) => message,
+        .Closed(message) => message,
+        .Internal(message) => message,
+    }
+}
+
+// ── Token methods ─────────────────────────────────────────────────────
+trait TokenMethods {
+    /// The access token string.
+    fn access_token(self) -> string;
+
+    /// Token type (usually "Bearer").
+    fn token_type(self) -> string;
+
+    /// Expiry in seconds from issuance, when provided.
+    fn expires_in(self) -> Option<i64>;
+
+    /// Refresh token, when provided.
+    fn refresh_token(self) -> Option<string>;
+
+    /// Token scope, when provided.
+    fn get_scope(self) -> Option<string>;
+
+    /// Free the token.
+    fn free(self);
+}
+
+impl TokenMethods for Token {
+    fn access_token(self) -> string {
+        unsafe {
+            hew_oauth_token_access_token(self)
+        }
+    }
+    fn token_type(self) -> string {
+        unsafe {
+            hew_oauth_token_type(self)
+        }
+    }
+    fn expires_in(self) -> Option<i64> {
+        let value = unsafe {
+            hew_oauth_token_expires_in(self)
+        };
+        if value < 0 {
+            None
+        } else {
+            Some(value)
+        }
+    }
+    fn refresh_token(self) -> Option<string> {
+        let value = unsafe {
+            hew_oauth_token_refresh_token(self)
+        };
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    }
+    fn get_scope(self) -> Option<string> {
+        let value = unsafe {
+            hew_oauth_token_scope(self)
+        };
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
+    }
+    fn free(self) {
+        unsafe {
+            hew_oauth_token_free(self);
+        }
+    }
+}
+
+// ── Actor ─────────────────────────────────────────────────────────────
+fn token_result(token: Token) -> Result<Token, OAuthError> {
+    if token.handle == 0 {
+        return Err(OAuthError.Internal("OAuth operation returned no token"));
+    }
+    if unsafe {
+        hew_oauth_token_is_ok(token)
+    } == 1 {
+        return Ok(token);
+    }
+    let status = unsafe {
+        hew_oauth_token_error_status(token)
+    };
+    let message = unsafe {
+        hew_oauth_token_error_message(token)
+    };
+    token.free();
+    if status == 0 {
+        Err(OAuthError.Transport(message))
+    } else {
+        Err(OAuthError.TokenEndpoint(status, message))
+    }
+}
+
+fn live_handle(closed: bool, handle: i64) -> Result<i64, OAuthError> {
+    if closed || handle == 0 {
+        Err(OAuthError.Closed("OAuth client is closed"))
+    } else {
+        Ok(handle)
+    }
+}
+
+pub actor Client {
+    var handle: i64 = 0;
+    var closed: bool = false;
+    init(client_id: string, client_secret: string) {
+        handle = unsafe {
+            hew_oauth_new(client_id, client_id.len(), client_secret, client_secret.len())
+        };
+    }
+
+    // Obtain a token using the client credentials grant.
+    // oauth_scope may be empty. On failure, the returned Token has is_ok() == 0
+    // and exposes status/message diagnostics.
+    receive fn client_credentials(token_url: string, oauth_scope: string) -> Result<Token, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        if token_url.is_empty() {
+            return Err(OAuthError.InvalidInput("token URL must not be empty"));
+        }
+        token_result(unsafe {
+            hew_oauth_client_credentials(client, token_url, token_url.len(), oauth_scope, oauth_scope.len())
+        })
+    }
+
+    // Generate an authorization URL for the authorization code grant.
+    // Always includes PKCE S256 parameters. If state is empty, a CSPRNG state is
+    // generated. The state and PKCE verifier are retained on this client.
+    receive fn auth_url(auth_url: string, redirect_uri: string, oauth_scope: string, state: string) -> Result<string, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        if auth_url.is_empty() || redirect_uri.is_empty() {
+            return Err(OAuthError.InvalidInput("authorization and redirect URLs must not be empty"));
+        }
+        let value = unsafe {
+            hew_oauth_auth_url(client, auth_url, auth_url.len(), redirect_uri, redirect_uri.len(), oauth_scope, oauth_scope.len(), state, state.len())
+        };
+        if value.is_empty() {
+            Err(OAuthError.Internal("authorization URL generation failed"))
+        } else {
+            Ok(value)
+        }
+    }
+
+    // Return the current authorization-code state generated or accepted by auth_url.
+    receive fn current_state() -> Result<Option<string>, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        let value = unsafe {
+            hew_oauth_current_state(client)
+        };
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    }
+
+    // Return the current PKCE code verifier for external encrypted/session storage.
+    receive fn current_code_verifier() -> Result<Option<string>, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        let value = unsafe {
+            hew_oauth_current_code_verifier(client)
+        };
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    }
+
+    // Validate a callback state against the current state. Returns 1 on match.
+    receive fn validate_state(callback_state: string) -> Result<bool, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        if callback_state.is_empty() {
+            return Err(OAuthError.InvalidInput("callback state must not be empty"));
+        }
+        Ok(unsafe {
+            hew_oauth_validate_state(client, callback_state, callback_state.len())
+        } == 1)
+    }
+
+    // Exchange an authorization code for a token using the verifier from auth_url.
+    receive fn exchange_code(token_url: string, code: string, redirect_uri: string) -> Result<Token, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        token_result(unsafe {
+            hew_oauth_exchange_code(client, token_url, token_url.len(), code, code.len(), redirect_uri, redirect_uri.len())
+        })
+    }
+
+    // Exchange an authorization code with an explicitly supplied PKCE verifier.
+    receive fn exchange_code_with_verifier(token_url: string, code: string, redirect_uri: string, code_verifier: string) -> Result<Token, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        if code_verifier.is_empty() {
+            return Err(OAuthError.InvalidInput("PKCE verifier must not be empty"));
+        }
+        token_result(unsafe {
+            hew_oauth_exchange_code_with_verifier(client, token_url, token_url.len(), code, code.len(), redirect_uri, redirect_uri.len(), code_verifier, code_verifier.len())
+        })
+    }
+
+    // Refresh a token using a refresh token string.
+    receive fn refresh(token_url: string, refresh_token: string) -> Result<Token, OAuthError> {
+        let client = live_handle(closed, handle)?;
+        if refresh_token.is_empty() {
+            return Err(OAuthError.InvalidInput("refresh token must not be empty"));
+        }
+        token_result(unsafe {
+            hew_oauth_refresh(client, token_url, token_url.len(), refresh_token, refresh_token.len())
+        })
+    }
+
+    // Free the client.
+    receive fn close() {
+        if handle != 0 {
+            unsafe {
+                hew_oauth_close(handle);
+            };
+            handle = 0;
+        }
+        closed = true;
+    }
+    #[on(stop)]
+    fn release_client() {
+        if handle != 0 {
+            unsafe {
+                hew_oauth_close(handle);
+            };
+            handle = 0;
+        }
+    }
+}
+
+// ── FFI bindings (implementation detail) ──────────────────────────────
+extern "C" {
+    fn hew_oauth_new(client_id: string, client_id_len: i64, client_secret: string, client_secret_len: i64) -> i64;
+    fn hew_oauth_client_credentials(client: i64, token_url: string, token_url_len: i64, oauth_scope: string, oauth_scope_len: i64) -> Token;
+    fn hew_oauth_auth_url(client: i64, auth_url: string, auth_url_len: i64, redirect_uri: string, redirect_uri_len: i64, oauth_scope: string, oauth_scope_len: i64, state: string, state_len: i64) -> string;
+    fn hew_oauth_current_state(client: i64) -> string;
+    fn hew_oauth_current_code_verifier(client: i64) -> string;
+    fn hew_oauth_validate_state(client: i64, callback_state: string, callback_state_len: i64) -> i32;
+    fn hew_oauth_exchange_code(client: i64, token_url: string, token_url_len: i64, code: string, code_len: i64, redirect_uri: string, redirect_uri_len: i64) -> Token;
+    fn hew_oauth_exchange_code_with_verifier(client: i64, token_url: string, token_url_len: i64, code: string, code_len: i64, redirect_uri: string, redirect_uri_len: i64, code_verifier: string, code_verifier_len: i64) -> Token;
+    fn hew_oauth_refresh(client: i64, token_url: string, token_url_len: i64, refresh_token: string, refresh_token_len: i64) -> Token;
+    fn hew_oauth_token_access_token(token: Token) -> string;
+    fn hew_oauth_token_is_ok(token: Token) -> i32;
+    fn hew_oauth_token_error_status(token: Token) -> i64;
+    fn hew_oauth_token_error_message(token: Token) -> string;
+    fn hew_oauth_token_type(token: Token) -> string;
+    fn hew_oauth_token_expires_in(token: Token) -> i64;
+    fn hew_oauth_token_refresh_token(token: Token) -> string;
+    fn hew_oauth_token_scope(token: Token) -> string;
+    fn hew_oauth_token_free(token: Token);
+    fn hew_oauth_close(client: i64);
+}

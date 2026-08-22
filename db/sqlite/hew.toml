@@ -1,0 +1,15 @@
+[package]
+name = "hew.db.sqlite"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Actor-owned SQLite client with typed errors and query snapshots"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["database", "sqlite", "sql"]
+repository = "https://github.com/hew-lang/ecosystem"
+
+[native]
+crate = "."
+lib = "hew_hew_db_sqlite"
+kind = "staticlib"

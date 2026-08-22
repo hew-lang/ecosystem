@@ -1,0 +1,88 @@
+//! Offline end-to-end coverage for the public MongoDB actor API.
+
+import hew.db.mongodb;
+
+import hew.db.mongodb.{MongoError, DocumentLookup, QueryResult};
+
+fn assert_connect_error(result: Result<i64, MongoError>) {
+    match result {
+        .Err(.Connect(message)) => assert(!message.is_empty()),
+        _ => panic("expected MongoError.Connect"),
+    }
+}
+
+fn connection_failure_is_typed_for_every_operation() {
+    let db = spawn mongodb.Conn(uri: "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=10&connectTimeoutMS=10", database: "hew_offline_test");
+    match await db.insert_one("items", "{\"value\":1}") {
+        .Ok(result) => match result {
+            .Err(.Connect(message)) => assert(!message.is_empty()),
+            _ => panic("expected Connect from insert_one"),
+        },
+        .Err(_) => panic("actor stopped during insert_one"),
+    }
+    match await db.find_one("items", "{\"value\":1}") {
+        .Ok(result) => match result {
+            .Err(.Connect(message)) => assert(!message.is_empty()),
+            _ => panic("expected Connect from find_one"),
+        },
+        .Err(_) => panic("actor stopped during find_one"),
+    }
+    match await db.find("items", "{}") {
+        .Ok(result) => match result {
+            .Err(.Connect(message)) => assert(!message.is_empty()),
+            _ => panic("expected Connect from find"),
+        },
+        .Err(_) => panic("actor stopped during find"),
+    }
+    match await db.update_one("items", "{\"value\":1}", "{\"$set\":{\"value\":2}}") {
+        .Ok(result) => assert_connect_error(result),
+        .Err(_) => panic("actor stopped during update_one"),
+    }
+    match await db.delete_one("items", "{\"value\":1}") {
+        .Ok(result) => assert_connect_error(result),
+        .Err(_) => panic("actor stopped during delete_one"),
+    }
+    match await db.count("items", "{}") {
+        .Ok(result) => assert_connect_error(result),
+        .Err(_) => panic("actor stopped during count"),
+    }
+    db.close();
+    match await db.count("items", "{}") {
+        .Ok(result) => match result {
+            .Err(.Closed(message)) => assert_eq(message, "MongoDB connection is closed"),
+            _ => panic("expected Closed after close"),
+        },
+        .Err(_) => panic("actor stopped after close"),
+    }
+    db.close();
+}
+
+fn typed_values_preserve_missing_and_empty_results() {
+    let missing = DocumentLookup.Missing;
+    match missing {
+        .Missing => {},
+        _ => panic("expected Missing"),
+    }
+    let found = DocumentLookup.Found("");
+    match found {
+        .Found(document) => assert_eq(document, ""),
+        _ => panic("expected Found with an empty value"),
+    }
+    let result = QueryResult { documents: Vec.new() };
+    assert_eq(result.documents.len(), 0);
+}
+
+fn error_messages_preserve_each_variant_diagnostic() {
+    assert_eq(mongodb.error_message(MongoError.Connect("connect")), "connect");
+    assert_eq(mongodb.error_message(MongoError.InvalidJson("json")), "json");
+    assert_eq(mongodb.error_message(MongoError.Operation("operation")), "operation");
+    assert_eq(mongodb.error_message(MongoError.Serialize("serialize")), "serialize");
+    assert_eq(mongodb.error_message(MongoError.Closed("closed")), "closed");
+    assert_eq(mongodb.error_message(MongoError.Internal("internal")), "internal");
+}
+
+fn main() {
+    connection_failure_is_typed_for_every_operation();
+    typed_values_preserve_missing_and_empty_results();
+    error_messages_preserve_each_variant_diagnostic();
+}

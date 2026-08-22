@@ -1,0 +1,286 @@
+//! Actor-owned ImageMagick images with typed transformation errors.
+//!
+//! Each actor serializes access to one native image and releases its handle on
+//! explicit close or actor stop.
+
+#[wire]
+pub enum MagickError {
+    InvalidInput(string);
+    Decode(string);
+    Transform(string);
+    Io(string);
+    Closed(string);
+    Internal(string);
+}
+
+/// Return the diagnostic carried by an image error.
+pub fn error_message(error: MagickError) -> string {
+    match error {
+        .InvalidInput(message) => message,
+        .Decode(message) => message,
+        .Transform(message) => message,
+        .Io(message) => message,
+        .Closed(message) => message,
+        .Internal(message) => message,
+    }
+}
+
+#[wire]
+pub enum Source {
+    File(string);
+    Blob(bytes);
+    Blank(i32, i32, string);
+}
+
+fn native_error_from(kind: i32, message: string) -> MagickError {
+    match kind {
+        1 => MagickError.InvalidInput(message),
+        2 => MagickError.Decode(message),
+        3 => MagickError.Transform(message),
+        4 => MagickError.Io(message),
+        5 => MagickError.Closed(message),
+        _ => MagickError.Internal(message),
+    }
+}
+
+fn native_error() -> MagickError {
+    let message = unsafe {
+        hew_magick_last_error()
+    };
+    native_error_from(unsafe {
+        hew_magick_last_error_kind()
+    }, message)
+}
+
+fn image_handle(closed: bool, handle: i64, kind: i32, message: string) -> Result<i64, MagickError> {
+    if closed {
+        Err(MagickError.Closed("image is closed"))
+    } else if handle == 0 {
+        Err(native_error_from(kind, message))
+    } else {
+        Ok(handle)
+    }
+}
+
+fn operation(status: i32) -> Result<i64, MagickError> {
+    if status == 0 {
+        Ok(0)
+    } else {
+        Err(native_error())
+    }
+}
+
+/// A mailbox-serialized owner of one ImageMagick image.
+pub actor Image {
+    var native_handle: i64 = 0;
+    var init_error_kind: i32 = 0;
+    var init_error_message: string = "";
+    var closed: bool = false;
+
+    init(source: Source) {
+        native_handle = match source {
+            .File(path) => unsafe {
+                hew_magick_open_len(path, path.len())
+            },
+            .Blob(blob) => unsafe {
+                hew_magick_open_blob(blob)
+            },
+            .Blank(width, height, color) => unsafe {
+                hew_magick_new_len(width, height, color, color.len())
+            },
+        };
+        if native_handle == 0 {
+            init_error_kind = unsafe {
+                hew_magick_last_error_kind()
+            };
+            init_error_message = match init_error_kind {
+                1 => "image input is invalid",
+                2 => "image could not be decoded",
+                _ => "image initialization failed",
+            };
+        }
+    }
+
+    /// Resize to exact positive dimensions.
+    receive fn resize(width: i32, height: i32) -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        if width <= 0 || height <= 0 {
+            return Err(MagickError.InvalidInput("image dimensions must be positive"));
+        }
+        operation(unsafe {
+            hew_magick_resize(handle, width, height)
+        })
+    }
+
+    /// Crop a positive-sized region at the given offset.
+    receive fn crop(width: i32, height: i32, x: i32, y: i32) -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        if width <= 0 || height <= 0 {
+            return Err(MagickError.InvalidInput("crop dimensions must be positive"));
+        }
+        operation(unsafe {
+            hew_magick_crop(handle, width, height, x, y)
+        })
+    }
+
+    receive fn rotate(degrees: f64) -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        operation(unsafe {
+            hew_magick_rotate(handle, degrees)
+        })
+    }
+
+    receive fn blur(radius: f64, sigma: f64) -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        operation(unsafe {
+            hew_magick_blur(handle, radius, sigma)
+        })
+    }
+
+    receive fn sharpen(radius: f64, sigma: f64) -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        operation(unsafe {
+            hew_magick_sharpen(handle, radius, sigma)
+        })
+    }
+
+    receive fn flip() -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        operation(unsafe {
+            hew_magick_flip(handle)
+        })
+    }
+
+    receive fn flop() -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        operation(unsafe {
+            hew_magick_flop(handle)
+        })
+    }
+
+    receive fn width() -> Result<i32, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        let value = unsafe {
+            hew_magick_width(handle)
+        };
+        if value > 0 {
+            Ok(value)
+        } else {
+            Err(native_error())
+        }
+    }
+
+    receive fn height() -> Result<i32, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        let value = unsafe {
+            hew_magick_height(handle)
+        };
+        if value > 0 {
+            Ok(value)
+        } else {
+            Err(native_error())
+        }
+    }
+
+    receive fn format() -> Result<string, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        let value = unsafe {
+            hew_magick_format(handle)
+        };
+        if value.is_empty() {
+            Err(native_error())
+        } else {
+            Ok(value)
+        }
+    }
+
+    receive fn write(path: string) -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        operation(unsafe {
+            hew_magick_write_len(handle, path, path.len())
+        })
+    }
+
+    /// Encode the current image into an owned in-memory image blob.
+    receive fn write_blob(format: string) -> Result<bytes, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        if format.is_empty() {
+            return Err(MagickError.InvalidInput("image format must not be empty"));
+        }
+        let value = unsafe {
+            hew_magick_write_blob_len(handle, format, format.len())
+        };
+        if value.is_empty() {
+            Err(native_error())
+        } else {
+            Ok(value)
+        }
+    }
+
+    receive fn thumbnail(max_width: i32, max_height: i32) -> Result<i64, MagickError> {
+        let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
+        if max_width <= 0 || max_height <= 0 {
+            return Err(MagickError.InvalidInput("thumbnail bounds must be positive"));
+        }
+        let width = unsafe {
+            hew_magick_width(handle)
+        };
+        let height = unsafe {
+            hew_magick_height(handle)
+        };
+        if width <= 0 || height <= 0 {
+            return Err(native_error());
+        }
+        let width_scale = max_width as f64 / width as f64;
+        let height_scale = max_height as f64 / height as f64;
+        let scale = if width_scale < height_scale {
+            width_scale
+        } else {
+            height_scale
+        };
+        operation(unsafe {
+            hew_magick_resize(handle, (width as f64 * scale) as i32, (height as f64 * scale) as i32)
+        })
+    }
+
+    receive fn close() {
+        if native_handle != 0 {
+            unsafe {
+                hew_magick_destroy(native_handle)
+            };
+            native_handle = 0;
+        }
+        closed = true;
+    }
+
+    #[on(stop)]
+    fn release_native_handle() {
+        if native_handle != 0 {
+            unsafe {
+                hew_magick_destroy(native_handle)
+            };
+            native_handle = 0;
+        }
+    }
+}
+
+extern "C" {
+    fn hew_magick_last_error_kind() -> i32;
+    fn hew_magick_last_error() -> string;
+    fn hew_magick_open_len(path: string, path_len: i64) -> i64;
+    fn hew_magick_open_blob(blob: bytes) -> i64;
+    fn hew_magick_new_len(width: i32, height: i32, color: string, color_len: i64) -> i64;
+    fn hew_magick_write_len(image: i64, path: string, path_len: i64) -> i32;
+    fn hew_magick_write_blob_len(image: i64, format: string, format_len: i64) -> bytes;
+    fn hew_magick_resize(image: i64, width: i32, height: i32) -> i32;
+    fn hew_magick_crop(image: i64, width: i32, height: i32, x: i32, y: i32) -> i32;
+    fn hew_magick_rotate(image: i64, degrees: f64) -> i32;
+    fn hew_magick_blur(image: i64, radius: f64, sigma: f64) -> i32;
+    fn hew_magick_sharpen(image: i64, radius: f64, sigma: f64) -> i32;
+    fn hew_magick_flip(image: i64) -> i32;
+    fn hew_magick_flop(image: i64) -> i32;
+    fn hew_magick_width(image: i64) -> i32;
+    fn hew_magick_height(image: i64) -> i32;
+    fn hew_magick_format(image: i64) -> string;
+    fn hew_magick_destroy(image: i64);
+}

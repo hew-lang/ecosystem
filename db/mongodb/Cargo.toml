@@ -1,0 +1,26 @@
+[package]
+name = "hew-ecosystem-db-mongodb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.db.mongodb — MongoDB document database client for Hew"
+readme = "README.md"
+keywords = ["database", "mongodb", "nosql", "document"]
+categories = ["database"]
+
+[lib]
+name = "hew_hew_db_mongodb"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+mongodb = { version = "3", default-features = false, features = ["compat-3-0-0", "rustls-tls", "sync"] }
+serde_json = "1"
+libc.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[features]
+integration = []
+
+[lints]
+workspace = true

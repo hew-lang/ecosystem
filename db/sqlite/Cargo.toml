@@ -1,0 +1,21 @@
+[package]
+name = "hew-ecosystem-db-sqlite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.db.sqlite — actor-owned embedded SQL client for Hew"
+readme = "README.md"
+keywords = ["database", "sqlite", "sql", "embedded"]
+categories = ["database"]
+
+[lib]
+name = "hew_hew_db_sqlite"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+rusqlite = { version = "0.38", features = ["bundled"] }
+libc.workspace = true
+
+[lints]
+workspace = true

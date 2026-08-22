@@ -1,0 +1,16 @@
+import hew.db.mysql;
+
+fn main() {
+    let db = spawn mysql.Conn(url: "mysql://hew:hew@127.0.0.1:3306/hew_test");
+    match await db.query("SELECT 41 AS value") {
+        .Ok(result) => match result {
+            .Ok(query) => match query.rows[0].values[0] {
+                .Text(value) => println(value.to_string()),
+                .Null => println("value is NULL"),
+            },
+            .Err(error) => println(mysql.error_message(error)),
+        },
+        .Err(_) => println("MySQL actor stopped before replying"),
+    }
+    let _ = db.close();
+}

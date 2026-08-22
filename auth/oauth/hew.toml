@@ -1,0 +1,15 @@
+[package]
+name = "hew.auth.oauth"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Typed OAuth 2.0 client for Hew — PKCE authorization code, state validation, client credentials, and refresh"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["oauth", "pkce", "authentication", "authorization"]
+repository = "https://github.com/hew-lang/ecosystem"
+
+[native]
+crate = "."
+lib = "hew_hew_auth_oauth"
+kind = "staticlib"

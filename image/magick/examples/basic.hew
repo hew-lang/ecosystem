@@ -1,0 +1,25 @@
+//! Create an image, thumbnail it, write it out, and read its format back.
+//!
+//! ImageMagick 7 is a system dependency and its libraries have to be named on
+//! the link line. From the ecosystem checkout: `make magick-example`.
+//! image/magick/README.md spells out the full command.
+
+import hew.image.magick;
+
+fn main() {
+    let image = spawn magick.Image(source: Source.Blank(64, 48, "#3366cc"));
+    let _ = await image.thumbnail(32, 32);
+    let _ = await image.write("magick-example.png");
+    let _ = image.close();
+    // ImageMagick only tags a wand's format once it has decoded real image
+    // data, so a freshly created image reports no format until reopened.
+    let written = spawn magick.Image(source: Source.File("magick-example.png"));
+    match await written.format() {
+        .Ok(result) => match result {
+            .Ok(value) => println(f"magick-example.png is {value}"),
+            .Err(error) => println(magick.error_message(error)),
+        },
+        .Err(_) => println("image actor stopped before replying"),
+    }
+    let _ = written.close();
+}

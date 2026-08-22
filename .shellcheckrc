@@ -1,0 +1,3 @@
+# Scripts source ./toolchain.env; follow it so the pin variables are checked
+# rather than reported as unresolved (SC1091).
+external-sources=true

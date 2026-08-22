@@ -1,0 +1,15 @@
+[package]
+name = "hew.db.postgres"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Actor-owned PostgreSQL client with typed errors and query snapshots"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["database", "postgres", "sql"]
+repository = "https://github.com/hew-lang/ecosystem"
+
+[native]
+crate = "."
+lib = "hew_hew_db_postgres"
+kind = "staticlib"

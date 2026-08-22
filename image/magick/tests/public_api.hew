@@ -1,0 +1,152 @@
+import std.testing;
+
+import hew.image.magick;
+
+extern "C" {
+    fn hew_actor_stop(pid: LocalPid<magick.Image>);
+    fn hew_magick_image_count() -> i64;
+}
+
+fn assert_ok_i64(result: Result<i64, magick.MagickError>) {
+    match result {
+        .Ok(_) => {},
+        .Err(_) => testing.assert_true(false),
+    }
+}
+
+fn transformations_cover_public_surface() {
+    let image = spawn magick.Image(source: Source.Blank(80, 40, "blue"));
+    match await image.width() {
+        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 80),
+        _ => testing.assert_true(false),
+    }
+    match await image.height() {
+        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 40),
+        _ => testing.assert_true(false),
+    }
+    match await image.resize(40, 20) {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.crop(20, 10, 0, 0) {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.rotate(90.0) {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.blur(0.0, 1.0) {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.sharpen(0.0, 0.5) {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.flip() {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.flop() {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.thumbnail(5, 5) {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    match await image.write("magick-public-api.png") {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    let _ = image.close();
+    sleep(20ms);
+    let reopened = spawn magick.Image(source: Source.File("magick-public-api.png"));
+    match await reopened.format() {
+        .Ok(.Ok(value)) => testing.assert_true(!value.is_empty()),
+        _ => testing.assert_true(false),
+    }
+    let _ = reopened.close();
+    sleep(20ms);
+}
+
+fn invalid_inputs_return_typed_errors() {
+    let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
+    match await image.resize(0, 1) {
+        .Ok(result) => match result {
+            .Err(error) => testing.assert_true(!magick.error_message(error).is_empty()),
+            .Ok(_) => testing.assert_true(false),
+        },
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = image.close();
+    sleep(20ms);
+    let missing = spawn magick.Image(source: Source.File("missing-image-file.png"));
+    match await missing.width() {
+        .Ok(result) => match result {
+            .Err(error) => testing.assert_true(!magick.error_message(error).is_empty()),
+            .Ok(_) => testing.assert_true(false),
+        },
+        .Err(_) => testing.assert_true(false),
+    }
+    let _ = missing.close();
+    sleep(20ms);
+}
+
+fn blob_round_trip_preserves_a_real_image() {
+    let source = spawn magick.Image(source: Source.Blank(37, 19, "#2f80ed"));
+    let encoded = match await source.write_blob("PNG") {
+        .Ok(.Ok(value)) => value,
+        _ => {
+            testing.assert_true(false);
+            bytes.new()
+        },
+    };
+    testing.assert_true(encoded.len() > 8);
+    let _ = source.close();
+    sleep(20ms);
+    let decoded = spawn magick.Image(source: Source.Blob(encoded));
+    match await decoded.width() {
+        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 37),
+        _ => testing.assert_true(false),
+    }
+    match await decoded.height() {
+        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 19),
+        _ => testing.assert_true(false),
+    }
+    match await decoded.format() {
+        .Ok(.Ok(value)) => testing.assert_true(value == "PNG"),
+        _ => testing.assert_true(false),
+    }
+    let _ = decoded.close();
+    sleep(20ms);
+}
+
+fn actor_stop_releases_relative_registry_count() {
+    let before = unsafe {
+        hew_magick_image_count()
+    };
+    let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
+    match await image.width() {
+        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 10),
+        _ => testing.assert_true(false),
+    }
+    testing.assert_eq(unsafe {
+        hew_magick_image_count()
+    }, before + 1);
+    unsafe {
+        hew_actor_stop(image);
+    };
+    sleep(20ms);
+    testing.assert_eq(unsafe {
+        hew_magick_image_count()
+    }, before);
+}
+
+fn main() {
+    transformations_cover_public_surface();
+    invalid_inputs_return_typed_errors();
+    blob_round_trip_preserves_a_real_image();
+    actor_stop_releases_relative_registry_count();
+}

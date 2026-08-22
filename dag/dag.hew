@@ -1,0 +1,1078 @@
+//! Workflow directed-graph (DAG) handler.
+//!
+//! A coordinator that loads a directed-graph / statechart specification AT
+//! RUNTIME, topologically sorts it, then routes a single input value through
+//! the nodes in dependency order — sending to each node's handler (a function
+//! or a live actor) and feeding the results forward along the edges. Each node
+//! receives the combined output of its predecessors (or the initial input, when
+//! it is a source node) and produces a new value that downstream nodes consume.
+//!
+//! This complements `hew.workflow` (the Petri-net / WF-net engine). Where that
+//! library models token-firing semantics and soundness analysis over a static
+//! net, this one is a *runtime-loaded data-flow router*: the graph arrives as
+//! text, the handler validates it, and the node handlers compute along the topo
+//! order.
+//!
+//! A cyclic spec has no valid topological order, so the handler refuses it
+//! (fail closed) with a clear `DagError.Cyclic` rather than looping or
+//! silently dropping nodes.
+//!
+//! # Data model
+//!
+//! Structure-of-arrays, flat (Copy) records only — a `Vec` element record may
+//! not own a nested collection on the current substrate, so node labels and
+//! edges live in parallel top-level `Vec` fields keyed by integer node id.
+//!
+//! # Spec text format
+//!
+//! A spec has at most two `;`-separated sections divided by a single `|`:
+//!
+//! ```text
+//! multiply:2 add:5 square:0 | 0->1 ; 1->2 ; 0->2
+//! ```
+//!
+//! The left section lists nodes as `op:operand`, positionally assigning ids
+//! `0..n`. The right section lists directed edges `src->dst` (dst depends on,
+//! and runs after, src). Whitespace around tokens is ignored; an empty edge
+//! section is a graph of isolated nodes.
+//!
+//! # Routing
+//!
+//! - `run_text(text, initial)` — parse a spec string and route `initial`
+//!   through it, applying each node's own bound operation. The one-call path.
+//! - `route_with(spec, initial, dispatch)` — route through a caller-supplied
+//!   `fn(node_id, input) -> output`. A plain `fn` dispatch lowers across the
+//!   module boundary, so an importing consumer drives routing through their own
+//!   per-node logic.
+//! - **Live actors** — to route through one live actor per node, open-code the
+//!   driver in the consumer's compilation unit (spawn a `Vec<LocalPid<...>>`,
+//!   ask each in `topo_order`, feed results forward). The library supplies the
+//!   spec loading, validation, and topological sort; the consumer supplies the
+//!   actors. See `examples/actor_pipeline.hew`. (`await` inside a closure
+//!   compiles on the current substrate but returns a value that is not the
+//!   reply, so a `route_with` dispatch must stay pure — see WALLS.md.)
+//!
+//! # Examples
+//!
+//! ```
+//! import hew.dag;
+//!
+//! fn main() {
+//!     match dag.parse_spec("add:1 multiply:10 | 0->1") {
+//!         .Ok(spec) => {
+//!             // Drive each node through caller-supplied logic.
+//!             let report = dag.route_with(spec, 3, |node: i64, x: i64| -> i64 {
+//!                 if node == 0 { x + 1 } else { x * 10 }
+//!             });
+//!             match report {
+//!                 .Ok(r) => println(f"sink output = {dag.sink_output(r)}"),  // 40
+//!                 .Err(f) => println(dag.describe(dag.error_of(f))),
+//!             }
+//!         },
+//!         .Err(e) => println(dag.describe(e)),
+//!     }
+//! }
+//! ```
+
+import std.string;
+
+// ── Node operation codes ───────────────────────────────────────────────────
+/// What a node's actor does to the value flowing through it. Each is a flat,
+/// closed operation; the `operand` in a `NodeSpec` parameterizes it.
+pub enum NodeOp {
+    /// `x + operand`
+    Add;
+    /// `x * operand`
+    Multiply;
+    /// `x * x` (operand ignored)
+    Square;
+    /// `x` unchanged (operand ignored) — a pass-through / fan-in merge point
+    Identity;
+}
+
+// ── Spec records (structure-of-arrays, flat Copy fields) ────────────────────
+/// One node: its compact id, the operation it applies, and the operand the
+/// operation is parameterized by. `op_code` is the `NodeOp` discriminant stored
+/// as an `i64` so the whole record stays Copy and Vec-storable.
+pub type NodeSpec {
+    id: i64;
+    op_code: i64;
+    operand: i64;
+}
+
+/// A directed dependency edge: `dst` runs after `src` and consumes its output.
+pub type Edge {
+    src: i64;
+    dst: i64;
+}
+
+/// A compiled DAG specification. The graph is a flat edge list (two parallel
+/// arrays would also work; an `Edge` record is itself Copy, so a single
+/// `Vec<Edge>` is clean here) plus the per-node operations.
+pub type DagSpec {
+    num_nodes: i64;
+    nodes: Vec<NodeSpec>;
+    edges: Vec<Edge>;
+}
+
+/// The outcome of routing an input through the graph. `outputs` is indexed by
+/// node id; `order` is the topological order the nodes ran in.
+pub type RunReport {
+    outputs: Vec<i64>;
+    order: Vec<i64>;
+    num_nodes: i64;
+}
+
+// ── Errors (fail closed) ────────────────────────────────────────────────────
+#[wire]
+pub enum DagError {
+    /// No nodes at all.
+    Empty;
+    /// The graph has a cycle, so there is no valid topological order.
+    Cyclic;
+    /// An edge referenced a node id outside `[0, num_nodes)`.
+    UnknownNode(i64);
+    /// The spec text was malformed (e.g. a node missing its `op:operand` form).
+    Malformed(i64);
+    /// A programmatic node carried an operation discriminant this version does not know.
+    UnknownOperation(i64);
+}
+
+/// A run failure that also reports how far the run got. Wrapping the `DagError`
+/// keeps the routing functions returning a `Result` whose `Err` is still
+/// inspectable for the node at which routing stopped (`-1` when the spec was
+/// refused before any node ran).
+pub type RunFailure {
+    err: DagError;
+    stopped_at: i64;
+}
+
+// ── NodeOp <-> code mapping ─────────────────────────────────────────────────
+/// Decode an `op_code` discriminant into a `NodeOp`, refusing unknown codes.
+pub fn op_of_code(code: i64) -> Result<NodeOp, DagError> {
+    match code {
+        0 => Ok(NodeOp.Add),
+        1 => Ok(NodeOp.Multiply),
+        2 => Ok(NodeOp.Square),
+        3 => Ok(NodeOp.Identity),
+        _ => Err(DagError.UnknownOperation(code)),
+    }
+}
+
+/// The `i64` discriminant for a `NodeOp`.
+pub fn code_of_op(op: NodeOp) -> i64 {
+    match op {
+        .Add => 0,
+        .Multiply => 1,
+        .Square => 2,
+        .Identity => 3,
+    }
+}
+
+/// Parse an operation name into its code. Unknown names are refused so a
+/// misspelled runtime spec never routes as a silent no-op.
+fn code_of_name(name: string, token: i64) -> Result<i64, DagError> {
+    match name {
+        "add" => Ok(0),
+        "multiply" => Ok(1),
+        "mul" => Ok(1),
+        "square" => Ok(2),
+        "identity" => Ok(3),
+        "id" => Ok(3),
+        _ => Err(DagError.Malformed(token)),
+    }
+}
+
+// ── The per-node operation kernel ───────────────────────────────────────────
+/// Apply a node's operation to the value flowing through it. This is the kernel
+/// a routing dispatch calls for each node; a consumer's actor-backed dispatch
+/// can wrap it (see `examples/actor_pipeline.hew`), or `route_with` can call it
+/// directly. Kept pure so that routing is decided by a value the caller can
+/// compute and check, rather than by a reply the dispatch seam cannot carry
+/// (see WALLS.md).
+pub fn apply_op(op: NodeOp, x: i64, operand: i64) -> i64 {
+    match op {
+        .Add => x + operand,
+        .Multiply => x * operand,
+        .Square => x * x,
+        .Identity => x,
+    }
+}
+
+// ── Construction (programmatic) ─────────────────────────────────────────────
+/// A fresh empty spec.
+pub fn new_spec() -> DagSpec {
+    DagSpec { num_nodes: 0, nodes: Vec.new(), edges: Vec.new() }
+}
+
+/// Add a node with the given operation and operand; returns the new node id.
+pub fn add_node(spec: DagSpec, op: NodeOp, operand: i64) -> DagSpec {
+    let id = spec.num_nodes;
+    spec.nodes.push(NodeSpec { id: id, op_code: code_of_op(op), operand: operand });
+    DagSpec { num_nodes: id + 1, nodes: spec.nodes, edges: spec.edges }
+}
+
+fn node_in_range(spec: DagSpec, id: i64) -> bool {
+    id >= 0 && id < spec.num_nodes
+}
+
+/// Add a dependency edge `src -> dst`, rejecting either endpoint when it does
+/// not identify a node in the spec.
+pub fn add_edge(spec: DagSpec, src: i64, dst: i64) -> Result<DagSpec, DagError> {
+    if !node_in_range(spec, src) {
+        return Err(DagError.UnknownNode(src));
+    }
+    if !node_in_range(spec, dst) {
+        return Err(DagError.UnknownNode(dst));
+    }
+    spec.edges.push(Edge { src: src, dst: dst });
+    Ok(spec)
+}
+
+// ── Runtime spec loading (text -> DagSpec) ──────────────────────────────────
+fn is_digit(ch: char) -> bool {
+    ch >= '0' && ch <= '9'
+}
+
+fn is_i64_text(text: string) -> bool {
+    let chars = text.chars();
+    let n = chars.len();
+    if n == 0 {
+        return false;
+    }
+    var start = 0;
+    if chars[0] == '-' {
+        if n == 1 {
+            return false;
+        }
+        start = 1;
+    }
+    for i in start .. n {
+        if !is_digit(chars[i]) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Parse a node descriptor `op:operand` into a `NodeSpec` with the given id.
+/// Rejects anything outside that exact grammar.
+fn parse_node(token: string, id: i64) -> Result<NodeSpec, DagError> {
+    let parts = token.split(":");
+    if parts.len() != 2 {
+        return Err(DagError.Malformed(id));
+    }
+    let name = match parts.get(0) {
+        .Some(s) => s.trim(),
+        .None => return Err(DagError.Malformed(id)),
+    };
+    let operand_text = match parts.get(1) {
+        .Some(s) => s.trim(),
+        .None => return Err(DagError.Malformed(id)),
+    };
+    if name.is_empty() {
+        return Err(DagError.Malformed(id));
+    }
+    if !is_i64_text(operand_text) {
+        return Err(DagError.Malformed(id));
+    }
+    let operand = match string.to_int(operand_text) {
+        .Some(value) => value,
+        .None => return Err(DagError.Malformed(id)),
+    };
+    match code_of_name(name, id) {
+        .Ok(code) => Ok(NodeSpec { id: id, op_code: code, operand: operand }),
+        .Err(e) => Err(e),
+    }
+}
+
+/// Split a section into whitespace-free non-empty tokens on a separator.
+fn nonempty_tokens(section: string, sep: string) -> Vec<StrTok> {
+    let out: Vec<StrTok> = Vec.new();
+    let raw = section.split(sep);
+    let n = raw.len();
+    for i in 0 .. n {
+        let t = raw[i].trim();
+        if !t.is_empty() {
+            out.push(StrTok { s: t });
+        }
+    }
+    out
+}
+
+/// A one-field wrapper so trimmed string tokens live in an indexable `Vec`.
+/// (A bare `Vec<string>` cannot be scalar-indexed on the current substrate.)
+pub type StrTok {
+    s: string;
+}
+
+/// Load a spec from its text form (see the module docs for the grammar).
+/// Validates node-id bounds on every edge and rejects an empty graph.
+pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
+    let halves = text.split("|");
+    if halves.len() > 2 {
+        return Err(DagError.Malformed(2));
+    }
+    // A missing node section parses as empty and is refused as `Empty` below;
+    // a missing `|` means an edge-free graph of isolated nodes.
+    let node_section = match halves.get(0) {
+        .Some(s) => s,
+        .None => "",
+    };
+    let edge_section = match halves.get(1) {
+        .Some(s) => s,
+        .None => "",
+    };
+    let node_toks = nonempty_tokens(node_section, " ");
+    let num_nodes = node_toks.len();
+    if num_nodes == 0 {
+        return Err(DagError.Empty);
+    }
+    let nodes: Vec<NodeSpec> = Vec.new();
+    for i in 0 .. num_nodes {
+        let tok = node_toks[i];
+        match parse_node(tok.s, i) {
+            .Ok(node) => nodes.push(node),
+            .Err(e) => {
+                return Err(e);
+            },
+        }
+    }
+    let edges: Vec<Edge> = Vec.new();
+    let edge_toks = nonempty_tokens(edge_section, ";");
+    let ne = edge_toks.len();
+    for i in 0 .. ne {
+        let tok = edge_toks[i];
+        let ends = tok.s.split("->");
+        if ends.len() != 2 {
+            return Err(DagError.Malformed(i));
+        }
+        let src_text = match ends.get(0) {
+            .Some(s) => s.trim(),
+            .None => return Err(DagError.Malformed(i)),
+        };
+        let dst_text = match ends.get(1) {
+            .Some(s) => s.trim(),
+            .None => return Err(DagError.Malformed(i)),
+        };
+        let src = match string.to_int(src_text) {
+            .Some(value) => value,
+            .None => return Err(DagError.Malformed(i)),
+        };
+        let dst = match string.to_int(dst_text) {
+            .Some(value) => value,
+            .None => return Err(DagError.Malformed(i)),
+        };
+        if src < 0 {
+            return Err(DagError.UnknownNode(src));
+        }
+        if src >= num_nodes {
+            return Err(DagError.UnknownNode(src));
+        }
+        if dst < 0 {
+            return Err(DagError.UnknownNode(dst));
+        }
+        if dst >= num_nodes {
+            return Err(DagError.UnknownNode(dst));
+        }
+        edges.push(Edge { src: src, dst: dst });
+    }
+    Ok(DagSpec { num_nodes: num_nodes, nodes: nodes, edges: edges })
+}
+
+// ── Topological sort (Kahn) ─────────────────────────────────────────────────
+/// Validate every edge endpoint before any graph vector is indexed.
+fn validate_edges(spec: DagSpec) -> Result<i64, DagError> {
+    let ne = spec.edges.len();
+    for e in 0 .. ne {
+        let edge = spec.edges[e];
+        if !node_in_range(spec, edge.src) {
+            return Err(DagError.UnknownNode(edge.src));
+        }
+        if !node_in_range(spec, edge.dst) {
+            return Err(DagError.UnknownNode(edge.dst));
+        }
+    }
+    Ok(ne)
+}
+
+/// In-degree of every node from the edge list.
+fn in_degrees(spec: DagSpec) -> Result<Vec<i64>, DagError> {
+    let ne = validate_edges(spec)?;
+    let deg: Vec<i64> = Vec.new();
+    for _i in 0 .. spec.num_nodes {
+        deg.push(0);
+    }
+    for e in 0 .. ne {
+        let d = spec.edges[e].dst;
+        deg.set(d, deg[d] + 1);
+    }
+    Ok(deg)
+}
+
+/// Kahn's algorithm. The returned order is shorter than `num_nodes` exactly
+/// when the graph contains a cycle. Invalid edge endpoints are rejected before
+/// indexing the in-degree vector.
+pub fn topo_order(spec: DagSpec) -> Result<Vec<i64>, DagError> {
+    let indeg = in_degrees(spec)?;
+    let order: Vec<i64> = Vec.new();
+    let queue: Vec<i64> = Vec.new();
+    for s in 0 .. spec.num_nodes {
+        if indeg[s] == 0 {
+            queue.push(s);
+        }
+    }
+    var head = 0;
+    let ne = spec.edges.len();
+    while head < queue.len() {
+        let node = queue[head];
+        head = head + 1;
+        order.push(node);
+        for e in 0 .. ne {
+            if spec.edges[e].src == node {
+                let d = spec.edges[e].dst;
+                indeg.set(d, indeg[d] - 1);
+                if indeg[d] == 0 {
+                    queue.push(d);
+                }
+            }
+        }
+    }
+    Ok(order)
+}
+
+/// `true` when the graph has a valid topological order (is acyclic), or a typed
+/// error when an edge endpoint is outside the graph.
+pub fn is_acyclic(spec: DagSpec) -> Result<bool, DagError> {
+    Ok(topo_order(spec)?.len() == spec.num_nodes)
+}
+
+/// Validate the spec for routing: non-empty and acyclic. Returns the node count
+/// on success, or the first violation.
+pub fn validate(spec: DagSpec) -> Result<i64, DagError> {
+    if spec.num_nodes == 0 {
+        return Err(DagError.Empty);
+    }
+    match is_acyclic(spec) {
+        .Ok(acyclic) => {
+            if !acyclic {
+                return Err(DagError.Cyclic);
+            }
+        },
+        .Err(e) => return Err(e),
+    }
+    Ok(spec.num_nodes)
+}
+
+// ── Routing ─────────────────────────────────────────────────────────────────
+/// The input fed to `node`: the sum of its predecessors' outputs, or the
+/// initial input when the node is a source (no predecessors).
+fn gather_input(spec: DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> Result<i64, DagError> {
+    var feed = 0;
+    var has_pred = false;
+    let ne = spec.edges.len();
+    for e in 0 .. ne {
+        let edge = spec.edges[e];
+        if !node_in_range(spec, edge.src) {
+            return Err(DagError.UnknownNode(edge.src));
+        }
+        if !node_in_range(spec, edge.dst) {
+            return Err(DagError.UnknownNode(edge.dst));
+        }
+        if edge.dst == node {
+            feed = feed + outputs[edge.src];
+            has_pred = true;
+        }
+    }
+    if has_pred {
+        Ok(feed)
+    } else {
+        Ok(initial)
+    }
+}
+
+/// Route `initial` through a caller-supplied per-node `dispatch(node_id, input)`
+/// in dependency order, feeding each node the merged output of its predecessors.
+/// This is the **import-friendly** routing entry point: a plain `fn(i64, i64)`
+/// dispatch lowers across the module boundary, so a consumer that imports this
+/// library can drive routing through their own logic. Refuses a cyclic/empty
+/// spec (fail closed).
+///
+/// `dispatch` must be pure. An `await` inside a closure compiles on the current
+/// substrate and then yields a value that is not the actor's reply, so an
+/// actor-backed driver is open-coded in the consumer's compilation unit with the
+/// `await` at statement level instead (see `examples/actor_pipeline.hew`).
+pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn(i64, i64) -> i64) -> Result<RunReport, RunFailure> {
+    match validate(spec) {
+        .Ok(_) => {},
+        .Err(e) => {
+            return Err(RunFailure { err: e, stopped_at: -1 });
+        },
+    }
+    let order = match topo_order(spec) {
+        .Ok(order) => order,
+        .Err(e) => return Err(RunFailure { err: e, stopped_at: -1 }),
+    };
+    let outputs: Vec<i64> = Vec.new();
+    for _i in 0 .. spec.num_nodes {
+        outputs.push(0);
+    }
+    let on = order.len();
+    for i in 0 .. on {
+        let node = order[i];
+        let input = match gather_input(spec, outputs, node, initial) {
+            .Ok(input) => input,
+            .Err(e) => return Err(RunFailure { err: e, stopped_at: node }),
+        };
+        outputs.set(node, dispatch(node, input));
+    }
+    Ok(RunReport { outputs: outputs, order: order, num_nodes: spec.num_nodes })
+}
+
+/// The default per-node dispatch: apply each node's own bound operation, read
+/// from `spec`, to the routed input. This is the dispatch most callers want, so
+/// `run_text` wires it automatically.
+pub fn apply_spec_node(spec: DagSpec, node: i64, input: i64) -> Result<i64, DagError> {
+    let ns = spec.nodes[node];
+    Ok(apply_op(op_of_code(ns.op_code)?, input, ns.operand))
+}
+
+/// Convenience: parse text, then route using each node's own bound operation.
+/// One call from spec string to result. Refuses a cyclic/empty spec.
+pub fn run_text(text: string, initial: i64) -> Result<RunReport, RunFailure> {
+    match parse_spec(text) {
+        .Ok(spec) => {
+            match validate(spec) {
+                .Ok(_) => {},
+                .Err(e) => {
+                    return Err(RunFailure { err: e, stopped_at: -1 });
+                },
+            }
+            let order = match topo_order(spec) {
+                .Ok(order) => order,
+                .Err(e) => return Err(RunFailure { err: e, stopped_at: -1 }),
+            };
+            let outputs: Vec<i64> = Vec.new();
+            for _i in 0 .. spec.num_nodes {
+                outputs.push(0);
+            }
+            let on = order.len();
+            for i in 0 .. on {
+                let node = order[i];
+                let input = match gather_input(spec, outputs, node, initial) {
+                    .Ok(input) => input,
+                    .Err(e) => return Err(RunFailure { err: e, stopped_at: node }),
+                };
+                match apply_spec_node(spec, node, input) {
+                    .Ok(output) => outputs.set(node, output),
+                    .Err(e) => return Err(RunFailure { err: e, stopped_at: node }),
+                }
+            }
+            Ok(RunReport { outputs: outputs, order: order, num_nodes: spec.num_nodes })
+        },
+        .Err(e) => Err(RunFailure { err: e, stopped_at: -1 }),
+    }
+}
+
+// ── Spec / report / error accessors ─────────────────────────────────────────
+/// The number of nodes in the spec.
+pub fn node_count(spec: DagSpec) -> i64 {
+    spec.num_nodes
+}
+
+/// The number of edges in the spec.
+pub fn edge_count(spec: DagSpec) -> i64 {
+    spec.edges.len()
+}
+
+/// The source node id of edge `e`.
+pub fn edge_src(spec: DagSpec, e: i64) -> i64 {
+    spec.edges[e].src
+}
+
+/// The destination node id of edge `e`.
+pub fn edge_dst(spec: DagSpec, e: i64) -> i64 {
+    spec.edges[e].dst
+}
+
+/// The `NodeSpec` for node `id` (nodes are stored in id order).
+pub fn node_at(spec: DagSpec, id: i64) -> NodeSpec {
+    spec.nodes[id]
+}
+
+/// The output of node `id`.
+pub fn output_at(report: RunReport, id: i64) -> i64 {
+    report.outputs[id]
+}
+
+/// The output of the final node in topological order (the sink result).
+pub fn sink_output(report: RunReport) -> i64 {
+    let n = report.order.len();
+    if n == 0 {
+        return 0;
+    }
+    report.outputs[report.order[n - 1]]
+}
+
+/// The `DagError` carried by a run failure.
+pub fn error_of(f: RunFailure) -> DagError {
+    f.err
+}
+
+/// A human-readable description of a `DagError`.
+pub fn describe(e: DagError) -> string {
+    match e {
+        .Empty => "empty graph: no nodes to route through",
+        .Cyclic => "cyclic graph: no valid topological order, refusing to route",
+        .UnknownNode(n) => f"edge references unknown node id {n}",
+        .Malformed(i) => f"malformed spec at token {i}",
+        .UnknownOperation(code) => f"unknown node operation code {code}",
+    }
+}
+
+/// `true` when the error is specifically a cycle rejection.
+pub fn is_cyclic(e: DagError) -> bool {
+    match e {
+        .Cyclic => true,
+        _ => false,
+    }
+}
+
+// ── Coordinator lifecycle ───────────────────────────────────────────────────
+/// The handler's lifecycle as an explicit, inspectable state. A spec is loaded
+/// (`Ready`), then either accepted for routing (`Routing`, carrying the node
+/// count) or refused (`Refused`, carrying the rejecting `DagError`). This makes
+/// the fail-closed transition — refuse a bad spec, never route it — a
+/// first-class state rather than a hidden early return.
+///
+/// A `machine Coordinator { ... }` would model these transitions even more
+/// explicitly, and reads cleanly in isolation; but on the current substrate a
+/// `machine` defined in an *imported* module collides with the D10 lowering gate
+/// the moment a consuming compilation unit also lowers its own actors (the
+/// actor-routing example does exactly that). So the lifecycle is a plain enum +
+/// stepping function here, which lowers cleanly across the import boundary.
+/// See WALLS.md.
+pub enum LifecycleState {
+    /// No spec loaded yet.
+    Unloaded;
+    /// A spec is loaded but not yet validated; carries the node count.
+    Ready(i64);
+    /// The spec is acyclic and routing may proceed; carries the node count.
+    Routing(i64);
+    /// Routing finished; carries the sink output.
+    Done(i64);
+    /// The spec was refused (cyclic/empty); carries the rejecting error.
+    Refused(DagError);
+}
+
+/// Drive the lifecycle for `spec`: load it, validate it, and advance to the
+/// terminal state. A valid spec reaches `Routing(n)` (ready to feed inputs); a
+/// cyclic/empty spec reaches `Refused(err)`.
+pub fn lifecycle_for(spec: DagSpec) -> LifecycleState {
+    match validate(spec) {
+        .Ok(n) => LifecycleState.Routing(n),
+        .Err(e) => LifecycleState.Refused(e),
+    }
+}
+
+/// A human-readable name for a lifecycle state (mirrors a machine's
+/// `state_name()`).
+pub fn state_name(s: LifecycleState) -> string {
+    match s {
+        .Unloaded => "Unloaded",
+        .Ready(_) => "Ready",
+        .Routing(_) => "Routing",
+        .Done(_) => "Done",
+        .Refused(_) => "Refused",
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+#[test]
+fn test_apply_op_kernels() {
+    assert_eq(apply_op(NodeOp.Add, 10, 5), 15);
+    assert_eq(apply_op(NodeOp.Multiply, 10, 5), 50);
+    assert_eq(apply_op(NodeOp.Square, 4, 0), 16);
+    assert_eq(apply_op(NodeOp.Identity, 7, 99), 7);
+}
+
+#[test]
+fn test_op_code_round_trip() {
+    match op_of_code(0) {
+        .Ok(op) => assert_eq(code_of_op(op), 0),
+        .Err(_) => assert(false),
+    }
+    match op_of_code(1) {
+        .Ok(op) => assert_eq(code_of_op(op), 1),
+        .Err(_) => assert(false),
+    }
+    match op_of_code(2) {
+        .Ok(op) => assert_eq(code_of_op(op), 2),
+        .Err(_) => assert(false),
+    }
+    match op_of_code(3) {
+        .Ok(op) => assert_eq(code_of_op(op), 3),
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn unknown_op_code_is_rejected() {
+    match op_of_code(99) {
+        .Ok(_) => assert(false),
+        .Err(.UnknownOperation(code)) => assert_eq(code, 99),
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_parse_spec_reads_nodes_and_edges() {
+    match parse_spec("add:2 multiply:3 square:0 | 0->1 ; 1->2") {
+        .Ok(spec) => {
+            assert_eq(spec.num_nodes, 3);
+            assert_eq(spec.edges.len(), 2);
+            assert_eq(spec.nodes[0].op_code, 0);
+            assert_eq(spec.nodes[0].operand, 2);
+            assert_eq(spec.nodes[1].op_code, 1);
+            assert_eq(spec.nodes[2].op_code, 2);
+        },
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_parse_spec_no_edges_is_isolated_nodes() {
+    match parse_spec("add:1 add:2") {
+        .Ok(spec) => {
+            assert_eq(spec.num_nodes, 2);
+            assert_eq(spec.edges.len(), 0);
+        },
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_parse_spec_empty_is_rejected() {
+    match parse_spec("  |  ") {
+        .Ok(_) => assert(false),
+        .Err(e) => assert(!is_cyclic(e)),
+    }
+}
+
+#[test]
+fn test_parse_spec_rejects_unknown_op_name() {
+    match parse_spec("ad:1 multiply:2 | 0->1") {
+        .Ok(_) => assert(false),
+        .Err(e) => {
+            match e {
+                .Malformed(i) => assert_eq(i, 0),
+                _ => assert(false),
+            }
+        },
+    }
+    match run_text("add:1 mltiply:2 | 0->1", 4) {
+        .Ok(_) => assert(false),
+        .Err(f) => {
+            match error_of(f) {
+                .Malformed(i) => assert_eq(i, 1),
+                _ => assert(false),
+            }
+        },
+    }
+}
+
+#[test]
+fn test_parse_spec_rejects_malformed_node_descriptors() {
+    match parse_spec("add multiply:2 | 0->1") {
+        .Ok(_) => assert(false),
+        .Err(e) => {
+            match e {
+                .Malformed(i) => assert_eq(i, 0),
+                _ => assert(false),
+            }
+        },
+    }
+    match parse_spec(":1 multiply:2 | 0->1") {
+        .Ok(_) => assert(false),
+        .Err(e) => {
+            match e {
+                .Malformed(i) => assert_eq(i, 0),
+                _ => assert(false),
+            }
+        },
+    }
+    match parse_spec("add: multiply:2 | 0->1") {
+        .Ok(_) => assert(false),
+        .Err(e) => {
+            match e {
+                .Malformed(i) => assert_eq(i, 0),
+                _ => assert(false),
+            }
+        },
+    }
+    match parse_spec("add:not-an-int multiply:2 | 0->1") {
+        .Ok(_) => assert(false),
+        .Err(e) => {
+            match e {
+                .Malformed(i) => assert_eq(i, 0),
+                _ => assert(false),
+            }
+        },
+    }
+    match parse_spec("add:1:2 multiply:2 | 0->1") {
+        .Ok(_) => assert(false),
+        .Err(e) => {
+            match e {
+                .Malformed(i) => assert_eq(i, 0),
+                _ => assert(false),
+            }
+        },
+    }
+}
+
+#[test]
+fn test_parse_spec_rejects_extra_or_trailing_sections() {
+    match parse_spec("add:1 | 0->0 | ignored") {
+        .Ok(_) => assert(false),
+        .Err(.Malformed(section)) => assert_eq(section, 2),
+        .Err(_) => assert(false),
+    }
+    match parse_spec("add:1 | 0->0 |") {
+        .Ok(_) => assert(false),
+        .Err(.Malformed(section)) => assert_eq(section, 2),
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_parse_spec_rejects_out_of_range_edge() {
+    match parse_spec("add:1 add:2 | 0->5") {
+        .Ok(_) => assert(false),
+        .Err(e) => {
+            match e {
+                .UnknownNode(n) => assert_eq(n, 5),
+                _ => assert(false),
+            }
+        },
+    }
+}
+
+fn test_edge(spec: DagSpec, src: i64, dst: i64) -> DagSpec {
+    match add_edge(spec, src, dst) {
+        .Ok(next) => next,
+        .Err(_) => {
+            assert(false);
+            spec
+        },
+    }
+}
+
+#[test]
+fn test_add_edge_rejects_out_of_range_node_ids() {
+    var spec = new_spec();
+    spec = add_node(spec, NodeOp.Identity, 0);
+    spec = add_node(spec, NodeOp.Identity, 0);
+    match add_edge(spec, -1, 0) {
+        .Ok(_) => assert(false),
+        .Err(.UnknownNode(id)) => assert_eq(id, -1),
+        .Err(_) => assert(false),
+    }
+    match add_edge(spec, 0, 2) {
+        .Ok(_) => assert(false),
+        .Err(.UnknownNode(id)) => assert_eq(id, 2),
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_programmatic_edges_return_errors_before_indexing() {
+    var bad_src = new_spec();
+    bad_src = add_node(bad_src, NodeOp.Identity, 0);
+    bad_src = add_node(bad_src, NodeOp.Identity, 0);
+    bad_src.edges.push(Edge { src: 9, dst: 0 });
+    match topo_order(bad_src) {
+        .Ok(_) => assert(false),
+        .Err(.UnknownNode(id)) => assert_eq(id, 9),
+        .Err(_) => assert(false),
+    }
+    var bad_dst = new_spec();
+    bad_dst = add_node(bad_dst, NodeOp.Identity, 0);
+    bad_dst = add_node(bad_dst, NodeOp.Identity, 0);
+    bad_dst.edges.push(Edge { src: 0, dst: 7 });
+    match validate(bad_dst) {
+        .Ok(_) => assert(false),
+        .Err(.UnknownNode(id)) => assert_eq(id, 7),
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_topo_order_linear_chain() {
+    var spec = new_spec();
+    spec = add_node(spec, NodeOp.Add, 0);
+    spec = add_node(spec, NodeOp.Add, 0);
+    spec = add_node(spec, NodeOp.Add, 0);
+    spec = test_edge(spec, 0, 1);
+    spec = test_edge(spec, 1, 2);
+    match topo_order(spec) {
+        .Ok(order) => {
+            assert_eq(order.len(), 3);
+            assert_eq(order[0], 0);
+            assert_eq(order[1], 1);
+            assert_eq(order[2], 2);
+        },
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_validate_accepts_diamond() {
+    var spec = new_spec();
+    spec = add_node(spec, NodeOp.Identity, 0);
+    spec = add_node(spec, NodeOp.Add, 1);
+    spec = add_node(spec, NodeOp.Add, 2);
+    spec = add_node(spec, NodeOp.Identity, 0);
+    spec = test_edge(spec, 0, 1);
+    spec = test_edge(spec, 0, 2);
+    spec = test_edge(spec, 1, 3);
+    spec = test_edge(spec, 2, 3);
+    match validate(spec) {
+        .Ok(n) => assert_eq(n, 4),
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_validate_rejects_cycle() {
+    var spec = new_spec();
+    spec = add_node(spec, NodeOp.Add, 1);
+    spec = add_node(spec, NodeOp.Add, 1);
+    spec = test_edge(spec, 0, 1);
+    spec = test_edge(spec, 1, 0);
+    match is_acyclic(spec) {
+        .Ok(acyclic) => assert(!acyclic),
+        .Err(_) => assert(false),
+    }
+    match validate(spec) {
+        .Ok(_) => assert(false),
+        .Err(e) => assert(is_cyclic(e)),
+    }
+}
+
+#[test]
+fn test_run_text_routes_linear_chain() {
+    // 0:add 1 -> 1:multiply 10 -> 2:add 100, input 5
+    // node0: 5+1=6 ; node1: 6*10=60 ; node2: 60+100=160
+    match run_text("add:1 multiply:10 add:100 | 0->1 ; 1->2", 5) {
+        .Ok(report) => {
+            assert_eq(output_at(report, 0), 6);
+            assert_eq(output_at(report, 1), 60);
+            assert_eq(output_at(report, 2), 160);
+            assert_eq(sink_output(report), 160);
+        },
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_run_text_diamond_fans_in() {
+    // 0:id -> {1:add 10, 2:add 20} -> 3:id (merges by summing predecessors)
+    // node0: id(5)=5 ; node1: 5+10=15 ; node2: 5+20=25 ; node3: id(15+25)=40
+    match run_text("id:0 add:10 add:20 id:0 | 0->1 ; 0->2 ; 1->3 ; 2->3", 5) {
+        .Ok(report) => {
+            assert_eq(output_at(report, 0), 5);
+            assert_eq(output_at(report, 1), 15);
+            assert_eq(output_at(report, 2), 25);
+            assert_eq(output_at(report, 3), 40);
+            assert_eq(sink_output(report), 40);
+        },
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_route_with_inline_closure_dispatch() {
+    // The import-friendly seam: same chain as the actor route, driven by a
+    // plain dispatch closure. node0: 5+1=6 ; node1: 6*10=60 ; node2: 60+100=160.
+    // (Dispatch is an inline closure, not a named private helper, so the module
+    // stays importable — see WALLS.md WALL 4.)
+    match parse_spec("add:1 multiply:10 add:100 | 0->1 ; 1->2") {
+        .Ok(spec) => {
+            let report = route_with(spec, 5, |node: i64, input: i64| -> i64 {
+                if node == 0 {
+                    input + 1
+                } else if node == 1 {
+                    input * 10
+                } else {
+                    input + 100
+                }
+            });
+            match report {
+                .Ok(r) => {
+                    assert_eq(output_at(r, 1), 60);
+                    assert_eq(sink_output(r), 160);
+                },
+                .Err(_) => assert(false),
+            }
+        },
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_route_with_refuses_cyclic() {
+    var spec = new_spec();
+    spec = add_node(spec, NodeOp.Add, 1);
+    spec = add_node(spec, NodeOp.Add, 1);
+    spec = test_edge(spec, 0, 1);
+    spec = test_edge(spec, 1, 0);
+    let report = route_with(spec, 1, |_node: i64, input: i64| -> i64 {
+        input
+    });
+    match report {
+        .Ok(_) => assert(false),
+        .Err(f) => assert(is_cyclic(error_of(f))),
+    }
+}
+
+#[test]
+fn test_run_text_end_to_end() {
+    match run_text("multiply:2 add:3 | 0->1", 4) {
+        .Ok(report) => assert_eq(sink_output(report), 11),
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_run_text_cyclic_is_refused() {
+    match run_text("add:1 add:1 | 0->1 ; 1->0", 1) {
+        .Ok(_) => assert(false),
+        .Err(f) => assert(is_cyclic(error_of(f))),
+    }
+}
+
+#[test]
+fn test_lifecycle_accepts_valid_spec() {
+    match parse_spec("add:1 add:2 | 0->1") {
+        .Ok(spec) => {
+            let c = lifecycle_for(spec);
+            assert_eq(state_name(c), "Routing");
+        },
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn test_lifecycle_refuses_cyclic_spec_with_error() {
+    var spec = new_spec();
+    spec = add_node(spec, NodeOp.Add, 1);
+    spec = add_node(spec, NodeOp.Add, 1);
+    spec = test_edge(spec, 0, 1);
+    spec = test_edge(spec, 1, 0);
+    let c = lifecycle_for(spec);
+    assert_eq(state_name(c), "Refused");
+    match c {
+        .Refused(e) => assert(is_cyclic(e)),
+        _ => assert(false),
+    }
+}

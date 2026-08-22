@@ -1,0 +1,23 @@
+# Rust
+# Cargo.lock is tracked: the Rust dependency closure is pinned like the
+# compiler, and every cargo invocation in the gate passes --locked.
+target/
+
+# Editor directories
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# build/work scratch
+# image/magick's example and test suite write their output beside you
+magick-*.png
+.work/
+
+# local toolchain build
+.tooling/
+
+# lefthook per-developer overrides
+lefthook-local.yml

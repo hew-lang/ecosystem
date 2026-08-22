@@ -1,0 +1,63 @@
+[workspace]
+members = [
+  "auth/oauth",
+  "db/mongodb",
+  "db/mysql",
+  "db/postgres",
+  "db/redis",
+  "db/sqlite",
+  "image/magick",
+  "metrics",
+  "net/http",
+  "queue/mqtt",
+  "queue/nats",
+  "storage/s3",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hew-lang/ecosystem"
+
+[workspace.dependencies]
+hew-cabi = { git = "https://github.com/hew-lang/hew", rev = "84c34d2bd895fdaeb4c78b1774715f8576335f34" }
+libc = "0.2"
+
+[patch.crates-io]
+# nuid 0.3.2 uses rand = ">=0.8" which resolves to rand 0.9 and breaks
+# (rand::distributions::Alphanumeric moved in rand 0.9). This local copy
+# changes the rand dep to "^0.8" so it stays on rand 0.8.x only.
+# Remove once nats upgrades to a nuid that pins rand = "^0.8" explicitly.
+nuid = { path = "vendor/nuid-fixed" }
+
+[workspace.lints.rust]
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+
+[workspace.lints.clippy]
+cargo = { level = "warn", priority = -1 }
+multiple_crate_versions = "allow"
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"

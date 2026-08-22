@@ -1,0 +1,75 @@
+name: Publish packages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish unpublished manifest versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      # toolchain.env is the only place the pins are written. `uses:` cannot
+      # take an expression, so the one literal copy of the revision below is
+      # asserted against it rather than trusted.
+      - name: Load pinned toolchain and registry contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/verify-pins.sh
+          . ./toolchain.env
+          for pin in HEW_REVISION HEW_VERSION LLVM_VERSION REGISTRY_API REGISTRY_AUDIENCE; do
+            printf '%s=%s\n' "$pin" "${!pin}" >> "$GITHUB_ENV"
+          done
+
+      - name: Verify dotted package contract before registry access
+        shell: bash
+        # Fail-fast ahead of the toolchain build; publish-packages.sh re-runs
+        # this same check as its own first action.
+        run: python3 scripts/verify_package_contract.py
+
+      - uses: hew-lang/hew/.github/actions/setup-llvm@84c34d2bd895fdaeb4c78b1774715f8576335f34
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.96.0"
+
+      - name: Check out pinned Hew source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          repository: hew-lang/hew
+          ref: ${{ env.HEW_REVISION }}
+          path: .tooling/hew
+          fetch-depth: 0
+
+      - name: Build pinned Hew toolchain
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.tooling/hew/target
+        run: |
+          set -euo pipefail
+          test "$(git -C .tooling/hew rev-parse HEAD)" = "$HEW_REVISION"
+          cargo build --locked --profile release-lib -p hew-cli -p hew-lib \
+            --manifest-path .tooling/hew/Cargo.toml
+          HEW="$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/hew"
+          test -x "$HEW"
+          echo "HEW=$HEW" >> "$GITHUB_ENV"
+
+      # Authentication, the manifest loop, and the version assertion all live in
+      # the script so that a local publish takes the identical path.
+      - name: Publish new package versions
+        shell: bash
+        run: scripts/publish-packages.sh

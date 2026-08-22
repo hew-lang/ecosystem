@@ -1,0 +1,361 @@
+//! Prometheus-compatible metrics for monitoring and observability.
+//!
+//! Provides counters, gauges, and histograms that can be exported in
+//! Prometheus text format for scraping by a Prometheus server.
+//!
+//! Label names, label values, and custom histogram buckets are passed as
+//! comma/newline/whitespace-delimited strings at the Hew boundary. Labeled
+//! metrics are metric-vector handles: register the label names once, then pass
+//! label values with each operation.
+//! Each vector retains at most 1024 distinct label-value tuples. After that
+//! limit, existing tuples remain usable and new tuples return SeriesLimit.
+//!
+//! # Examples
+//!
+//! ```
+//! import hew.metrics;
+//!
+//! fn main() {
+//!     let reg = spawn metrics.Registry;
+//!
+//!     match await reg.counter("http_requests_total", "Total HTTP requests") {
+//!         .Ok(result) => match result {
+//!             .Ok(reqs) => {
+//!                 let _ = await reg.counter_inc(reqs);
+//!             },
+//!             .Err(error) => println(metrics.error_message(error)),
+//!         },
+//!         .Err(_) => println("metrics actor stopped"),
+//!     }
+//!
+//!     match await reg.gauge("memory_bytes", "Memory usage in bytes") {
+//!         .Ok(result) => match result {
+//!             .Ok(mem) => {
+//!                 let _ = await reg.gauge_set(mem, 1024.0);
+//!             },
+//!             .Err(error) => println(metrics.error_message(error)),
+//!         },
+//!         .Err(_) => println("metrics actor stopped"),
+//!     }
+//!
+//!     match await reg.histogram("request_latency_seconds", "Request latency") {
+//!         .Ok(result) => match result {
+//!             .Ok(latency) => {
+//!                 let _ = await reg.histogram_observe(latency, 0.042);
+//!             },
+//!             .Err(error) => println(metrics.error_message(error)),
+//!         },
+//!         .Err(_) => println("metrics actor stopped"),
+//!     }
+//!
+//!     match await reg.counter_vec("http_requests_by_status_total", "HTTP requests", "method,status") {
+//!         .Ok(result) => match result {
+//!             .Ok(labeled) => {
+//!                 let _ = await reg.counter_vec_inc(labeled, "GET,200");
+//!             },
+//!             .Err(error) => println(metrics.error_message(error)),
+//!         },
+//!         .Err(_) => println("metrics actor stopped"),
+//!     }
+//!
+//!     match await reg.export() {
+//!         .Ok(result) => match result {
+//!             .Ok(output) => println(output),
+//!             .Err(error) => println(metrics.error_message(error)),
+//!         },
+//!         .Err(_) => println("metrics actor stopped"),
+//!     }
+//!
+//!     let _ = reg.close();
+//! }
+//! ```
+
+#[wire]
+pub enum MetricsError {
+    /// A metric name, help string, label set, bucket list, or value was invalid.
+    InvalidInput(string);
+    /// A metric handle did not identify a registered metric.
+    UnknownMetric(i64);
+    /// A metric handle was used with an operation for another metric kind.
+    WrongMetricKind(i64);
+    /// A new label tuple would exceed the metric's 1024-series limit.
+    SeriesLimit(i64);
+    /// The registry has already been closed.
+    Closed(string);
+    /// The native registry could not complete the operation.
+    Internal(string);
+}
+
+/// Return the diagnostic carried by a `MetricsError`.
+pub fn error_message(error: MetricsError) -> string {
+    match error {
+        .InvalidInput(message) => message,
+        .UnknownMetric(handle) => f"unknown metric handle: {handle}",
+        .WrongMetricKind(handle) => f"wrong metric kind for handle: {handle}",
+        .SeriesLimit(handle) => f"metric series limit reached: {handle}",
+        .Closed(message) => message,
+        .Internal(message) => message,
+    }
+}
+
+fn live_handle(closed: bool, handle: i64) -> Result<i64, MetricsError> {
+    if closed || handle == 0 {
+        Err(MetricsError.Closed("metrics registry is closed"))
+    } else {
+        Ok(handle)
+    }
+}
+
+fn registered(value: i64) -> Result<i64, MetricsError> {
+    if value < 0 {
+        Err(MetricsError.InvalidInput("metric registration was rejected"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn changed(metric: i64, status: i32) -> Result<i64, MetricsError> {
+    if status == 0 {
+        Ok(0)
+    } else if status == -2 {
+        Err(MetricsError.SeriesLimit(metric))
+    } else if status == -3 {
+        Err(MetricsError.WrongMetricKind(metric))
+    } else {
+        Err(MetricsError.UnknownMetric(metric))
+    }
+}
+
+/// A Prometheus-compatible metrics registry.
+///
+/// Each actor owns an independent native registry. Every fallible operation
+/// returns a typed `Result`; no handle or empty-string sentinel is public.
+pub actor Registry {
+    var handle: i64 = 0;
+    var closed: bool = false;
+    init() {
+        handle = unsafe {
+            hew_metrics_new()
+        };
+    }
+    /// Register a counter.
+    receive fn counter(name: string, help: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_counter_new(registry, name, name.len(), help, help.len())
+        })
+    }
+
+    // Register a labeled counter vector. label_names is comma/newline/whitespace-delimited.
+    receive fn counter_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_counter_vec_new(registry, name, name.len(), help, help.len(), label_names, label_names.len())
+        })
+    }
+
+    // Register a gauge. Returns a metric handle (i64), or -1 on error.
+    receive fn gauge(name: string, help: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_gauge_new(registry, name, name.len(), help, help.len())
+        })
+    }
+
+    // Register a labeled gauge vector. label_names is comma/newline/whitespace-delimited.
+    receive fn gauge_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_gauge_vec_new(registry, name, name.len(), help, help.len(), label_names, label_names.len())
+        })
+    }
+
+    // Register a histogram with default buckets. Returns a metric handle, or -1 on error.
+    receive fn histogram(name: string, help: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_histogram_new(registry, name, name.len(), help, help.len())
+        })
+    }
+
+    // Register a histogram with custom buckets. buckets is comma/newline/whitespace-delimited f64s.
+    receive fn histogram_with_buckets(name: string, help: string, buckets: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_histogram_with_buckets(registry, name, name.len(), help, help.len(), buckets, buckets.len())
+        })
+    }
+
+    // Register a labeled histogram vector with default buckets.
+    receive fn histogram_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_histogram_vec_new(registry, name, name.len(), help, help.len(), label_names, label_names.len())
+        })
+    }
+
+    // Register a labeled histogram vector with custom buckets.
+    receive fn histogram_vec_with_buckets(name: string, help: string, label_names: string, buckets: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        registered(unsafe {
+            hew_metrics_histogram_vec_with_buckets(registry, name, name.len(), help, help.len(), label_names, label_names.len(), buckets, buckets.len())
+        })
+    }
+
+    // Increment a counter by 1.
+    receive fn counter_inc(metric: i64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_counter_inc(registry, metric)
+        })
+    }
+
+    // Add a non-negative finite value to a counter.
+    receive fn counter_add(metric: i64, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        if value < 0.0 {
+            return Err(MetricsError.InvalidInput("counter increments must be non-negative"));
+        }
+        changed(metric, unsafe {
+            hew_metrics_counter_add(registry, metric, value)
+        })
+    }
+
+    // Increment a labeled counter by 1. label_values order must match registration label_names.
+    receive fn counter_vec_inc(metric: i64, label_values: string) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_counter_vec_inc(registry, metric, label_values, label_values.len())
+        })
+    }
+
+    // Add a non-negative finite value to a labeled counter.
+    receive fn counter_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        if value < 0.0 {
+            return Err(MetricsError.InvalidInput("counter increments must be non-negative"));
+        }
+        changed(metric, unsafe {
+            hew_metrics_counter_vec_add(registry, metric, label_values, label_values.len(), value)
+        })
+    }
+
+    // Set a gauge to an absolute value.
+    receive fn gauge_set(metric: i64, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_gauge_set(registry, metric, value)
+        })
+    }
+
+    // Add a value to a gauge.
+    receive fn gauge_add(metric: i64, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_gauge_add(registry, metric, value)
+        })
+    }
+
+    // Decrement a gauge by a value.
+    receive fn gauge_dec(metric: i64, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_gauge_dec(registry, metric, value)
+        })
+    }
+
+    // Set a labeled gauge to an absolute value.
+    receive fn gauge_vec_set(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_gauge_vec_set(registry, metric, label_values, label_values.len(), value)
+        })
+    }
+
+    // Add a value to a labeled gauge.
+    receive fn gauge_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_gauge_vec_add(registry, metric, label_values, label_values.len(), value)
+        })
+    }
+
+    // Decrement a labeled gauge by a value.
+    receive fn gauge_vec_dec(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_gauge_vec_dec(registry, metric, label_values, label_values.len(), value)
+        })
+    }
+
+    // Record a histogram observation.
+    receive fn histogram_observe(metric: i64, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_histogram_observe(registry, metric, value)
+        })
+    }
+
+    // Record a labeled histogram observation.
+    receive fn histogram_vec_observe(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        changed(metric, unsafe {
+            hew_metrics_histogram_vec_observe(registry, metric, label_values, label_values.len(), value)
+        })
+    }
+
+    // Export all metrics in Prometheus text format.
+    receive fn export() -> Result<string, MetricsError> {
+        let registry = live_handle(closed, handle)?;
+        Ok(unsafe {
+            hew_metrics_export(registry)
+        })
+    }
+
+    // Free the registry and release all resources. Idempotent.
+    receive fn close() {
+        if handle != 0 {
+            unsafe {
+                hew_metrics_close(handle);
+            };
+            handle = 0;
+        }
+        closed = true;
+    }
+    #[on(stop)]
+    fn release_registry() {
+        if handle != 0 {
+            unsafe {
+                hew_metrics_close(handle);
+            };
+            handle = 0;
+        }
+    }
+}
+
+// ── FFI bindings (implementation detail) ────────────────────────────
+extern "C" {
+    fn hew_metrics_new() -> i64;
+    fn hew_metrics_counter_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64) -> i64;
+    fn hew_metrics_counter_vec_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64) -> i64;
+    fn hew_metrics_gauge_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64) -> i64;
+    fn hew_metrics_gauge_vec_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64) -> i64;
+    fn hew_metrics_histogram_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64) -> i64;
+    fn hew_metrics_histogram_with_buckets(reg: i64, name: string, name_len: i64, help: string, help_len: i64, buckets: string, buckets_len: i64) -> i64;
+    fn hew_metrics_histogram_vec_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64) -> i64;
+    fn hew_metrics_histogram_vec_with_buckets(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64, buckets: string, buckets_len: i64) -> i64;
+    fn hew_metrics_counter_inc(reg: i64, metric: i64) -> i32;
+    fn hew_metrics_counter_add(reg: i64, metric: i64, value: f64) -> i32;
+    fn hew_metrics_counter_vec_inc(reg: i64, metric: i64, label_values: string, label_values_len: i64) -> i32;
+    fn hew_metrics_counter_vec_add(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_gauge_set(reg: i64, metric: i64, value: f64) -> i32;
+    fn hew_metrics_gauge_add(reg: i64, metric: i64, value: f64) -> i32;
+    fn hew_metrics_gauge_dec(reg: i64, metric: i64, value: f64) -> i32;
+    fn hew_metrics_gauge_vec_set(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_gauge_vec_add(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_gauge_vec_dec(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_histogram_observe(reg: i64, metric: i64, value: f64) -> i32;
+    fn hew_metrics_histogram_vec_observe(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_export(reg: i64) -> string;
+    fn hew_metrics_close(reg: i64);
+}

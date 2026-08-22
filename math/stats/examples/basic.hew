@@ -1,0 +1,12 @@
+import hew.math.stats;
+
+fn main() {
+    let values = [1.0, 2.0, 3.0, 4.0, 5.0];
+    match stats.mean(values) {
+        .Ok(mean) => {
+            println(f"mean = {mean}");
+            assert_eq(mean, 3.0);
+        },
+        .Err(error) => println(stats.error_message(error)),
+    }
+}

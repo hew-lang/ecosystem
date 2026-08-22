@@ -1,0 +1,332 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Check the corpus against the pinned Hew toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      # toolchain.env is the only place the pins are written; verify-pins.sh
+      # asserts the literal `uses:` and Cargo `rev` copies against it.
+      - name: Load pinned toolchain contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/verify-pins.sh
+          . ./toolchain.env
+          for pin in HEW_REVISION HEW_VERSION LLVM_VERSION; do
+            printf '%s=%s\n' "$pin" "${!pin}" >> "$GITHUB_ENV"
+          done
+
+      - name: Verify dotted package contract
+        shell: bash
+        run: python3 scripts/verify_package_contract.py
+
+      - uses: hew-lang/hew/.github/actions/setup-llvm@84c34d2bd895fdaeb4c78b1774715f8576335f34
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Reclaim runner image disk before builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Disk before runner image reclaim:"
+          df -h
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost
+          llvm_version_root="$(dirname "${LLVM_SYS_221_PREFIX:?}")"
+          if [[ -d /opt/hostedtoolcache ]]; then
+            sudo find /opt/hostedtoolcache -mindepth 1 -maxdepth 1 \
+              ! -name llvm -exec rm -rf {} +
+            if [[ -d /opt/hostedtoolcache/llvm ]]; then
+              sudo find /opt/hostedtoolcache/llvm -mindepth 1 -maxdepth 1 \
+                ! -path "$llvm_version_root" -exec rm -rf {} +
+            fi
+          fi
+          docker image prune --all --force
+          echo "Disk after runner image reclaim:"
+          df -h
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: "1.96.0"
+
+      - name: Check out pinned Hew source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          repository: hew-lang/hew
+          ref: ${{ env.HEW_REVISION }}
+          path: .tooling/hew
+          fetch-depth: 0
+
+      - name: Build and identify Hew
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.tooling/hew/target
+        run: |
+          set -euo pipefail
+          test "$(git -C .tooling/hew rev-parse HEAD)" = "$HEW_REVISION"
+          cargo build --locked --profile release-lib -p hew-cli -p hew-lib --manifest-path .tooling/hew/Cargo.toml
+          # Preserve the compiler's runtime layout while reclaiming its build tree.
+          ARTIFACT_DIR="$RUNNER_TEMP/hew-toolchain-artifacts"
+          RUNTIME_DIR="$ARTIFACT_DIR/target/release-lib"
+          mkdir -p "$RUNTIME_DIR"
+          install -m 0755 \
+            "$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/hew" \
+            "$RUNTIME_DIR/hew"
+          install -m 0644 \
+            "$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/libhew.a" \
+            "$RUNTIME_DIR/libhew.a"
+          cp -a "$GITHUB_WORKSPACE/.tooling/hew/std" "$ARTIFACT_DIR/std"
+          HEW="$RUNTIME_DIR/hew"
+          actual_version="$("$HEW" --version)"
+          echo "Built $actual_version"
+          test "$actual_version" = "hew $HEW_VERSION"
+          echo "HEW=$HEW" >> "$GITHUB_ENV"
+
+      - name: Reclaim disk after building Hew
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.tooling/hew/target
+        run: |
+          set -euo pipefail
+          echo "Disk before compiler build reclaim:"
+          df -h
+          cargo clean --manifest-path .tooling/hew/Cargo.toml
+          echo "Disk after compiler build reclaim:"
+          df -h
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/native-crate-target" >> "$GITHUB_ENV"
+
+      - name: Start integration service containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          start_container() {
+            local name="$1"
+            shift
+            docker run --detach --name "$name" "$@"
+          }
+          wait_for_healthy() {
+            local name="$1"
+            local health
+            for _ in {1..24}; do
+              health="$(docker inspect --format '{{.State.Health.Status}}' "$name")"
+              if [[ "$health" == healthy ]]; then
+                return 0
+              fi
+              if [[ "$health" == unhealthy ]]; then
+                docker logs "$name"
+                return 1
+              fi
+              sleep 5
+            done
+            docker logs "$name"
+            echo "$name did not become healthy within two minutes" >&2
+            return 1
+          }
+          start_container ecosystem-mongodb \
+            --publish 27017:27017 \
+            --health-cmd 'mongosh --quiet --eval "db.runCommand({ ping: 1 }).ok"' \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 24 \
+            mongo:7.0.37
+          start_container ecosystem-mysql \
+            --publish 3306:3306 \
+            --env MYSQL_DATABASE=hew_test \
+            --env MYSQL_USER=hew \
+            --env MYSQL_PASSWORD=hew \
+            --env MYSQL_ROOT_PASSWORD=root \
+            --health-cmd 'mysqladmin ping --host=127.0.0.1 --user=hew --password=hew --silent' \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 24 \
+            mysql:8.4.6
+          start_container ecosystem-postgres \
+            --publish 5432:5432 \
+            --env POSTGRES_DB=hew_test \
+            --env POSTGRES_USER=hew \
+            --env POSTGRES_PASSWORD=hew \
+            --health-cmd 'pg_isready --username=hew --dbname=hew_test' \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 24 \
+            postgres:16.10-alpine3.22
+          start_container ecosystem-redis \
+            --publish 6379:6379 \
+            --health-cmd 'redis-cli ping' \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 24 \
+            redis:7.4.10-alpine3.21
+          start_container ecosystem-mqtt \
+            --publish 11883:1883 \
+            --health-cmd 'mosquitto_pub --host 127.0.0.1 --topic hew-health --message ready' \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 24 \
+            eclipse-mosquitto:2.0.22 mosquitto -c /mosquitto-no-auth.conf
+          start_container ecosystem-nats \
+            --publish 14222:4222 \
+            --health-cmd 'wget --quiet --output-document=- http://127.0.0.1:8222/healthz' \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 24 \
+            nats:2.11.8-alpine3.22 -m 8222
+          start_container ecosystem-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=minioadmin \
+            --env MINIO_ROOT_PASSWORD=minioadmin \
+            --health-cmd 'curl --fail http://127.0.0.1:9000/minio/health/live' \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 24 \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          wait_for_healthy ecosystem-mongodb
+          wait_for_healthy ecosystem-mysql
+          wait_for_healthy ecosystem-postgres
+          wait_for_healthy ecosystem-redis
+          wait_for_healthy ecosystem-mqtt
+          wait_for_healthy ecosystem-nats
+          wait_for_healthy ecosystem-minio
+          docker run --rm --network host --entrypoint /bin/sh \
+            minio/mc:RELEASE.2025-04-16T18-13-26Z -c \
+            'mc alias set local http://127.0.0.1:9000 minioadmin minioadmin && mc mb --ignore-existing local/hew-test'
+
+      # scripts/corpus-gate.sh is the single authority for what the corpus gate
+      # is. docs/toolchain.md points at the same script, so the documented gate
+      # and the one CI runs cannot drift into two different lists.
+      # CONTRIBUTING requires the corpus to be formatted; this is what makes
+      # that a requirement rather than a request.
+      - name: Check Hew formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.hew' | xargs -0 "$HEW" fmt --check
+
+      - name: Check every Hew source
+        shell: bash
+        run: scripts/corpus-gate.sh check
+
+      - name: Run Hew suites and examples
+        shell: bash
+        run: scripts/corpus-gate.sh hew
+
+      - name: Install native system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            libclang-dev \
+            libjpeg-dev \
+            libltdl-dev \
+            libpng-dev \
+            libssl-dev \
+            libtiff-dev \
+            libxml2-dev \
+            pkg-config \
+            zlib1g-dev
+
+      - name: Reclaim disk before native crate tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Disk before native-test reclaim:"
+          df -h
+          # The Hew corpus has completed, so its extracted artifacts are no longer needed.
+          rm -rf "$GITHUB_WORKSPACE/.tooling/hew/target"
+          if [[ -d /opt/hostedtoolcache/llvm ]]; then
+            llvm_version_root="$(dirname "${LLVM_SYS_221_PREFIX:?}")"
+            sudo find /opt/hostedtoolcache/llvm -mindepth 1 -maxdepth 1 \
+              ! -path "$llvm_version_root" -exec rm -rf {} +
+          fi
+          for directory in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost; do
+            if [[ -e "$directory" ]]; then
+              sudo rm -rf "$directory"
+            fi
+          done
+          echo "Disk after native-test reclaim:"
+          df -h
+
+      - name: Build pinned ImageMagick 7 for native crate tests
+        shell: bash
+        env:
+          IMAGEMAGICK_VERSION: 7.1.1-47
+          IMAGEMAGICK_SHA256: 818e21a248986f15a6ba0221ab3ccbaed3d3abee4a6feb4609c6f2432a30d7ed
+          IMAGEMAGICK_PREFIX: /usr/local
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/ImageMagick-$IMAGEMAGICK_VERSION.tar.gz"
+          source_dir="$RUNNER_TEMP/ImageMagick-$IMAGEMAGICK_VERSION"
+          curl --fail --location --retry 3 \
+            "https://github.com/ImageMagick/ImageMagick/archive/refs/tags/$IMAGEMAGICK_VERSION.tar.gz" \
+            --output "$archive"
+          echo "$IMAGEMAGICK_SHA256  $archive" | sha256sum --check --status
+          tar -xzf "$archive" --directory "$RUNNER_TEMP"
+          cd "$source_dir"
+          ./configure \
+            --prefix="$IMAGEMAGICK_PREFIX" \
+            --disable-static \
+            --without-magick-plus-plus \
+            --without-perl
+          make --jobs 2
+          sudo make install
+          sudo ldconfig
+          pkg-config --atleast-version=7.1.1 MagickWand
+          pkg-config --max-version=7.2 MagickWand
+          pkg-config --modversion MagickWand
+
+      - name: Run native-backed Hew package suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/corpus-gate.sh native
+          rm -rf "$RUNNER_TEMP/hew-toolchain-artifacts"
+
+      # Runs here because clippy over --all-targets needs the same system
+      # libraries and ImageMagick build the crates themselves need.
+      - name: Lint the native crates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --check --all
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Run native crate tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --workspace \
+            --exclude hew-ecosystem-db-mysql \
+            --exclude hew-ecosystem-db-postgres \
+            --jobs 2
+          cargo test --locked -p hew-ecosystem-db-mysql --features integration --jobs 2
+          cargo test --locked -p hew-ecosystem-db-postgres --features integration --jobs 2
+          cargo test --locked -p hew-ecosystem-queue-mqtt --features integration --jobs 2
+          cargo test --locked -p hew-ecosystem-queue-nats --features integration --jobs 2
+          cargo test --locked -p hew-ecosystem-storage-s3 --features integration --jobs 2
+
+      - name: Stop integration service containers
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          docker rm --force \
+            ecosystem-mongodb \
+            ecosystem-mysql \
+            ecosystem-postgres \
+            ecosystem-redis \
+            ecosystem-mqtt \
+            ecosystem-nats \
+            ecosystem-minio || true

@@ -1,0 +1,15 @@
+[package]
+name = "hew.queue.nats"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Typed, actor-owned NATS pub/sub and request/reply client"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["messaging", "nats", "pubsub", "queue"]
+repository = "https://github.com/hew-lang/ecosystem"
+
+[native]
+crate = "."
+lib = "hew_hew_queue_nats"
+kind = "staticlib"

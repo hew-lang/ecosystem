@@ -1,0 +1,10 @@
+[package]
+name = "hew.template"
+version = "0.3.0"
+edition = "2026"
+hew = ">=0.6.0-rc1, <0.7.0"
+description = "Mustache-lite HTML templating for Hew — safe interpolation with automatic HTML escaping"
+authors = ["Hew Contributors"]
+license = "MIT OR Apache-2.0"
+keywords = ["template", "html", "mustache", "escaping", "web"]
+repository = "https://github.com/hew-lang/ecosystem"

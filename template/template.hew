@@ -1,0 +1,245 @@
+//! Mustache-lite HTML templating.
+//!
+//! Provides safe HTML interpolation for web applications. The primary defence
+//! against XSS is `escape()` — call it on any user-supplied string before
+//! embedding it in HTML, or use `render()` with `{{key}}` which escapes
+//! automatically.
+//!
+//! # Syntax
+//!
+//! `render()` supports two substitution forms:
+//!
+//! - `{{key}}`  — HTML-escaped.  Use for all user-supplied values.
+//! - `{{{key}}}` — raw, unescaped.  Use only for pre-rendered HTML you trust.
+//!
+//! Unknown keys render as empty strings.  The context string uses the same
+//! newline-delimited format as `hew.db.sqlite` params:
+//! `"key1\nval1\nkey2\nval2"`.
+//!
+//! # Examples
+//!
+//! ```
+//! import hew.template;
+//!
+//! fn page(title: string, body: string) -> string {
+//!     let ctx = f"title\n{template.escape(title)}\nbody\n{body}";
+//!     template.render("<h1>{{{title}}}</h1><p>{{body}}</p>", ctx)
+//! }
+//! ```
+//!
+//! Or escape inline without a template:
+//!
+//! ```
+//! import hew.template;
+//!
+//! fn greet(name: string) -> string {
+//!     f"<p>Hello, {template.escape(name)}!</p>"
+//! }
+//! ```
+
+import std.string;
+
+import std.testing;
+
+/// HTML-escape a string so it is safe to embed in HTML content or attributes.
+///
+/// Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
+/// This is the right function to call before interpolating user input into
+/// an f-string template.
+pub fn escape(s: string) -> string {
+    var t = string.replace(s, "&", "&amp;");
+    t = string.replace(t, "<", "&lt;");
+    t = string.replace(t, ">", "&gt;");
+    t = string.replace(t, "\"", "&quot;");
+    string.replace(t, "'", "&#39;")
+}
+
+/// Render a Mustache-lite template against a context.
+///
+/// `tmpl` is the template string. `ctx` is a newline-delimited string of
+/// key/value pairs: `"key1\nval1\nkey2\nval2"`.
+///
+/// `{{key}}` substitutions are HTML-escaped automatically.
+/// `{{{key}}}` substitutions are inserted raw — use only for trusted HTML.
+/// Unknown keys are replaced with an empty string.
+pub fn render(tmpl: string, ctx: string) -> string {
+    let vars = parse_context(ctx);
+    let rendered: bytes = bytes.new();
+    let template_len = tmpl.len();
+    var cursor = 0;
+    while cursor < template_len {
+        let opening = match find_marker(tmpl, cursor, '{', 2) {
+            .Some(index) => index,
+            .None => {
+                rendered.append(tmpl.slice(cursor, template_len).to_bytes());
+                return rendered.to_string();
+            },
+        };
+        rendered.append(tmpl.slice(cursor, opening).to_bytes());
+        let raw = opening + 2 < template_len && tmpl.char_at(opening + 2).unwrap_or('\0') == '{';
+        let key_start = if raw {
+            opening + 3
+        } else {
+            opening + 2
+        };
+        let closing_len = if raw {
+            3
+        } else {
+            2
+        };
+        let closing = match find_marker(tmpl, key_start, '}', closing_len) {
+            .Some(index) => index,
+            .None => {
+                rendered.append(tmpl.slice(opening, template_len).to_bytes());
+                return rendered.to_string();
+            },
+        };
+        let key = tmpl.slice(key_start, closing);
+        let value = match vars.get(key) {
+            .Some(found) => found,
+            .None => "",
+        };
+        let substitution = if raw {
+            value
+        } else {
+            escape(value)
+        };
+        rendered.append(substitution.to_bytes());
+        cursor = closing + closing_len;
+    }
+    rendered.to_string()
+}
+
+fn parse_context(ctx: string) -> HashMap<string, string> {
+    let vars: HashMap<string, string> = HashMap.new();
+    if ctx.is_empty() {
+        return vars;
+    }
+    // Split only on LF to preserve the legacy contract: CR remains data.
+    let lines = string.split(ctx, "\n");
+    var index = 0;
+    while index < lines.len() {
+        let value = if index + 1 < lines.len() {
+            lines[index + 1]
+        } else {
+            ""
+        };
+        vars.insert(lines[index], value);
+        index = index + 2;
+    }
+    vars
+}
+
+fn find_marker(s: string, start: i64, marker: char, count: i64) -> Option<i64> {
+    let limit = s.len() - count;
+    var index = start;
+    while index <= limit {
+        var matched = true;
+        var offset = 0;
+        while offset < count {
+            if s.char_at(index + offset).unwrap_or('\0') != marker {
+                matched = false;
+                offset = count;
+            } else {
+                offset = offset + 1;
+            }
+        }
+        if matched {
+            return Some(index);
+        }
+        index = index + 1;
+    }
+    None
+}
+
+#[test]
+fn plain_text_escapes_unchanged() {
+    testing.assert_eq_str(escape("hello world"), "hello world");
+}
+
+#[test]
+fn html_metacharacters_escape_to_entities() {
+    testing.assert_eq_str(escape("<&>\"'"), "&lt;&amp;&gt;&quot;&#39;");
+}
+
+#[test]
+fn escaped_placeholder_renders_safe_html() {
+    let output = render("<p>Hello, {{name}}!</p>", "name\n<Ada & Co>");
+    testing.assert_eq_str(output, "<p>Hello, &lt;Ada &amp; Co&gt;!</p>");
+}
+
+#[test]
+fn raw_placeholder_renders_trusted_html() {
+    let output = render("<main>{{{body}}}</main>", "body\n<strong>ready</strong>");
+    testing.assert_eq_str(output, "<main><strong>ready</strong></main>");
+}
+
+#[test]
+fn unknown_placeholder_renders_empty_text() {
+    let output = render("before {{missing}} after", "");
+    testing.assert_eq_str(output, "before  after");
+}
+
+#[test]
+fn unmatched_opening_braces_render_literally() {
+    let output = render("before {{name", "name\nAda");
+    testing.assert_eq_str(output, "before {{name");
+}
+
+#[test]
+fn malformed_triple_marker_renders_literally() {
+    let output = render("{{{x}}", "x\n<A>");
+    testing.assert_eq_str(output, "{{{x}}");
+}
+
+#[test]
+fn extra_closing_brace_after_double_marker_is_literal() {
+    let output = render("{{x}}}", "x\n<A>");
+    testing.assert_eq_str(output, "&lt;A&gt;}");
+}
+
+#[test]
+fn lone_opening_marker_renders_literally() {
+    testing.assert_eq_str(render("{{", "x\n<A>"), "{{");
+}
+
+#[test]
+fn lone_closing_marker_renders_literally() {
+    testing.assert_eq_str(render("}}", "x\n<A>"), "}}");
+}
+
+#[test]
+fn adjacent_placeholders_render_in_order() {
+    let output = render("{{first}}{{second}}", "first\nA\nsecond\nB");
+    testing.assert_eq_str(output, "AB");
+}
+
+#[test]
+fn duplicate_context_key_uses_last_value() {
+    let output = render("{{name}}", "name\nfirst\nname\nlast");
+    testing.assert_eq_str(output, "last");
+}
+
+#[test]
+fn crlf_context_preserves_carriage_returns() {
+    let output = render("{{name}}\n{{name\r}}", "name\r\n<A>\r");
+    testing.assert_eq_str(output, "\n&lt;A&gt;\r");
+}
+
+#[test]
+fn unicode_text_renders_without_loss() {
+    let output = render("¡Hola, {{name}}! ☃\u{FE0F}", "name\n世界");
+    testing.assert_eq_str(output, "¡Hola, 世界! ☃\u{FE0F}");
+}
+
+#[test]
+fn unpaired_context_key_renders_empty_value() {
+    let output = render("before {{name}} after", "name");
+    testing.assert_eq_str(output, "before  after");
+}
+
+#[test]
+fn literal_template_renders_unchanged() {
+    let output = render("<h1>Hello</h1>", "");
+    testing.assert_eq_str(output, "<h1>Hello</h1>");
+}

@@ -1,0 +1,90 @@
+import hew.metrics;
+
+extern "C" {
+    fn hew_metrics_registry_count() -> i64;
+    fn hew_actor_stop(pid: LocalPid<metrics.Registry>);
+}
+
+fn actor_stop_releases_relative_registry_count() {
+    let before = unsafe {
+        hew_metrics_registry_count()
+    };
+    let registry = spawn metrics.Registry;
+    sleep(20ms);
+    assert_eq(unsafe {
+        hew_metrics_registry_count()
+    }, before + 1);
+    unsafe {
+        hew_actor_stop(registry);
+    };
+    sleep(20ms);
+    assert_eq(unsafe {
+        hew_metrics_registry_count()
+    }, before);
+}
+
+fn invalid_registration_returns_typed_error() {
+    let registry = spawn metrics.Registry;
+    match await registry.counter("bad name", "invalid") {
+        .Ok(.Err(.InvalidInput(message))) => assert(!message.is_empty()),
+        _ => assert(false),
+    }
+    let _ = registry.close();
+}
+
+fn counter_and_export_return_exact_values() {
+    let registry = spawn metrics.Registry;
+    match await registry.counter("requests_total", "Handled requests") {
+        .Ok(.Ok(counter)) => {
+            let _ = await registry.counter_add(counter, 3.0);
+            match await registry.export() {
+                .Ok(.Ok(output)) => assert(output.contains("requests_total 3")),
+                _ => assert(false),
+            }
+        },
+        _ => assert(false),
+    }
+    let _ = registry.close();
+}
+
+fn labeled_metric_returns_typed_error_at_series_limit() {
+    let registry = spawn metrics.Registry;
+    match await registry.counter_vec("bounded_requests_total", "Bounded requests", "route") {
+        .Ok(.Ok(counter)) => {
+            for i in 0 .. 1024 {
+                match await registry.counter_vec_inc(counter, f"{i}") {
+                    .Ok(.Ok(_)) => {},
+                    _ => assert(false),
+                }
+            }
+            match await registry.counter_vec_inc(counter, "overflow") {
+                .Ok(.Err(.SeriesLimit(handle))) => assert_eq(handle, counter),
+                _ => assert(false),
+            }
+        },
+        _ => assert(false),
+    }
+    let _ = registry.close();
+}
+
+fn wrong_metric_kind_returns_typed_error() {
+    let registry = spawn metrics.Registry;
+    match await registry.counter("kind_counter_total", "Kind counter") {
+        .Ok(.Ok(counter)) => {
+            match await registry.gauge_set(counter, 42.0) {
+                .Ok(.Err(.WrongMetricKind(handle))) => assert_eq(handle, counter),
+                _ => assert(false),
+            }
+        },
+        _ => assert(false),
+    }
+    let _ = registry.close();
+}
+
+fn main() {
+    actor_stop_releases_relative_registry_count();
+    invalid_registration_returns_typed_error();
+    counter_and_export_return_exact_values();
+    labeled_metric_returns_typed_error_at_series_limit();
+    wrong_metric_kind_returns_typed_error();
+}

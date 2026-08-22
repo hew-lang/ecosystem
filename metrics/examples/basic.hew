@@ -1,0 +1,28 @@
+//! Register a counter, increment it, and print the Prometheus text export.
+//!
+//! Run from the ecosystem checkout with:
+//! `hew run --pkg-path . metrics/examples/basic.hew`
+
+import hew.metrics;
+
+fn main() {
+    let registry = spawn metrics.Registry;
+    match await registry.counter("requests_total", "Handled requests") {
+        .Ok(result) => match result {
+            .Ok(counter) => {
+                let _ = await registry.counter_inc(counter);
+                let _ = await registry.counter_add(counter, 2.0);
+                match await registry.export() {
+                    .Ok(export_result) => match export_result {
+                        .Ok(text) => println(text),
+                        .Err(error) => println(metrics.error_message(error)),
+                    },
+                    .Err(_) => println("metrics actor stopped before replying"),
+                }
+            },
+            .Err(error) => println(metrics.error_message(error)),
+        },
+        .Err(_) => println("metrics actor stopped before replying"),
+    }
+    let _ = registry.close();
+}

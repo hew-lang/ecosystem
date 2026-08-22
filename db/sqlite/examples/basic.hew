@@ -1,0 +1,18 @@
+import hew.db.sqlite;
+
+fn main() {
+    let db = spawn sqlite.Db(path: ":memory:");
+    let _ = await db.execute("CREATE TABLE values_table (value TEXT)");
+    let _ = await db.execute("INSERT INTO values_table VALUES ('hello')");
+    match await db.query("SELECT value FROM values_table") {
+        .Ok(result) => match result {
+            .Ok(query) => match query.rows[0].values[0] {
+                .Text(value) => println(value.to_string()),
+                .Null => println("value is NULL"),
+            },
+            .Err(error) => println(sqlite.error_message(error)),
+        },
+        .Err(_) => println("SQLite actor stopped before replying"),
+    }
+    let _ = db.close();
+}

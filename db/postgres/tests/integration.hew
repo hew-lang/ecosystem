@@ -1,0 +1,181 @@
+import std.testing;
+
+import hew.db.postgres;
+
+import hew.db.postgres.{PostgresError, CellValue};
+
+extern "C" {
+    fn hew_actor_stop(pid: LocalPid<postgres.Conn>);
+    fn hew_pg_connection_count() -> i64;
+}
+
+fn nul_value() -> bytes {
+    let value: bytes = bytes.new();
+    value.push(65);
+    value.push(0);
+    value.push(66);
+    value
+}
+
+fn invalid_utf8() -> bytes {
+    let value: bytes = bytes.new();
+    value.push(255);
+    value
+}
+
+fn assert_bytes(actual: bytes, expected: bytes) {
+    testing.assert_eq(actual.len(), expected.len());
+    for i in 0 .. expected.len() {
+        match actual.get(i) {
+            .Some(left) => match expected.get(i) {
+                .Some(right) => testing.assert_eq(left as i64, right as i64),
+                .None => testing.assert_true(false),
+            },
+            .None => testing.assert_true(false),
+        }
+    }
+}
+
+fn expect_count(result: Result<i64, PostgresError>, expected: i64) {
+    match result {
+        .Ok(value) => testing.assert_eq(value, expected),
+        .Err(error) => panic(postgres.error_message(error)),
+    }
+}
+
+fn expect_query_error<T>(result: Result<T, PostgresError>) {
+    match result {
+        .Err(.Query(message)) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn connection() -> LocalPid<postgres.Conn> {
+    spawn postgres.Conn(connstr: "host=127.0.0.1 port=5432 user=hew password=hew dbname=hew_test")
+}
+
+fn query_snapshot_preserves_values_null_and_empty() {
+    let db = connection();
+    match await db.execute("DROP TABLE IF EXISTS hew_sql_beta") {
+        .Ok(result) => expect_count(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.execute("CREATE TABLE hew_sql_beta (id BIGINT PRIMARY KEY, value TEXT NULL)") {
+        .Ok(result) => expect_count(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.execute_params("INSERT INTO hew_sql_beta VALUES ($1::bigint, $2::text)", "1\nvalue".to_bytes()) {
+        .Ok(result) => expect_count(result, 1),
+        .Err(_) => panic("actor stopped during parameter insert"),
+    }
+    match await db.execute("INSERT INTO hew_sql_beta VALUES (2, ''), (3, NULL)") {
+        .Ok(result) => expect_count(result, 2),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.query("SELECT id, value FROM hew_sql_beta ORDER BY id") {
+        .Ok(.Ok(query)) => {
+            testing.assert_eq(query.columns.len(), 2);
+            testing.assert_eq(query.rows.len(), 3);
+            match query.rows[0].values[1] {
+                .Text(value) => assert_bytes(value, "value".to_bytes()),
+                _ => testing.assert_true(false),
+            }
+            match query.rows[1].values[1] {
+                .Text(value) => assert_bytes(value, bytes.new()),
+                _ => testing.assert_true(false),
+            }
+            match query.rows[2].values[1] {
+                .Null => testing.assert_true(true),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    match await db.query_params("SELECT value FROM hew_sql_beta WHERE id = $1::bigint", "1".to_bytes()) {
+        .Ok(.Ok(query)) => {
+            testing.assert_eq(query.rows.len(), 1);
+            match query.rows[0].values[0] {
+                .Text(value) => assert_bytes(value, "value".to_bytes()),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    match await db.query("SELECT decode('ff00', 'hex') AS binary_value") {
+        .Ok(.Ok(query)) => {
+            let expected: bytes = bytes.new();
+            expected.push(255);
+            expected.push(0);
+            match query.rows[0].values[0] {
+                .Text(value) => assert_bytes(value, expected),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    db.close();
+}
+
+fn actual_database_failures_are_typed() {
+    let db = connection();
+    match await db.execute("NOT SQL") {
+        .Ok(result) => expect_query_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.query("SELECT * FROM table_that_does_not_exist") {
+        .Ok(result) => expect_query_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.query_params("SELECT $1::text", nul_value()) {
+        .Ok(result) => expect_query_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.query_params("SELECT $1::text", invalid_utf8()) {
+        .Ok(.Err(.InvalidInput(message))) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+    db.close();
+    match await db.query("SELECT 1") {
+        .Ok(.Err(.Closed(_))) => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn actor_without_close(previous: i64) -> LocalPid<postgres.Conn> {
+    let db = connection();
+    match await db.query("SELECT 1") {
+        .Ok(.Ok(_)) => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+    testing.assert_eq(unsafe {
+        hew_pg_connection_count()
+    }, previous + 1);
+    db
+}
+
+fn explicit_actor_stop_releases_connection() {
+    let previous = unsafe {
+        hew_pg_connection_count()
+    };
+    testing.assert_true(previous >= 0);
+    let db = actor_without_close(previous);
+    unsafe {
+        hew_actor_stop(db);
+    };
+    var attempts = 0;
+    while unsafe {
+        hew_pg_connection_count()
+    } != previous && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_pg_connection_count()
+    }, previous);
+}
+
+fn main() {
+    query_snapshot_preserves_values_null_and_empty();
+    actual_database_failures_are_typed();
+    explicit_actor_stop_releases_connection();
+}

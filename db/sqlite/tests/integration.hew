@@ -1,0 +1,189 @@
+import std.testing;
+
+import hew.db.sqlite;
+
+import hew.db.sqlite.{SqliteError, CellValue};
+
+extern "C" {
+    fn hew_actor_stop(pid: LocalPid<sqlite.Db>);
+    fn hew_sqlite_connection_count() -> i64;
+}
+
+fn nul_value() -> bytes {
+    let value: bytes = bytes.new();
+    value.push(65);
+    value.push(0);
+    value.push(66);
+    value
+}
+
+fn invalid_utf8() -> bytes {
+    let value: bytes = bytes.new();
+    value.push(255);
+    value
+}
+
+fn insert_params() -> bytes {
+    let value = "1\n".to_bytes();
+    value.append(nul_value());
+    value
+}
+
+fn assert_bytes(actual: bytes, expected: bytes) {
+    testing.assert_eq(actual.len(), expected.len());
+    for i in 0 .. expected.len() {
+        match actual.get(i) {
+            .Some(left) => match expected.get(i) {
+                .Some(right) => testing.assert_eq(left as i64, right as i64),
+                .None => testing.assert_true(false),
+            },
+            .None => testing.assert_true(false),
+        }
+    }
+}
+
+fn expect_count(result: Result<i64, SqliteError>, expected: i64) {
+    match result {
+        .Ok(value) => testing.assert_eq(value, expected),
+        .Err(_) => testing.assert_true(false),
+    }
+}
+
+fn expect_query_error<T>(result: Result<T, SqliteError>) {
+    match result {
+        .Err(.Query(message)) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn database() -> LocalPid<sqlite.Db> {
+    spawn sqlite.Db(path: ":memory:")
+}
+
+fn query_snapshot_preserves_values_null_empty_and_nul() {
+    let db = database();
+    match await db.execute("CREATE TABLE values_table (id INTEGER PRIMARY KEY, value TEXT NULL)") {
+        .Ok(result) => expect_count(result, 0),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.execute_params("INSERT INTO values_table VALUES (?, ?)", insert_params()) {
+        .Ok(result) => expect_count(result, 1),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.execute("INSERT INTO values_table VALUES (2, ''), (3, NULL)") {
+        .Ok(result) => expect_count(result, 2),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.query("SELECT id, value FROM values_table ORDER BY id") {
+        .Ok(.Ok(query)) => {
+            testing.assert_eq(query.columns.len(), 2);
+            testing.assert_eq(query.rows.len(), 3);
+            match query.rows[0].values[1] {
+                .Text(value) => assert_bytes(value, nul_value()),
+                _ => testing.assert_true(false),
+            }
+            match query.rows[1].values[1] {
+                .Text(value) => assert_bytes(value, bytes.new()),
+                _ => testing.assert_true(false),
+            }
+            match query.rows[2].values[1] {
+                .Null => testing.assert_true(true),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    match await db.query_params("SELECT value FROM values_table WHERE id = ?", "1".to_bytes()) {
+        .Ok(.Ok(query)) => {
+            testing.assert_eq(query.rows.len(), 1);
+            match query.rows[0].values[0] {
+                .Text(value) => assert_bytes(value, nul_value()),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    match await db.query("SELECT x'ff00' AS binary_value") {
+        .Ok(.Ok(query)) => {
+            let expected: bytes = bytes.new();
+            expected.push(255);
+            expected.push(0);
+            match query.rows[0].values[0] {
+                .Text(value) => assert_bytes(value, expected),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    let _ = db.close();
+}
+
+fn actual_database_failures_are_typed() {
+    let db = database();
+    match await db.execute("NOT SQL") {
+        .Ok(result) => expect_query_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.query("SELECT * FROM table_that_does_not_exist") {
+        .Ok(result) => expect_query_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match await db.query_params("SELECT ?", invalid_utf8()) {
+        .Ok(.Err(.InvalidInput(message))) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+    let _ = db.close();
+    match await db.query("SELECT 1") {
+        .Ok(.Err(.Closed(_))) => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn open_failure_is_typed() {
+    let db = spawn sqlite.Db(path: "/hew-sql-beta-missing/parent/database.sqlite");
+    match await db.query("SELECT 1") {
+        .Ok(.Err(.Open(message))) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+    let _ = db.close();
+}
+
+fn actor_without_close(previous: i64) -> LocalPid<sqlite.Db> {
+    let db = database();
+    match await db.query("SELECT 1") {
+        .Ok(.Ok(_)) => testing.assert_true(true),
+        _ => testing.assert_true(false),
+    }
+    testing.assert_eq(unsafe {
+        hew_sqlite_connection_count()
+    }, previous + 1);
+    db
+}
+
+fn explicit_actor_stop_releases_connection() {
+    let previous = unsafe {
+        hew_sqlite_connection_count()
+    };
+    testing.assert_true(previous >= 0);
+    let db = actor_without_close(previous);
+    unsafe {
+        hew_actor_stop(db);
+    };
+    var attempts = 0;
+    while unsafe {
+        hew_sqlite_connection_count()
+    } != previous && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_sqlite_connection_count()
+    }, previous);
+}
+
+fn main() {
+    query_snapshot_preserves_values_null_empty_and_nul();
+    actual_database_failures_are_typed();
+    open_failure_is_typed();
+    explicit_actor_stop_releases_connection();
+}

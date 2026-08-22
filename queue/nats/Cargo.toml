@@ -1,0 +1,25 @@
+[package]
+name = "hew-ecosystem-queue-nats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.queue.nats — NATS messaging client for Hew"
+readme = "README.md"
+keywords = ["hew", "nats", "messaging", "pubsub"]
+categories = ["network-programming"]
+
+[lib]
+name = "hew_hew_queue_nats"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+hew-cabi.workspace = true
+nats = "0.25"
+libc.workspace = true
+
+[features]
+integration = []
+
+[lints]
+workspace = true

@@ -1,0 +1,39 @@
+//! Publish one message and receive it back over a NATS subscription.
+//!
+//! Start the broker from the ecosystem checkout with
+//! `docker compose up -d nats`, then run:
+//! `hew run --pkg-path . queue/nats/examples/pubsub.hew`
+//!
+//! With no broker listening the example prints the connection error and exits
+//! successfully; it does not pretend the round trip happened.
+
+import hew.queue.nats;
+
+fn main() {
+    let client = spawn nats.Conn(options: Options { url: "nats://127.0.0.1:14222" });
+    match await client.subscribe("hew.example") {
+        .Ok(result) => match result {
+            .Ok(subscription) => {
+                match await client.publish("hew.example", "hello from Hew") {
+                    .Ok(publish_result) => match publish_result {
+                        .Ok(_) => {},
+                        .Err(error) => println(nats.error_message(error)),
+                    },
+                    .Err(_) => println("NATS actor stopped before replying"),
+                }
+                match await client.next_message(subscription.clone(), 3000) {
+                    .Ok(receive_result) => match receive_result {
+                        .Ok(.Message(message)) => println(f"{message.subject}: {message.data}"),
+                        .Ok(.Missing) => println("no message arrived within 3 seconds"),
+                        .Err(error) => println(nats.error_message(error)),
+                    },
+                    .Err(_) => println("NATS actor stopped before replying"),
+                }
+                let _ = client.unsubscribe(subscription);
+            },
+            .Err(error) => println(nats.error_message(error)),
+        },
+        .Err(_) => println("NATS actor stopped before replying"),
+    }
+    let _ = client.close();
+}

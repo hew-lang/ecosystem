@@ -1,0 +1,22 @@
+[package]
+name = "hew-ecosystem-image-magick"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Owned ImageMagick 7 images with typed errors"
+readme = "README.md"
+keywords = ["image", "imagemagick", "processing"]
+categories = ["multimedia::images"]
+
+[lib]
+name = "hew_hew_image_magick"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+hew-cabi.workspace = true
+magick_rust = "1"
+libc.workspace = true
+
+[lints]
+workspace = true

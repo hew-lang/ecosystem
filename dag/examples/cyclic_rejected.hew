@@ -1,0 +1,49 @@
+// cyclic_rejected.hew — the handler refuses a cyclic spec (fail closed).
+//
+// A cyclic dependency graph has no valid topological order, so there is no
+// safe order to route an input through. The handler detects this and returns a
+// clear `DagError.Cyclic` rather than looping forever or silently dropping the
+// nodes that never become ready.
+//
+//   0 -> 1 -> 2 -> 0    (a 3-cycle: every node depends on another)
+//
+// Run from the ecosystem root:  hew run dag/examples/cyclic_rejected.hew
+import hew.dag;
+
+fn main() {
+    // First, a valid acyclic spec routes cleanly.
+    let good = "add:1 add:2 add:3 | 0->1 ; 1->2";
+    println(f"acyclic spec: {good}");
+    match dag.run_text(good, 0) {
+        .Ok(report) => {
+            println(f"  routed ok, sink output = {dag.sink_output(report)}"); // 6
+            assert_eq(dag.sink_output(report), 6);
+        },
+        .Err(f) => println(f"  unexpected: {dag.describe(dag.error_of(f))}"),
+    }
+    // Now a cyclic spec: must be refused.
+    let bad = "add:1 add:2 add:3 | 0->1 ; 1->2 ; 2->0";
+    println(f"cyclic spec:  {bad}");
+    match dag.run_text(bad, 0) {
+        .Ok(_) => {
+            println("  BUG: cyclic spec was accepted");
+        },
+        .Err(f) => {
+            let err = dag.error_of(f);
+            let msg = dag.describe(err);
+            println(f"  refused: {msg}");
+            assert(dag.is_cyclic(err));
+        },
+    }
+    // The lifecycle view of the same rejection: the coordinator reaches the
+    // terminal `Refused` state instead of `Routing`.
+    match dag.parse_spec(bad) {
+        .Ok(spec) => {
+            let state = dag.lifecycle_for(spec);
+            println(f"  lifecycle state = {dag.state_name(state)}"); // Refused
+            assert_eq(dag.state_name(state), "Refused");
+        },
+        .Err(e) => println(f"  parse error: {dag.describe(e)}"),
+    }
+    println("cyclic_rejected: bad input rejected fail-closed, all assertions passed");
+}

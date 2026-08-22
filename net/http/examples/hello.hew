@@ -1,0 +1,54 @@
+//! Serve one plain-text HTTP response, then stop.
+//!
+//! `accept_one()` reports an `Accept` error after an idle 250 milliseconds, so
+//! this example retries it for about thirty seconds. That is long enough to
+//! start the program in one terminal and send the request from another.
+//!
+//! Run from the ecosystem checkout with:
+//! `hew run --pkg-path . net/http/examples/hello.hew`
+//!
+//! Then, in a second terminal:
+//! `curl http://127.0.0.1:8080/hello`
+
+import hew.net.http;
+
+fn main() {
+    let server = spawn http.Server(addr: "127.0.0.1:8080");
+    println("listening for one request on http://127.0.0.1:8080");
+    println("send it within 30 seconds, for example: curl http://127.0.0.1:8080/hello");
+    var attempts_left = 120;
+    var served = false;
+    while attempts_left > 0 && !served {
+        attempts_left = attempts_left - 1;
+        match await server.accept_one() {
+            .Ok(result) => match result {
+                .Ok(request) => {
+                    println(f"{request.method()} {request.path()}");
+                    match await server.respond_text(200, "Hello from Hew!\n") {
+                        .Ok(response_result) => match response_result {
+                            .Ok(_) => {},
+                            .Err(error) => println(http.error_message(error)),
+                        },
+                        .Err(_) => println("HTTP server actor stopped before replying"),
+                    }
+                    served = true;
+                },
+                // An idle quarter second is the documented outcome of
+                // accept_one(), so it is a retry rather than a failure.
+                .Err(.Accept(_)) => {},
+                .Err(error) => {
+                    println(http.error_message(error));
+                    served = true;
+                },
+            },
+            .Err(_) => {
+                println("HTTP server actor stopped before replying");
+                served = true;
+            },
+        }
+    }
+    if !served {
+        println("no request arrived within 30 seconds");
+    }
+    server.close();
+}

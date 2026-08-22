@@ -1,0 +1,36 @@
+// This file is run via `hew run --pkg-path <repo root> tests/public_api.hew`
+// (see .github/workflows/ci.yml), not `hew test`: main()-dispatch keeps
+// every native-backed package's test entry point uniform across the
+// ecosystem, whether or not a given test needs a live external service.
+import std.testing;
+
+import hew.storage.s3;
+
+import hew.storage.s3.{S3Error};
+
+fn error_variants_return_exact_messages() {
+    testing.assert_eq_str(s3.error_message(s3.S3Error.Closed("closed")), "closed");
+    testing.assert_eq_str(s3.error_message(s3.S3Error.InvalidInput("invalid")), "invalid");
+    testing.assert_eq_str(s3.error_message(s3.S3Error.NotFound("missing")), "missing");
+    testing.assert_eq_str(s3.error_message(s3.S3Error.AccessDenied("denied")), "denied");
+    testing.assert_eq_str(s3.error_message(s3.S3Error.Throttled("slow down")), "slow down");
+    testing.assert_eq_str(s3.error_message(s3.S3Error.ServerError(503, "unavailable")), "unavailable");
+    testing.assert_eq_str(s3.error_message(s3.S3Error.Network("offline")), "offline");
+    match s3.S3Error.ServerError(503, "unavailable") {
+        .ServerError(status, _) => testing.assert_eq(status, 503),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn invalid_endpoint_returns_typed_error() {
+    let store = spawn s3.Bucket(options: Options { endpoint: "not a URL", region: "us-east-1", bucket: "test", access_key: "x", secret_key: "y" });
+    match await store.exists("key") {
+        .Ok(.Err(error)) => testing.assert_true(!s3.error_message(error).is_empty()),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn main() {
+    error_variants_return_exact_messages();
+    invalid_endpoint_returns_typed_error();
+}

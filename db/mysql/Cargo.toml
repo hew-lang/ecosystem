@@ -1,0 +1,24 @@
+[package]
+name = "hew-ecosystem-db-mysql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "hew.db.mysql — actor-owned MySQL client for Hew"
+readme = "README.md"
+keywords = ["database", "mysql", "sql"]
+categories = ["database"]
+
+[lib]
+name = "hew_hew_db_mysql"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+mysql = { version = "25", default-features = false, features = ["minimal-rust", "rustls-tls"] }
+libc.workspace = true
+
+[features]
+integration = []
+
+[lints]
+workspace = true

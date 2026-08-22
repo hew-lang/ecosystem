@@ -1,0 +1,170 @@
+import std.testing;
+
+import hew.queue.nats;
+
+import hew.queue.nats.{Delivery, NatsError, Receive, ReplyTo, Subscription};
+
+extern "C" {
+    fn hew_actor_stop(pid: LocalPid<nats.Conn>);
+    fn hew_nats_connection_count() -> i64;
+    fn hew_nats_subscription_count() -> i64;
+    fn hew_nats_message_count() -> i64;
+}
+
+fn connection() -> LocalPid<nats.Conn> {
+    spawn nats.Conn(options: Options { url: "nats://127.0.0.1:14222" })
+}
+
+fn publish_subscribe_preserves_exact_message_and_timeout() {
+    let previous_connections = unsafe {
+        hew_nats_connection_count()
+    };
+    let previous_subscriptions = unsafe {
+        hew_nats_subscription_count()
+    };
+    let previous_messages = unsafe {
+        hew_nats_message_count()
+    };
+    let client = connection();
+    let subscription = match await client.subscribe("hew.integration") {
+        .Ok(.Ok(value)) => value,
+        _ => panic("NATS subscribe failed"),
+    };
+    match await client.publish("hew.integration", "exact payload") {
+        .Ok(.Ok(_)) => {},
+        _ => testing.assert_true(false),
+    }
+    match await client.next_message(subscription.clone(), 3000) {
+        .Ok(.Ok(.Message(message))) => {
+            testing.assert_eq_str(message.subject, "hew.integration");
+            testing.assert_eq_str(message.data, "exact payload");
+            match message.reply_to {
+                .Missing => {},
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    testing.assert_eq(unsafe {
+        hew_nats_message_count()
+    }, previous_messages);
+    match await client.next_message(subscription.clone(), 50) {
+        .Ok(.Ok(.Missing)) => {},
+        _ => testing.assert_true(false),
+    }
+    let _ = client.unsubscribe(subscription);
+    let _ = client.close();
+    var attempts = 0;
+    while unsafe {
+        hew_nats_connection_count()
+    } != previous_connections && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_nats_connection_count()
+    }, previous_connections);
+    testing.assert_eq(unsafe {
+        hew_nats_subscription_count()
+    }, previous_subscriptions);
+}
+
+actor ResponderHarness {
+    let responder: LocalPid<nats.Conn>;
+    let subscription: Subscription;
+
+    init(responder: LocalPid<nats.Conn>, subscription: Subscription) {}
+
+    receive fn serve() {
+        match await responder.next_message(subscription.clone(), 3000) {
+            .Ok(.Ok(.Message(message))) => {
+                let _ = await responder.reply(message, "84");
+            },
+            _ => {},
+        }
+        let _ = responder.unsubscribe(subscription);
+        let _ = responder.close();
+    }
+}
+
+fn request_reply_preserves_reply_subject_and_payload() {
+    let previous_connections = unsafe {
+        hew_nats_connection_count()
+    };
+    let responder = connection();
+    let subscription = match await responder.subscribe("hew.request.double") {
+        .Ok(.Ok(value)) => value,
+        _ => panic("NATS responder subscribe failed"),
+    };
+    let requester = connection();
+    let harness = spawn ResponderHarness(responder: responder, subscription: subscription);
+    harness.serve();
+    match await requester.request("hew.request.double", "42", 3000) {
+        .Ok(.Ok(.Message(message))) => {
+            testing.assert_eq_str(message.data, "84");
+            match message.reply_to {
+                .Missing => {},
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    let no_reply = Delivery { subject: "hew.event", data: "value", reply_to: nats.ReplyTo.Missing };
+    match await requester.reply(no_reply, "ignored") {
+        .Ok(.Err(.InvalidInput(message))) => testing.assert_eq_str(message, "NATS message has no reply subject"),
+        _ => testing.assert_true(false),
+    }
+    let _ = requester.close();
+    var attempts = 0;
+    while unsafe {
+        hew_nats_connection_count()
+    } != previous_connections && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_nats_connection_count()
+    }, previous_connections);
+}
+
+fn actor_stop_releases_connection_and_subscription_relatively() {
+    let previous_connections = unsafe {
+        hew_nats_connection_count()
+    };
+    let previous_subscriptions = unsafe {
+        hew_nats_subscription_count()
+    };
+    let client = connection();
+    match await client.subscribe("hew.stop.cleanup") {
+        .Ok(.Ok(_)) => {},
+        _ => testing.assert_true(false),
+    }
+    testing.assert_eq(unsafe {
+        hew_nats_connection_count()
+    }, previous_connections + 1);
+    testing.assert_eq(unsafe {
+        hew_nats_subscription_count()
+    }, previous_subscriptions + 1);
+    unsafe {
+        hew_actor_stop(client)
+    };
+    var attempts = 0;
+    while unsafe {
+        hew_nats_connection_count()
+    } != previous_connections && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
+    testing.assert_eq(unsafe {
+        hew_nats_connection_count()
+    }, previous_connections);
+    testing.assert_eq(unsafe {
+        hew_nats_subscription_count()
+    }, previous_subscriptions);
+}
+
+fn main() {
+    publish_subscribe_preserves_exact_message_and_timeout();
+    request_reply_preserves_reply_subject_and_payload();
+    actor_stop_releases_connection_and_subscription_relatively();
+}

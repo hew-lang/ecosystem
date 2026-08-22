@@ -1,0 +1,256 @@
+//! Actor-owned PostgreSQL client with typed query results.
+
+#[wire]
+pub enum PostgresError {
+    Connect(string);
+    InvalidInput(string);
+    Query(string);
+    Closed(string);
+    Internal(string);
+}
+
+pub fn error_message(error: PostgresError) -> string {
+    match error {
+        .Connect(message) => message,
+        .InvalidInput(message) => message,
+        .Query(message) => message,
+        .Closed(message) => message,
+        .Internal(message) => message,
+    }
+}
+
+#[wire]
+pub enum CellValue {
+    Null;
+    Text(bytes);
+}
+
+#[wire]
+pub type Row {
+    values: Vec<CellValue> @1,
+}
+
+#[wire]
+pub type QueryResult {
+    columns: Vec<string> @1,
+    rows: Vec<Row> @2,
+}
+
+fn native_error() -> PostgresError {
+    let message = unsafe {
+        hew_pg_last_error()
+    };
+    match unsafe {
+        hew_pg_last_error_kind()
+    } {
+        1 => .Connect(message),
+        2 => .InvalidInput(message),
+        3 => .Query(message),
+        4 => .Closed(message),
+        _ => .Internal(message),
+    }
+}
+
+fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, PostgresError> {
+    if closed {
+        Err(.Closed("PostgreSQL connection is closed"))
+    } else if handle == 0 {
+        match error_kind {
+            1 => Err(.Connect(error_message)),
+            2 => Err(.InvalidInput(error_message)),
+            3 => Err(.Query(error_message)),
+            4 => Err(.Closed(error_message)),
+            _ => Err(.Internal(error_message)),
+        }
+    } else {
+        Ok(handle)
+    }
+}
+
+#[resource]
+type NativeResult {
+    handle: i64;
+}
+
+impl NativeResult {
+    fn row_count(self) -> i64 {
+        unsafe {
+            hew_pg_result_rows(self.handle)
+        }
+    }
+
+    fn column_count(self) -> i64 {
+        unsafe {
+            hew_pg_result_cols(self.handle)
+        }
+    }
+
+    fn column(self, index: i64) -> bytes {
+        unsafe {
+            hew_pg_result_column(self.handle, index)
+        }
+    }
+
+    fn cell_kind(self, row: i64, column: i64) -> i32 {
+        unsafe {
+            hew_pg_result_cell_kind(self.handle, row, column)
+        }
+    }
+
+    fn cell(self, row: i64, column: i64) -> bytes {
+        unsafe {
+            hew_pg_result_cell(self.handle, row, column)
+        }
+    }
+
+    fn close(consuming self) {
+        unsafe {
+            hew_pg_result_free(self.handle)
+        };
+    }
+}
+
+fn collect_result(result: NativeResult) -> Result<QueryResult, PostgresError> {
+    let row_count = result.row_count();
+    let column_count = result.column_count();
+    if row_count < 0 || column_count < 0 {
+        let error = native_error();
+        result.close();
+        return Err(error);
+    }
+    let columns: Vec<string> = Vec.new();
+    for column in 0 .. column_count {
+        let value = result.column(column);
+        columns.push(value.to_string());
+    }
+    let rows: Vec<Row> = Vec.new();
+    for row in 0 .. row_count {
+        let values: Vec<CellValue> = Vec.new();
+        for column in 0 .. column_count {
+            match result.cell_kind(row, column) {
+                0 => values.push(.Null),
+                1 => {
+                    let value = result.cell(row, column);
+                    values.push(.Text(value));
+                },
+                _ => {
+                    let error = native_error();
+                    result.close();
+                    return Err(error);
+                },
+            }
+        }
+        rows.push(Row { values: values });
+    }
+    result.close();
+    Ok(QueryResult { columns: columns, rows: rows })
+}
+
+/// An actor that owns and serializes one PostgreSQL connection.
+pub actor Conn {
+    var handle: i64 = 0;
+    var connect_error_kind: i32 = 0;
+    var connect_error_message: string = "";
+    var closed: bool = false;
+
+    init(connstr: string) {
+        handle = unsafe {
+            hew_pg_connect_len(connstr, connstr.len())
+        };
+        if handle == 0 {
+            connect_error_kind = unsafe {
+                hew_pg_last_error_kind()
+            };
+            connect_error_message = unsafe {
+                hew_pg_last_error()
+            };
+        }
+    }
+
+    receive fn execute(sql: string) -> Result<i64, PostgresError> {
+        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let affected = unsafe {
+            hew_pg_execute_len(connection, sql, sql.len())
+        };
+        if unsafe {
+            hew_pg_last_error_kind()
+        } == 0 {
+            Ok(affected)
+        } else {
+            Err(native_error())
+        }
+    }
+
+    receive fn execute_params(sql: string, params: bytes) -> Result<i64, PostgresError> {
+        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let affected = unsafe {
+            hew_pg_execute_params_len(connection, sql, sql.len(), params)
+        };
+        if unsafe {
+            hew_pg_last_error_kind()
+        } == 0 {
+            Ok(affected)
+        } else {
+            Err(native_error())
+        }
+    }
+
+    receive fn query(sql: string) -> Result<QueryResult, PostgresError> {
+        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let result = NativeResult { handle: unsafe {
+            hew_pg_query_len(connection, sql, sql.len())
+        } };
+        if result.handle == 0 {
+            return Err(native_error());
+        }
+        collect_result(result)
+    }
+
+    receive fn query_params(sql: string, params: bytes) -> Result<QueryResult, PostgresError> {
+        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let result = NativeResult { handle: unsafe {
+            hew_pg_query_params_len(connection, sql, sql.len(), params)
+        } };
+        if result.handle == 0 {
+            return Err(native_error());
+        }
+        collect_result(result)
+    }
+
+    receive fn close() {
+        if handle != 0 {
+            unsafe {
+                hew_pg_close(handle)
+            };
+            handle = 0;
+        }
+        closed = true;
+    }
+
+    #[on(stop)]
+    fn release_native_handle() {
+        if handle != 0 {
+            unsafe {
+                hew_pg_close(handle)
+            };
+            handle = 0;
+        }
+    }
+}
+
+extern "C" {
+    fn hew_pg_connect_len(connstr: string, connstr_len: i64) -> i64;
+    fn hew_pg_execute_len(connection: i64, sql: string, sql_len: i64) -> i64;
+    fn hew_pg_execute_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
+    fn hew_pg_query_len(connection: i64, sql: string, sql_len: i64) -> i64;
+    fn hew_pg_query_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
+    fn hew_pg_result_rows(result: i64) -> i64;
+    fn hew_pg_result_cols(result: i64) -> i64;
+    fn hew_pg_result_column(result: i64, index: i64) -> bytes;
+    fn hew_pg_result_cell_kind(result: i64, row: i64, column: i64) -> i32;
+    fn hew_pg_result_cell(result: i64, row: i64, column: i64) -> bytes;
+    fn hew_pg_result_free(result: i64);
+    fn hew_pg_close(connection: i64);
+    fn hew_pg_last_error_kind() -> i32;
+    fn hew_pg_last_error() -> string;
+}

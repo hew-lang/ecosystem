@@ -1,0 +1,7 @@
+import hew.template;
+
+fn main() {
+    let context = "name\n<Ada & Co>\nbody\n<strong>Welcome</strong>";
+    let page = template.render("<h1>Hello, {{name}}!</h1><main>{{{body}}}</main>", context);
+    println(page);
+}
