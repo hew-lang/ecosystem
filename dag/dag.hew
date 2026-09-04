@@ -277,8 +277,8 @@ fn parse_node(token: string, id: i64) -> Result<NodeSpec, DagError> {
         return Err(DagError.Malformed(id));
     }
     let operand = match string.to_int(operand_text) {
-        .Some(value) => value,
-        .None => return Err(DagError.Malformed(id)),
+        .Ok(value) => value,
+        .Err(_) => return Err(DagError.Malformed(id)),
     };
     match code_of_name(name, id) {
         .Ok(code) => Ok(NodeSpec { id: id, op_code: code, operand: operand }),
@@ -356,12 +356,12 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
             .None => return Err(DagError.Malformed(i)),
         };
         let src = match string.to_int(src_text) {
-            .Some(value) => value,
-            .None => return Err(DagError.Malformed(i)),
+            .Ok(value) => value,
+            .Err(_) => return Err(DagError.Malformed(i)),
         };
         let dst = match string.to_int(dst_text) {
-            .Some(value) => value,
-            .None => return Err(DagError.Malformed(i)),
+            .Ok(value) => value,
+            .Err(_) => return Err(DagError.Malformed(i)),
         };
         if src < 0 {
             return Err(DagError.UnknownNode(src));
