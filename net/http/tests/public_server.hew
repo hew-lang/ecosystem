@@ -295,19 +295,26 @@ fn validates_targets_and_completes_expect_handshake() {
     };
 }
 
-fn handles_nul_without_silent_truncation() {
+fn carries_nul_bytes_without_truncation() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
     let server = spawn http.Server(addr: addr.clone());
     let body_nul_client = test_client(fixture, 5);
     match server.accept_one() {
         .Ok(result) => match result {
-            .Err(.Parse(_)) => {},
-            _ => panic("expected Parse for request body containing NUL"),
+            .Ok(request) => assert_eq(request.body().len(), 3),
+            .Err(_) => panic("expected the request body carrying NUL to be accepted"),
         },
         .Err(_) => panic("server actor stopped during NUL body accept"),
     }
-    expect_client_response(body_nul_client, 0);
+    match server.respond_text(204, "") {
+        .Ok(result) => match result {
+            .Ok(_) => {},
+            .Err(_) => panic("expected a response to the request carrying NUL"),
+        },
+        .Err(_) => panic("server actor stopped during NUL body response"),
+    }
+    expect_client_response(body_nul_client, 1);
     let header_nul_client = test_client(fixture, 6);
     match server.accept_one() {
         .Ok(result) => match result {
@@ -335,15 +342,15 @@ fn handles_nul_without_silent_truncation() {
     expect_client_response(utf8_response_client, 3);
     match server.url_decode("left%00right") {
         .Ok(result) => match result {
-            .Err(.Decode(_)) => {},
-            _ => panic("expected Decode for decoded NUL"),
+            .Ok(value) => assert_eq(value.len(), 10),
+            .Err(_) => panic("expected a decoded value carrying NUL"),
         },
         .Err(_) => panic("server actor stopped during NUL decode"),
     }
     match server.form_value("value=%00", "value") {
         .Ok(result) => match result {
-            .Err(.Decode(_)) => {},
-            _ => panic("expected Decode for form value containing NUL"),
+            .Ok(value) => assert_eq(value.len(), 1),
+            .Err(_) => panic("expected a form value carrying NUL"),
         },
         .Err(_) => panic("server actor stopped during NUL form decode"),
     }
@@ -353,9 +360,88 @@ fn handles_nul_without_silent_truncation() {
     };
 }
 
+/// Round-trip long, non-ASCII text through the native boundary in both
+/// directions, and check that a decode failure keeps its native message.
+fn round_trips_long_percent_encoded_text() {
+    let fixture = test_fixture();
+    let addr = test_addr(fixture);
+    let server = spawn http.Server(addr: addr.clone());
+    let path_client = test_client(fixture, 7);
+    var target = "";
+    match server.accept_one() {
+        .Ok(result) => match result {
+            .Ok(request) => {
+                target = request.path();
+            },
+            .Err(_) => panic("expected the percent-encoded request"),
+        },
+        .Err(_) => panic("server actor stopped during percent-encoded accept"),
+    }
+    assert_eq(target, "/caf%C3%A9-menu-%E2%9C%93-r%C3%A9sum%C3%A9");
+    match server.url_decode(target.clone()) {
+        .Ok(result) => match result {
+            .Ok(value) => assert_eq(value, "/café-menu-✓-résumé"),
+            .Err(_) => panic("expected the percent-encoded path to decode"),
+        },
+        .Err(_) => panic("server actor stopped during path decode"),
+    }
+    match server.respond_text(204, "") {
+        .Ok(result) => match result {
+            .Ok(_) => {},
+            .Err(_) => panic("expected a response to the percent-encoded request"),
+        },
+        .Err(_) => panic("server actor stopped during percent-encoded response"),
+    }
+    expect_client_response(path_client, 1);
+    match server.form_value("titre=caf%C3%A9+menu+%E2%9C%93+r%C3%A9sum%C3%A9&vide=", "titre") {
+        .Ok(result) => match result {
+            .Ok(value) => assert_eq(value, "café menu ✓ résumé"),
+            .Err(_) => panic("expected the form field to decode"),
+        },
+        .Err(_) => panic("server actor stopped during form decode"),
+    }
+    match server.form_value("titre=bonjour", "corps") {
+        .Ok(result) => match result {
+            .Err(.MissingFormField(key)) => assert_eq(key, "corps"),
+            _ => panic("expected MissingFormField for an absent key"),
+        },
+        .Err(_) => panic("server actor stopped during missing form field"),
+    }
+    match server.url_decode("bad%2") {
+        .Ok(result) => match result {
+            .Err(error) => assert_eq(
+                http.error_message(error),
+                "decode failed: incomplete percent escape at byte 3",
+            ),
+            .Ok(_) => panic("expected Decode for a truncated escape"),
+        },
+        .Err(_) => panic("server actor stopped during malformed decode"),
+    }
+    let _ = server.close();
+    unsafe {
+        hew_ecosystem_http_test_fixture_free(fixture)
+    };
+}
+
+/// An unusable listen address must surface the native diagnostic, which
+/// quotes the address the actor was given.
+fn reports_the_native_listen_failure() {
+    let server = spawn http.Server(addr: "hew-http-not-an-address");
+    match server.accept_one() {
+        .Ok(result) => match result {
+            .Err(.Listen(message)) => assert(message.contains("hew-http-not-an-address")),
+            _ => panic("expected Listen for an unusable address"),
+        },
+        .Err(_) => panic("server actor stopped during listen failure"),
+    }
+    let _ = server.close();
+}
+
 fn main() {
     reports_no_pending_busy_and_closed_states();
     validation_errors_release_pending_connections();
     validates_targets_and_completes_expect_handshake();
-    handles_nul_without_silent_truncation();
+    carries_nul_bytes_without_truncation();
+    round_trips_long_percent_encoded_text();
+    reports_the_native_listen_failure();
 }

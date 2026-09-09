@@ -1,9 +1,7 @@
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::net::{Ipv6Addr, Shutdown, TcpListener, TcpStream};
-use std::os::raw::c_char;
-use std::ptr;
-use std::slice;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -12,68 +10,9 @@ const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 const ACCEPT_TIMEOUT: Duration = Duration::from_millis(250);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64) -> Option<&'a str> {
-    let len = usize::try_from(len).ok()?;
-    if value.is_null() {
-        return (len == 0).then_some("");
-    }
-    // SAFETY: this function's caller contract requires `value` to point to
-    // `len` initialized bytes when non-null, which is checked above.
-    let bytes = unsafe { slice::from_raw_parts(value.cast::<u8>(), len) };
-    std::str::from_utf8(bytes).ok()
-}
-
-fn alloc_c_string(value: &str) -> *mut c_char {
-    let size = value.len() + 1;
-    // SAFETY: `size` is a nonzero byte count (`value.len() + 1`); `malloc`
-    // may return null, which is checked immediately below.
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return ptr::null_mut();
-    }
-    // SAFETY: `output` was just allocated above with room for `value.len()`
-    // bytes plus one trailing byte, and was checked non-null.
-    unsafe {
-        ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast::<c_char>()
-}
-
-fn str_to_malloc(value: &str) -> *mut c_char {
-    if value.as_bytes().contains(&0) {
-        set_error(
-            ErrorKind::Internal,
-            "string result contained NUL and could not cross the C ABI",
-        );
-        return alloc_c_string("");
-    }
-    alloc_c_string(value)
-}
-
+/// HTTP field values may not carry NUL, whatever the transport can represent.
 fn no_nul(value: &str) -> bool {
     !value.as_bytes().contains(&0)
-}
-
-fn input_string<'a>(
-    value: *const c_char,
-    len: i64,
-    kind: ErrorKind,
-    invalid_utf8: &'static str,
-    contained_nul: &'static str,
-) -> Option<&'a str> {
-    // SAFETY: `value`/`len` are the raw pointer and declared byte length
-    // this function received from its caller, matching `utf8_with_len`'s
-    // contract.
-    let Some(value) = (unsafe { utf8_with_len(value, len) }) else {
-        set_error(kind, invalid_utf8);
-        return None;
-    };
-    if !no_nul(value) {
-        set_error(kind, contained_nul);
-        return None;
-    }
-    Some(value)
 }
 
 #[repr(i32)]
@@ -177,18 +116,11 @@ unsafe fn request_mut(handle: i64) -> Option<&'static mut HttpRequest> {
 /// Bind an HTTP listener. Returns zero and records `Listen` on failure.
 ///
 /// # Safety
-/// `addr` must point to `addr_len` bytes of valid UTF-8.
+/// `addr` must be null (the empty string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_listen(addr: *const c_char, addr_len: i64) -> i64 {
-    let Some(addr) = input_string(
-        addr,
-        addr_len,
-        ErrorKind::Listen,
-        "listen failed: invalid UTF-8 address",
-        "listen failed: address contained NUL",
-    ) else {
-        return 0;
-    };
+pub unsafe extern "C" fn hew_ecosystem_http_listen(addr: *const HewString) -> i64 {
+    // SAFETY: `addr` is a managed handle borrowed for this call.
+    let addr = unsafe { string_as_str(addr) };
     match TcpListener::bind(addr) {
         Ok(listener) => {
             if let Err(error) = listener.set_nonblocking(true) {
@@ -518,16 +450,8 @@ fn read_request_body(
         }
         body_bytes.extend_from_slice(&chunk[..count]);
     }
-    let body = String::from_utf8(body_bytes).map_err(|_| {
-        NativeError::new(ErrorKind::Parse, "parse failed: request body was not UTF-8")
-    })?;
-    if !no_nul(&body) {
-        return Err(NativeError::new(
-            ErrorKind::Parse,
-            "parse failed: request body contained NUL",
-        ));
-    }
-    Ok(body)
+    String::from_utf8(body_bytes)
+        .map_err(|_| NativeError::new(ErrorKind::Parse, "parse failed: request body was not UTF-8"))
 }
 
 fn read_request(mut stream: TcpStream, deadline: Instant) -> Result<HttpRequest, NativeError> {
@@ -771,7 +695,7 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_free(request: i64) {
     }
 }
 
-unsafe fn request_string(request: i64, field: fn(&HttpRequest) -> &str) -> *mut c_char {
+unsafe fn request_string(request: i64, field: fn(&HttpRequest) -> &str) -> *mut HewString {
     // SAFETY: this function's caller contract requires `request` to be zero
     // or a live handle from `hew_ecosystem_http_server_accept`.
     let Some(request) = (unsafe { request_ref(request) }) else {
@@ -779,10 +703,10 @@ unsafe fn request_string(request: i64, field: fn(&HttpRequest) -> &str) -> *mut 
             ErrorKind::Internal,
             "request accessor failed: null request handle",
         );
-        return str_to_malloc("");
+        return string_from_str("");
     };
     clear_error();
-    str_to_malloc(field(request))
+    string_from_str(field(request))
 }
 
 /// Return the request method. Returns an empty string and records
@@ -792,7 +716,7 @@ unsafe fn request_string(request: i64, field: fn(&HttpRequest) -> &str) -> *mut 
 /// `request` must be zero or a live handle returned by
 /// [`hew_ecosystem_http_server_accept`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_request_method(request: i64) -> *mut c_char {
+pub unsafe extern "C" fn hew_ecosystem_http_request_method(request: i64) -> *mut HewString {
     // SAFETY: forwards this function's own `request` contract to
     // `request_string`.
     unsafe { request_string(request, |request| &request.method) }
@@ -805,7 +729,7 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_method(request: i64) -> *mut
 /// `request` must be zero or a live handle returned by
 /// [`hew_ecosystem_http_server_accept`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_request_path(request: i64) -> *mut c_char {
+pub unsafe extern "C" fn hew_ecosystem_http_request_path(request: i64) -> *mut HewString {
     // SAFETY: forwards this function's own `request` contract to
     // `request_string`.
     unsafe { request_string(request, |request| &request.path) }
@@ -818,7 +742,7 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_path(request: i64) -> *mut c
 /// `request` must be zero or a live handle returned by
 /// [`hew_ecosystem_http_server_accept`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_request_query(request: i64) -> *mut c_char {
+pub unsafe extern "C" fn hew_ecosystem_http_request_query(request: i64) -> *mut HewString {
     // SAFETY: forwards this function's own `request` contract to
     // `request_string`.
     unsafe { request_string(request, |request| &request.query) }
@@ -831,7 +755,7 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_query(request: i64) -> *mut 
 /// `request` must be zero or a live handle returned by
 /// [`hew_ecosystem_http_server_accept`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_request_body(request: i64) -> *mut c_char {
+pub unsafe extern "C" fn hew_ecosystem_http_request_body(request: i64) -> *mut HewString {
     // SAFETY: forwards this function's own `request` contract to
     // `request_string`.
     unsafe { request_string(request, |request| &request.body) }
@@ -840,35 +764,28 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_body(request: i64) -> *mut c
 /// Return a header value, setting `MissingHeader` when absent.
 ///
 /// # Safety
-/// `request` must be live and `name` must point to `name_len` UTF-8 bytes.
+/// `request` must be live and `name` must be null (the empty string) or a live
+/// managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_ecosystem_http_request_header(
     request: i64,
-    name: *const c_char,
-    name_len: i64,
-) -> *mut c_char {
+    name: *const HewString,
+) -> *mut HewString {
     // SAFETY: this function's caller contract requires `request` to be a
     // live handle from `hew_ecosystem_http_server_accept`.
     let Some(request) = (unsafe { request_ref(request) }) else {
         set_error(ErrorKind::Internal, "header failed: null request handle");
-        return str_to_malloc("");
+        return string_from_str("");
     };
-    let Some(name) = input_string(
-        name,
-        name_len,
-        ErrorKind::Internal,
-        "header failed: invalid UTF-8 name",
-        "header failed: name contained NUL",
-    ) else {
-        return str_to_malloc("");
-    };
+    // SAFETY: `name` is a managed handle borrowed for this call.
+    let name = unsafe { string_as_str(name) };
     let lower = name.to_ascii_lowercase();
     if let Some((_, value)) = request.headers.iter().find(|(key, _)| key == &lower) {
         clear_error();
-        str_to_malloc(value)
+        string_from_str(value)
     } else {
         set_error(ErrorKind::MissingHeader, name);
-        str_to_malloc("")
+        string_from_str("")
     }
 }
 
@@ -981,16 +898,14 @@ fn write_response(request: &mut HttpRequest, response: &[u8]) -> Result<i64, Nat
 /// Send one complete HTTP response.
 ///
 /// # Safety
-/// `request` must be live; string pointers must reference their declared byte
-/// lengths.
+/// `request` must be live; each string argument must be null (the empty
+/// string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_ecosystem_http_request_respond(
     request: i64,
     status: i64,
-    body: *const c_char,
-    body_len: i64,
-    content_type: *const c_char,
-    content_type_len: i64,
+    body: *const HewString,
+    content_type: *const HewString,
 ) -> i64 {
     // SAFETY: this function's caller contract requires `request` to be
     // a live handle from `hew_ecosystem_http_server_accept`.
@@ -998,22 +913,14 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_respond(
         set_error(ErrorKind::Write, "write failed: null request handle");
         return -1;
     };
-    // SAFETY: `body`/`body_len` are the raw pointer and declared byte
-    // length this function received from its caller, matching
-    // `utf8_with_len`'s contract.
-    let Some(body) = (unsafe { utf8_with_len(body, body_len) }) else {
-        set_error(ErrorKind::Write, "write failed: invalid UTF-8 body");
+    // SAFETY: `body` is a managed handle borrowed for this call.
+    let body = unsafe { string_as_str(body) };
+    // SAFETY: `content_type` is a managed handle borrowed for this call.
+    let content_type = unsafe { string_as_str(content_type) };
+    if !no_nul(content_type) {
+        set_error(ErrorKind::Write, "write failed: Content-Type contained NUL");
         return -1;
-    };
-    let Some(content_type) = input_string(
-        content_type,
-        content_type_len,
-        ErrorKind::Write,
-        "write failed: invalid UTF-8 Content-Type",
-        "write failed: Content-Type contained NUL",
-    ) else {
-        return -1;
-    };
+    }
     if !(200..=599).contains(&status) {
         set_error(
             ErrorKind::Write,
@@ -1058,13 +965,12 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_respond(
 /// Send a 302 redirect with an empty body.
 ///
 /// # Safety
-/// `request` must be live and `location` must point to `location_len` UTF-8
-/// bytes.
+/// `request` must be live and `location` must be null (the empty string) or a
+/// live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_ecosystem_http_request_redirect(
     request: i64,
-    location: *const c_char,
-    location_len: i64,
+    location: *const HewString,
 ) -> i64 {
     // SAFETY: this function's caller contract requires `request` to be
     // a live handle from `hew_ecosystem_http_server_accept`.
@@ -1072,15 +978,12 @@ pub unsafe extern "C" fn hew_ecosystem_http_request_redirect(
         set_error(ErrorKind::Write, "write failed: null request handle");
         return -1;
     };
-    let Some(location) = input_string(
-        location,
-        location_len,
-        ErrorKind::Write,
-        "write failed: invalid UTF-8 Location",
-        "write failed: Location contained NUL",
-    ) else {
+    // SAFETY: `location` is a managed handle borrowed for this call.
+    let location = unsafe { string_as_str(location) };
+    if !no_nul(location) {
+        set_error(ErrorKind::Write, "write failed: Location contained NUL");
         return -1;
-    };
+    }
     if location.contains(['\r', '\n']) {
         set_error(
             ErrorKind::Write,
@@ -1148,34 +1051,20 @@ fn decode(input: &str) -> Result<String, NativeError> {
 /// Strictly decode URL-encoded UTF-8.
 ///
 /// # Safety
-/// `input` must point to `input_len` UTF-8 bytes. The returned string is
-/// caller-freed.
+/// `input` must be null (the empty string) or a live managed Hew string
+/// handle. The returned string is owned by the caller.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_url_decode(
-    input: *const c_char,
-    input_len: i64,
-) -> *mut c_char {
-    let Some(input) = input_string(
-        input,
-        input_len,
-        ErrorKind::Decode,
-        "decode failed: input was not UTF-8",
-        "decode failed: input contained NUL",
-    ) else {
-        return str_to_malloc("");
-    };
+pub unsafe extern "C" fn hew_ecosystem_http_url_decode(input: *const HewString) -> *mut HewString {
+    // SAFETY: `input` is a managed handle borrowed for this call.
+    let input = unsafe { string_as_str(input) };
     match decode(input) {
-        Ok(value) if no_nul(&value) => {
+        Ok(value) => {
             clear_error();
-            str_to_malloc(&value)
-        }
-        Ok(_) => {
-            set_error(ErrorKind::Decode, "decode failed: result contained NUL");
-            str_to_malloc("")
+            string_from_str(&value)
         }
         Err(error) => {
             set_error(error.kind, error.message);
-            str_to_malloc("")
+            string_from_str("")
         }
     }
 }
@@ -1183,61 +1072,41 @@ pub unsafe extern "C" fn hew_ecosystem_http_url_decode(
 /// Extract a strictly decoded URL-encoded form field.
 ///
 /// # Safety
-/// `body` and `key` must point to their declared UTF-8 byte lengths. The
-/// returned string is caller-freed.
+/// `body` and `key` must each be null (the empty string) or a live managed Hew
+/// string handle. The returned string is owned by the caller.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_ecosystem_http_form_value(
-    body: *const c_char,
-    body_len: i64,
-    key: *const c_char,
-    key_len: i64,
-) -> *mut c_char {
-    let Some(body) = input_string(
-        body,
-        body_len,
-        ErrorKind::Decode,
-        "decode failed: form body was not UTF-8",
-        "decode failed: form body contained NUL",
-    ) else {
-        return str_to_malloc("");
-    };
-    let Some(key) = input_string(
-        key,
-        key_len,
-        ErrorKind::Decode,
-        "decode failed: form key was not UTF-8",
-        "decode failed: form key contained NUL",
-    ) else {
-        return str_to_malloc("");
-    };
+    body: *const HewString,
+    key: *const HewString,
+) -> *mut HewString {
+    // SAFETY: `body` is a managed handle borrowed for this call.
+    let body = unsafe { string_as_str(body) };
+    // SAFETY: `key` is a managed handle borrowed for this call.
+    let key = unsafe { string_as_str(key) };
     for pair in body.split('&') {
         let (encoded_key, encoded_value) = pair.split_once('=').unwrap_or((pair, ""));
         let decoded_key = match decode(encoded_key) {
             Ok(value) => value,
             Err(error) => {
                 set_error(error.kind, error.message);
-                return str_to_malloc("");
+                return string_from_str("");
             }
         };
         if decoded_key == key {
             return match decode(encoded_value) {
-                Ok(value) if no_nul(&value) => {
+                Ok(value) => {
                     clear_error();
-                    str_to_malloc(&value)
-                }
-                Ok(_) => {
-                    set_error(ErrorKind::Decode, "decode failed: form value contained NUL");
-                    str_to_malloc("")
+                    string_from_str(&value)
                 }
                 Err(error) => {
                     set_error(error.kind, error.message);
-                    str_to_malloc("")
+                    string_from_str("")
                 }
             };
         }
     }
     set_error(ErrorKind::MissingFormField, key);
-    str_to_malloc("")
+    string_from_str("")
 }
 
 #[derive(Debug)]
@@ -1335,15 +1204,15 @@ pub extern "C" fn hew_ecosystem_http_test_fixture_new() -> i64 {
 /// `fixture` must be zero or a live handle returned by
 /// [`hew_ecosystem_http_test_fixture_new`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_test_fixture_addr(fixture: i64) -> *mut c_char {
+pub unsafe extern "C" fn hew_ecosystem_http_test_fixture_addr(fixture: i64) -> *mut HewString {
     // SAFETY: this function's caller contract requires `fixture` to be zero
     // or a live handle from `hew_ecosystem_http_test_fixture_new`.
     let Some(fixture) = (unsafe { (fixture as *const TestFixture).as_ref() }) else {
         set_error(ErrorKind::Internal, "test fixture handle was null");
-        return str_to_malloc("");
+        return string_from_str("");
     };
     clear_error();
-    str_to_malloc(&fixture.addr)
+    string_from_str(&fixture.addr)
 }
 
 /// Free a test fixture. Zero is a no-op.
@@ -1414,6 +1283,11 @@ pub unsafe extern "C" fn hew_ecosystem_http_test_client_start_case(
         ),
         6 => (
             b"GET /nul-header HTTP/1.1\r\nHost: test\r\nX-Test: a\0b\r\n\r\n".to_vec(),
+            Vec::new(),
+            false,
+        ),
+        7 => (
+            b"GET /caf%C3%A9-menu-%E2%9C%93-r%C3%A9sum%C3%A9 HTTP/1.1\r\nHost: test\r\n\r\n".to_vec(),
             Vec::new(),
             false,
         ),
@@ -1490,9 +1364,8 @@ pub unsafe extern "C" fn hew_ecosystem_http_test_client_expect_case(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn hew_ecosystem_http_last_error() -> *mut c_char {
-    let message = LAST_ERROR.with(|state| state.borrow().message.clone());
-    str_to_malloc(&message)
+pub extern "C" fn hew_ecosystem_http_last_error() -> *mut HewString {
+    LAST_ERROR.with(|state| string_from_str(&state.borrow().message))
 }
 
 #[unsafe(no_mangle)]
@@ -1508,84 +1381,88 @@ pub extern "C" fn hew_ecosystem_http_last_status() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
+    use hew_cabi::string::string_release;
     use std::sync::mpsc;
 
-    unsafe fn raw_listen(value: &str) -> i64 {
-        // SAFETY: `value` is a `&str`; its pointer and byte length match.
-        unsafe { hew_ecosystem_http_listen(value.as_ptr().cast(), value.len().try_into().unwrap()) }
+    /// Allocate one managed string argument for a boundary call.
+    fn managed(value: &str) -> *mut HewString {
+        string_from_str(value)
     }
 
-    unsafe fn raw_header(request: i64, name: &str) -> *mut c_char {
-        // SAFETY: `request` is a live handle and `name` is a `&str`; the pointer/length pair matches.
-        unsafe {
-            hew_ecosystem_http_request_header(
-                request,
-                name.as_ptr().cast(),
-                name.len().try_into().unwrap(),
-            )
-        }
+    /// Read and release the managed string a boundary call returned.
+    unsafe fn owned_string(raw: *mut HewString) -> String {
+        // SAFETY: `raw` is the owner a crate entry point just returned.
+        let value = unsafe { string_as_str(raw) }.to_owned();
+        // SAFETY: the same owner, released exactly once here.
+        unsafe { string_release(raw) };
+        value
+    }
+
+    unsafe fn raw_listen(value: &str) -> i64 {
+        let value = managed(value);
+        // SAFETY: `value` is a live managed string for the duration of the call.
+        let handle = unsafe { hew_ecosystem_http_listen(value) };
+        // SAFETY: this test module owns `value` and releases it once.
+        unsafe { string_release(value) };
+        handle
+    }
+
+    unsafe fn raw_header(request: i64, name: &str) -> *mut HewString {
+        let name = managed(name);
+        // SAFETY: `request` is a live handle and `name` a live managed string.
+        let value = unsafe { hew_ecosystem_http_request_header(request, name) };
+        // SAFETY: this test module owns `name` and releases it once.
+        unsafe { string_release(name) };
+        value
     }
 
     unsafe fn raw_respond(request: i64, status: i64, body: &str, content_type: &str) -> i64 {
-        // SAFETY: `request` is a live handle; `body`/`content_type` pointers and lengths match their source slice/str.
-        unsafe { raw_respond_bytes(request, status, body.as_bytes(), content_type) }
-    }
-
-    unsafe fn raw_respond_bytes(request: i64, status: i64, body: &[u8], content_type: &str) -> i64 {
-        // SAFETY: `request` is a live handle; `body`/`content_type` pointers and lengths match their source slice/str.
+        let body = managed(body);
+        let content_type = managed(content_type);
+        // SAFETY: `request` is a live handle; both strings are live managed values.
+        let written =
+            unsafe { hew_ecosystem_http_request_respond(request, status, body, content_type) };
+        // SAFETY: this test module owns both handles and releases each once.
         unsafe {
-            hew_ecosystem_http_request_respond(
-                request,
-                status,
-                body.as_ptr().cast(),
-                body.len().try_into().unwrap(),
-                content_type.as_ptr().cast(),
-                content_type.len().try_into().unwrap(),
-            )
+            string_release(body);
+            string_release(content_type);
         }
+        written
     }
 
     unsafe fn raw_redirect(request: i64, location: &str) -> i64 {
-        // SAFETY: `request` is a live handle and `location` is a `&str`; its pointer/length match.
-        unsafe {
-            hew_ecosystem_http_request_redirect(
-                request,
-                location.as_ptr().cast(),
-                location.len().try_into().unwrap(),
-            )
-        }
+        let location = managed(location);
+        // SAFETY: `request` is a live handle and `location` a live managed string.
+        let written = unsafe { hew_ecosystem_http_request_redirect(request, location) };
+        // SAFETY: this test module owns `location` and releases it once.
+        unsafe { string_release(location) };
+        written
     }
 
-    unsafe fn raw_url_decode(input: &str) -> *mut c_char {
-        // SAFETY: `input` is a `&str`; its pointer and byte length match.
-        unsafe {
-            hew_ecosystem_http_url_decode(input.as_ptr().cast(), input.len().try_into().unwrap())
-        }
+    unsafe fn raw_url_decode(input: &str) -> *mut HewString {
+        let input = managed(input);
+        // SAFETY: `input` is a live managed string for the duration of the call.
+        let value = unsafe { hew_ecosystem_http_url_decode(input) };
+        // SAFETY: this test module owns `input` and releases it once.
+        unsafe { string_release(input) };
+        value
     }
 
-    unsafe fn raw_form_value(body: &str, key: &str) -> *mut c_char {
-        // SAFETY: `body`/`key` are `&str`s; their pointers and byte lengths match.
+    unsafe fn raw_form_value(body: &str, key: &str) -> *mut HewString {
+        let body = managed(body);
+        let key = managed(key);
+        // SAFETY: both arguments are live managed strings for the call.
+        let value = unsafe { hew_ecosystem_http_form_value(body, key) };
+        // SAFETY: this test module owns both handles and releases each once.
         unsafe {
-            hew_ecosystem_http_form_value(
-                body.as_ptr().cast(),
-                body.len().try_into().unwrap(),
-                key.as_ptr().cast(),
-                key.len().try_into().unwrap(),
-            )
+            string_release(body);
+            string_release(key);
         }
-    }
-
-    unsafe fn owned_string(raw: *mut c_char) -> String {
-        // SAFETY: `raw` is a non-null C string allocated by this crate's malloc-based allocator, per `owned_string`'s caller contract.
-        let value = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_owned();
-        // SAFETY: `raw` was allocated by this crate's malloc-based allocator and is freed exactly once here.
-        unsafe { libc::free(raw.cast()) };
         value
     }
 
     fn error_snapshot() -> (i32, i32, String) {
-        // SAFETY: `hew_ecosystem_http_last_error` returns a freshly allocated C string, freed immediately by `owned_string`.
+        // SAFETY: `hew_ecosystem_http_last_error` returns a fresh managed owner, released immediately by `owned_string`.
         unsafe {
             (
                 hew_ecosystem_http_last_status(),
@@ -2032,21 +1909,20 @@ mod tests {
     }
 
     #[test]
-    fn request_body_with_nul_returns_parse_error() {
+    fn request_body_with_nul_survives_the_managed_boundary() {
         let (server, request) = accept_bytes(
             b"POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 3\r\n\r\na\0b".to_vec(),
         );
-        assert_eq!(request, 0);
-        assert_eq!(
-            error_snapshot(),
-            (
-                -1,
-                ErrorKind::Parse as i32,
-                "parse failed: request body contained NUL".to_owned()
-            )
-        );
-        // SAFETY: `server` is the live handle from `listener()`/`accept_bytes()` earlier in this test, freed at most once here.
-        unsafe { hew_ecosystem_http_server_close(server) };
+        assert_ne!(request, 0, "{:?}", error_snapshot());
+        // SAFETY: `request` is the live handle accepted earlier in this test.
+        unsafe {
+            assert_eq!(
+                owned_string(hew_ecosystem_http_request_body(request)),
+                "a\0b"
+            );
+            hew_ecosystem_http_request_free(request);
+            hew_ecosystem_http_server_close(server);
+        }
     }
 
     #[test]
@@ -2168,8 +2044,8 @@ mod tests {
     #[test]
     fn response_body_with_nul_is_transmitted_without_truncation() {
         let (server, request, receiver) = request_with_client();
-        // SAFETY: `request` is a live handle; `body`/`content_type` pointers and lengths match their source slice/str.
-        let written = unsafe { raw_respond_bytes(request, 200, b"left\0right", "text/plain") };
+        // SAFETY: `request` is a live handle; `body`/`content_type` are `&str`s whose pointers and lengths match.
+        let written = unsafe { raw_respond(request, 200, "left\0right", "text/plain") };
         let expected = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 10\r\nConnection: close\r\n\r\nleft\0right";
         assert_eq!(written, i64::try_from(expected.len()).unwrap());
         assert_eq!(
@@ -2464,15 +2340,16 @@ mod tests {
 
     #[test]
     fn multibyte_percent_input_returns_exact_utf8() {
-        // SAFETY: `input` is a `&str`; its pointer and byte length match.
-        let value = unsafe { owned_string(raw_url_decode("caf%C3%A9+menu")) };
-        assert_eq!(value, "café menu");
+        // SAFETY: `raw_url_decode` returns a fresh managed owner, released by `owned_string`.
+        let value =
+            unsafe { owned_string(raw_url_decode("caf%C3%A9+menu+%E2%9C%93+r%C3%A9sum%C3%A9")) };
+        assert_eq!(value, "café menu ✓ résumé");
         assert_eq!(error_snapshot(), (0, 0, String::new()));
     }
 
     #[test]
     fn malformed_percent_input_returns_decode_error() {
-        // SAFETY: `input` is a `&str`; its pointer and byte length match.
+        // SAFETY: `raw_url_decode` returns a fresh managed owner, released by `owned_string`.
         let value = unsafe { owned_string(raw_url_decode("bad%2")) };
         assert_eq!(value, "");
         assert_eq!(
@@ -2486,23 +2363,16 @@ mod tests {
     }
 
     #[test]
-    fn decoded_nul_returns_decode_error() {
-        // SAFETY: `input` is a `&str`; its pointer and byte length match.
+    fn decoded_nul_survives_the_managed_boundary() {
+        // SAFETY: `raw_url_decode` returns a fresh managed owner, released by `owned_string`.
         let value = unsafe { owned_string(raw_url_decode("left%00right")) };
-        assert_eq!(value, "");
-        assert_eq!(
-            error_snapshot(),
-            (
-                -1,
-                ErrorKind::Decode as i32,
-                "decode failed: result contained NUL".to_owned()
-            )
-        );
+        assert_eq!(value, "left\0right");
+        assert_eq!(error_snapshot(), (0, 0, String::new()));
     }
 
     #[test]
     fn present_form_field_returns_exact_decoded_value() {
-        // SAFETY: `body`/`key` are `&str`s; their pointers and byte lengths match.
+        // SAFETY: `raw_form_value` returns a fresh managed owner, released by `owned_string`.
         let value = unsafe { owned_string(raw_form_value("title=caf%C3%A9+menu&empty=", "title")) };
         assert_eq!(value, "café menu");
         assert_eq!(error_snapshot(), (0, 0, String::new()));
@@ -2510,7 +2380,7 @@ mod tests {
 
     #[test]
     fn missing_form_field_returns_missing_status() {
-        // SAFETY: `body`/`key` are `&str`s; their pointers and byte lengths match.
+        // SAFETY: `raw_form_value` returns a fresh managed owner, released by `owned_string`.
         let value = unsafe { owned_string(raw_form_value("title=hello", "body")) };
         assert_eq!(value, "");
         assert_eq!(error_snapshot(), (-1, 8, "body".to_owned()));
@@ -2518,7 +2388,7 @@ mod tests {
 
     #[test]
     fn malformed_form_value_returns_decode_error() {
-        // SAFETY: `body`/`key` are `&str`s; their pointers and byte lengths match.
+        // SAFETY: `raw_form_value` returns a fresh managed owner, released by `owned_string`.
         let value = unsafe { owned_string(raw_form_value("title=bad%GG", "title")) };
         assert_eq!(value, "");
         assert_eq!(
