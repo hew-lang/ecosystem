@@ -842,7 +842,7 @@ mod tests {
         let img = new_image(8, 8, "definitely-not-a-colour");
         assert!(img.is_null());
         assert_eq!(hew_magick_last_error_kind(), ErrorKind::InvalidInput as i32);
-        assert!(last_error().starts_with("invalid image color"));
+        assert!(last_error().starts_with("invalid image colour"));
     }
 
     #[test]

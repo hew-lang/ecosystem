@@ -15,7 +15,6 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 hew-cabi.workspace = true
-libc.workspace = true
 prometheus = "0.13"
 
 [lints]

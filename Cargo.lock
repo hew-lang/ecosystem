@@ -1090,7 +1090,6 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
  "hew-cabi",
- "libc",
  "serde_json",
  "sha2 0.10.9",
  "ureq",
@@ -1158,7 +1157,6 @@ name = "hew-ecosystem-metrics"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "prometheus",
 ]
 
@@ -1168,7 +1166,6 @@ version = "0.3.0"
 dependencies = [
  "hew-cabi",
  "httparse",
- "libc",
 ]
 
 [[package]]
@@ -1176,7 +1173,6 @@ name = "hew-ecosystem-queue-mqtt"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "rumqttc",
 ]
 
@@ -1185,7 +1181,6 @@ name = "hew-ecosystem-queue-nats"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "nats",
 ]
 
