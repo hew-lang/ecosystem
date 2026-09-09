@@ -295,6 +295,14 @@ pub unsafe extern "C" fn hew_magick_open(path: *const HewString) -> HewMagickIma
     let Some(path_str) = (unsafe { text_input(path, "path") }) else {
         return HewMagickImageHandle::null();
     };
+    // An empty path names no image. ImageMagick treats some empty and
+    // special-cased filenames as a request to read from stdin, which would
+    // hang a program that has no input queued there; refuse it here instead
+    // of ever handing it to the native reader.
+    if path_str.is_empty() {
+        set_error(ErrorKind::InvalidInput, "path is empty".to_string());
+        return HewMagickImageHandle::null();
+    }
     let wand = MagickWand::new();
     if let Err(error) = wand.read_image(path_str) {
         set_error(
