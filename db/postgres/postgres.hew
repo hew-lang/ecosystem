@@ -157,7 +157,7 @@ pub actor Conn {
 
     init(connstr: string) {
         handle = unsafe {
-            hew_pg_connect_len(connstr, connstr.len())
+            hew_pg_connect(connstr)
         };
         if handle == 0 {
             connect_error_kind = unsafe {
@@ -172,7 +172,7 @@ pub actor Conn {
     receive fn execute(sql: string) -> Result<i64, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
-            hew_pg_execute_len(connection, sql, sql.len())
+            hew_pg_execute(connection, sql)
         };
         if unsafe {
             hew_pg_last_error_kind()
@@ -186,7 +186,7 @@ pub actor Conn {
     receive fn execute_params(sql: string, params: bytes) -> Result<i64, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
-            hew_pg_execute_params_len(connection, sql, sql.len(), params)
+            hew_pg_execute_params(connection, sql, params)
         };
         if unsafe {
             hew_pg_last_error_kind()
@@ -200,7 +200,7 @@ pub actor Conn {
     receive fn query(sql: string) -> Result<QueryResult, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_pg_query_len(connection, sql, sql.len())
+            hew_pg_query(connection, sql)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -211,7 +211,7 @@ pub actor Conn {
     receive fn query_params(sql: string, params: bytes) -> Result<QueryResult, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_pg_query_params_len(connection, sql, sql.len(), params)
+            hew_pg_query_params(connection, sql, params)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -241,11 +241,11 @@ pub actor Conn {
 }
 
 extern "C" {
-    fn hew_pg_connect_len(connstr: string, connstr_len: i64) -> i64;
-    fn hew_pg_execute_len(connection: i64, sql: string, sql_len: i64) -> i64;
-    fn hew_pg_execute_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
-    fn hew_pg_query_len(connection: i64, sql: string, sql_len: i64) -> i64;
-    fn hew_pg_query_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
+    fn hew_pg_connect(connstr: string) -> i64;
+    fn hew_pg_execute(connection: i64, sql: string) -> i64;
+    fn hew_pg_execute_params(connection: i64, sql: string, params: bytes) -> i64;
+    fn hew_pg_query(connection: i64, sql: string) -> i64;
+    fn hew_pg_query_params(connection: i64, sql: string, params: bytes) -> i64;
     fn hew_pg_result_rows(result: i64) -> i64;
     fn hew_pg_result_cols(result: i64) -> i64;
     fn hew_pg_result_column(result: i64, index: i64) -> bytes;

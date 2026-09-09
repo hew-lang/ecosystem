@@ -5,8 +5,11 @@ import hew.db.mysql;
 import hew.db.mysql.{MysqlError, CellValue};
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<mysql.Conn>);
     fn hew_mysql_connection_count() -> i64;
+}
+
+fn unicode_text() -> string {
+    "Répertoire des requêtes traitées — 雪"
 }
 
 fn nul_value() -> bytes {
@@ -24,7 +27,7 @@ fn invalid_utf8() -> bytes {
 }
 
 fn insert_params() -> bytes {
-    let value = "1\n".to_bytes();
+    var value = "1\n".to_bytes();
     value.append(nul_value());
     value
 }
@@ -52,6 +55,13 @@ fn expect_count(result: Result<i64, MysqlError>, expected: i64) {
 fn expect_query_error<T>(result: Result<T, MysqlError>) {
     match result {
         .Err(.Query(message)) => testing.assert_true(!message.is_empty()),
+        _ => testing.assert_true(false),
+    }
+}
+
+fn expect_query_error_reporting<T>(result: Result<T, MysqlError>, expected: string) {
+    match result {
+        .Err(.Query(message)) => testing.assert_true(message.contains(expected)),
         _ => testing.assert_true(false),
     }
 }
@@ -107,6 +117,16 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
         },
         _ => testing.assert_true(false),
     }
+    match db.query("SELECT 'Répertoire des requêtes traitées — 雪' AS value") {
+        .Ok(.Ok(query)) => {
+            testing.assert_eq(query.rows.len(), 1);
+            match query.rows[0].values[0] {
+                .Text(value) => assert_bytes(value, unicode_text().to_bytes()),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
     match db.query("SELECT X'FF00' AS binary_value") {
         .Ok(.Ok(query)) => {
             var expected: bytes = bytes.new();
@@ -130,6 +150,10 @@ fn actual_database_failures_are_typed() {
     }
     match db.query("SELECT * FROM table_that_does_not_exist") {
         .Ok(result) => expect_query_error(result),
+        .Err(_) => testing.assert_true(false),
+    }
+    match db.query("SELECT * FROM répertoire_des_requêtes_雪") {
+        .Ok(result) => expect_query_error_reporting(result, "répertoire_des_requêtes_雪"),
         .Err(_) => testing.assert_true(false),
     }
     match db.query_params("SELECT ?", invalid_utf8()) {
@@ -161,9 +185,7 @@ fn explicit_actor_stop_releases_connection() {
     };
     testing.assert_true(previous >= 0);
     let db = actor_without_close(previous);
-    unsafe {
-        hew_actor_stop(db);
-    };
+    close(db);
     var attempts = 0;
     while unsafe {
         hew_mysql_connection_count()
