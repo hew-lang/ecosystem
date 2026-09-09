@@ -153,19 +153,8 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
     });
 }
 
-unsafe fn input<'a>(value: *const HewString, label: &str) -> Option<&'a str> {
-    if value.is_null() {
-        set_error(
-            ErrorKind::InvalidInput,
-            format!("invalid {label}: null string pointer"),
-        );
-        return None;
-    }
-    Some(unsafe { string_as_str(value) })
-}
-
 unsafe fn sql_input<'a>(value: *const HewString) -> Option<&'a str> {
-    let value = unsafe { input(value, "SQL") }?;
+    let value = unsafe { string_as_str(value) };
     if value.as_bytes().contains(&0) {
         set_error(ErrorKind::InvalidInput, "SQL contains an embedded NUL byte");
         None
@@ -305,9 +294,7 @@ fn query_result(
 #[no_mangle]
 pub unsafe extern "C" fn hew_sqlite_open(path: *const HewString) -> i64 {
     clear_error();
-    let Some(path) = (unsafe { input(path, "database path") }) else {
-        return 0;
-    };
+    let path = unsafe { string_as_str(path) };
     match rusqlite::Connection::open(path) {
         Ok(inner) => register(
             &CONNECTIONS,
@@ -636,6 +623,27 @@ mod tests {
         assert!(unsafe { sql_input(value) }.is_none());
         unsafe { string_release(value) };
         assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::InvalidInput as i32);
+    }
+
+    #[test]
+    fn managed_strings_preserve_empty_unicode_and_errors() {
+        let _test_guard = CONNECTION_TEST_LOCK.lock().unwrap();
+        let handle = open_memory();
+        assert_eq!(execute(handle, ""), 0);
+        assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::None as i32);
+        let result = query(handle, "SELECT 'Zoë 雪' AS value");
+        assert!(result > 0);
+        assert_eq!(
+            unsafe { bytes_value(hew_sqlite_result_cell(result, 0, 0)) },
+            "Zoë 雪".as_bytes()
+        );
+        hew_sqlite_result_free(result);
+        execute(handle, "雪");
+        assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::Query as i32);
+        let error = hew_sqlite_last_error();
+        assert!(unsafe { string_as_str(error) }.contains('雪'));
+        unsafe { string_release(error) };
+        hew_sqlite_close(handle);
     }
 
     #[test]
