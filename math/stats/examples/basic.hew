@@ -9,4 +9,11 @@ fn main() {
         },
         .Err(error) => println(stats.error_message(error)),
     }
+    match stats.std_dev(values) {
+        .Ok(deviation) => {
+            println(f"population standard deviation = {deviation}");
+            assert(deviation > 1.414213 && deviation < 1.414214);
+        },
+        .Err(error) => panic(stats.error_message(error)),
+    }
 }

@@ -18,6 +18,8 @@
 //! }
 //! ```
 
+import std.math;
+
 // ── Types ──────────────────────────────────────────────────────────
 #[wire]
 pub type LinearFit {
@@ -167,12 +169,12 @@ pub fn variance_sample(data: Vec<f64>) -> Result<f64, StatsError> {
 
 /// Compute the population standard deviation.
 pub fn std_dev(data: Vec<f64>) -> Result<f64, StatsError> {
-    Ok(sqrt(variance(data)?))
+    Ok(math.sqrt(variance(data)?))
 }
 
 /// Compute the sample standard deviation.
 pub fn std_dev_sample(data: Vec<f64>) -> Result<f64, StatsError> {
-    Ok(sqrt(variance_sample(data)?))
+    Ok(math.sqrt(variance_sample(data)?))
 }
 
 /// Compute the median (middle value) of a dataset.
@@ -247,7 +249,7 @@ pub fn correlation(x: Vec<f64>, y: Vec<f64>) -> Result<f64, StatsError> {
         sxx = sxx + dx * dx;
         syy = syy + dy * dy;
     }
-    let denom = sqrt(sxx * syy);
+    let denom = math.sqrt(sxx * syy);
     if denom == 0.0 {
         return Err(StatsError.ZeroVariance("correlation is undefined for constant data"));
     }
@@ -467,7 +469,7 @@ impl RunningMethods for Running {
         }
     }
     fn std_dev(self) -> Result<f64, StatsError> {
-        Ok(sqrt(self.variance()?))
+        Ok(math.sqrt(self.variance()?))
     }
     fn min(self) -> Result<f64, StatsError> {
         if self.n == 0 {
