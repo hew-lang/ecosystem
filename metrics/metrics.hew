@@ -142,7 +142,7 @@ pub actor Registry {
     receive fn counter(name: string, help: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_counter_new(registry, name, name.len(), help, help.len())
+            hew_metrics_counter_new(registry, name, help)
         })
     }
 
@@ -150,7 +150,7 @@ pub actor Registry {
     receive fn counter_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_counter_vec_new(registry, name, name.len(), help, help.len(), label_names, label_names.len())
+            hew_metrics_counter_vec_new(registry, name, help, label_names)
         })
     }
 
@@ -158,7 +158,7 @@ pub actor Registry {
     receive fn gauge(name: string, help: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_gauge_new(registry, name, name.len(), help, help.len())
+            hew_metrics_gauge_new(registry, name, help)
         })
     }
 
@@ -166,7 +166,7 @@ pub actor Registry {
     receive fn gauge_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_gauge_vec_new(registry, name, name.len(), help, help.len(), label_names, label_names.len())
+            hew_metrics_gauge_vec_new(registry, name, help, label_names)
         })
     }
 
@@ -174,7 +174,7 @@ pub actor Registry {
     receive fn histogram(name: string, help: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_histogram_new(registry, name, name.len(), help, help.len())
+            hew_metrics_histogram_new(registry, name, help)
         })
     }
 
@@ -182,7 +182,7 @@ pub actor Registry {
     receive fn histogram_with_buckets(name: string, help: string, buckets: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_histogram_with_buckets(registry, name, name.len(), help, help.len(), buckets, buckets.len())
+            hew_metrics_histogram_with_buckets(registry, name, help, buckets)
         })
     }
 
@@ -190,7 +190,7 @@ pub actor Registry {
     receive fn histogram_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_histogram_vec_new(registry, name, name.len(), help, help.len(), label_names, label_names.len())
+            hew_metrics_histogram_vec_new(registry, name, help, label_names)
         })
     }
 
@@ -198,7 +198,7 @@ pub actor Registry {
     receive fn histogram_vec_with_buckets(name: string, help: string, label_names: string, buckets: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         registered(unsafe {
-            hew_metrics_histogram_vec_with_buckets(registry, name, name.len(), help, help.len(), label_names, label_names.len(), buckets, buckets.len())
+            hew_metrics_histogram_vec_with_buckets(registry, name, help, label_names, buckets)
         })
     }
 
@@ -225,7 +225,7 @@ pub actor Registry {
     receive fn counter_vec_inc(metric: i64, label_values: string) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         changed(metric, unsafe {
-            hew_metrics_counter_vec_inc(registry, metric, label_values, label_values.len())
+            hew_metrics_counter_vec_inc(registry, metric, label_values)
         })
     }
 
@@ -236,7 +236,7 @@ pub actor Registry {
             return Err(MetricsError.InvalidInput("counter increments must be non-negative"));
         }
         changed(metric, unsafe {
-            hew_metrics_counter_vec_add(registry, metric, label_values, label_values.len(), value)
+            hew_metrics_counter_vec_add(registry, metric, label_values, value)
         })
     }
 
@@ -268,7 +268,7 @@ pub actor Registry {
     receive fn gauge_vec_set(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         changed(metric, unsafe {
-            hew_metrics_gauge_vec_set(registry, metric, label_values, label_values.len(), value)
+            hew_metrics_gauge_vec_set(registry, metric, label_values, value)
         })
     }
 
@@ -276,7 +276,7 @@ pub actor Registry {
     receive fn gauge_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         changed(metric, unsafe {
-            hew_metrics_gauge_vec_add(registry, metric, label_values, label_values.len(), value)
+            hew_metrics_gauge_vec_add(registry, metric, label_values, value)
         })
     }
 
@@ -284,7 +284,7 @@ pub actor Registry {
     receive fn gauge_vec_dec(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         changed(metric, unsafe {
-            hew_metrics_gauge_vec_dec(registry, metric, label_values, label_values.len(), value)
+            hew_metrics_gauge_vec_dec(registry, metric, label_values, value)
         })
     }
 
@@ -300,7 +300,7 @@ pub actor Registry {
     receive fn histogram_vec_observe(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         changed(metric, unsafe {
-            hew_metrics_histogram_vec_observe(registry, metric, label_values, label_values.len(), value)
+            hew_metrics_histogram_vec_observe(registry, metric, label_values, value)
         })
     }
 
@@ -336,26 +336,26 @@ pub actor Registry {
 // ── FFI bindings (implementation detail) ────────────────────────────
 extern "C" {
     fn hew_metrics_new() -> i64;
-    fn hew_metrics_counter_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64) -> i64;
-    fn hew_metrics_counter_vec_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64) -> i64;
-    fn hew_metrics_gauge_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64) -> i64;
-    fn hew_metrics_gauge_vec_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64) -> i64;
-    fn hew_metrics_histogram_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64) -> i64;
-    fn hew_metrics_histogram_with_buckets(reg: i64, name: string, name_len: i64, help: string, help_len: i64, buckets: string, buckets_len: i64) -> i64;
-    fn hew_metrics_histogram_vec_new(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64) -> i64;
-    fn hew_metrics_histogram_vec_with_buckets(reg: i64, name: string, name_len: i64, help: string, help_len: i64, label_names: string, label_names_len: i64, buckets: string, buckets_len: i64) -> i64;
+    fn hew_metrics_counter_new(reg: i64, name: string, help: string) -> i64;
+    fn hew_metrics_counter_vec_new(reg: i64, name: string, help: string, label_names: string) -> i64;
+    fn hew_metrics_gauge_new(reg: i64, name: string, help: string) -> i64;
+    fn hew_metrics_gauge_vec_new(reg: i64, name: string, help: string, label_names: string) -> i64;
+    fn hew_metrics_histogram_new(reg: i64, name: string, help: string) -> i64;
+    fn hew_metrics_histogram_with_buckets(reg: i64, name: string, help: string, buckets: string) -> i64;
+    fn hew_metrics_histogram_vec_new(reg: i64, name: string, help: string, label_names: string) -> i64;
+    fn hew_metrics_histogram_vec_with_buckets(reg: i64, name: string, help: string, label_names: string, buckets: string) -> i64;
     fn hew_metrics_counter_inc(reg: i64, metric: i64) -> i32;
     fn hew_metrics_counter_add(reg: i64, metric: i64, value: f64) -> i32;
-    fn hew_metrics_counter_vec_inc(reg: i64, metric: i64, label_values: string, label_values_len: i64) -> i32;
-    fn hew_metrics_counter_vec_add(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_counter_vec_inc(reg: i64, metric: i64, label_values: string) -> i32;
+    fn hew_metrics_counter_vec_add(reg: i64, metric: i64, label_values: string, value: f64) -> i32;
     fn hew_metrics_gauge_set(reg: i64, metric: i64, value: f64) -> i32;
     fn hew_metrics_gauge_add(reg: i64, metric: i64, value: f64) -> i32;
     fn hew_metrics_gauge_dec(reg: i64, metric: i64, value: f64) -> i32;
-    fn hew_metrics_gauge_vec_set(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
-    fn hew_metrics_gauge_vec_add(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
-    fn hew_metrics_gauge_vec_dec(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_gauge_vec_set(reg: i64, metric: i64, label_values: string, value: f64) -> i32;
+    fn hew_metrics_gauge_vec_add(reg: i64, metric: i64, label_values: string, value: f64) -> i32;
+    fn hew_metrics_gauge_vec_dec(reg: i64, metric: i64, label_values: string, value: f64) -> i32;
     fn hew_metrics_histogram_observe(reg: i64, metric: i64, value: f64) -> i32;
-    fn hew_metrics_histogram_vec_observe(reg: i64, metric: i64, label_values: string, label_values_len: i64, value: f64) -> i32;
+    fn hew_metrics_histogram_vec_observe(reg: i64, metric: i64, label_values: string, value: f64) -> i32;
     fn hew_metrics_export(reg: i64) -> string;
     fn hew_metrics_close(reg: i64);
 }

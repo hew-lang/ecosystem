@@ -4,12 +4,13 @@
 //! for compiled Hew programs. Registry handles are opaque process-local `i64`
 //! ids. A return of -1 indicates failure.
 //!
-//! Returned strings are allocation-base, NUL-terminated `libc::malloc`
-//! buffers. Hew takes ownership of them and releases the allocation base.
+//! Strings cross the boundary as managed Hew strings: inbound handles are
+//! borrowed for the call, and returned handles are freshly allocated owners
+//! the caller releases.
 
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use std::{
     collections::{HashMap, HashSet},
-    os::raw::c_char,
     sync::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex, MutexGuard, OnceLock,
@@ -36,26 +37,6 @@ enum MetricKind {
     CounterVec,
     GaugeVec,
     HistogramVec,
-}
-
-fn str_to_malloc(value: &str) -> *mut c_char {
-    if value.as_bytes().contains(&0) {
-        return std::ptr::null_mut();
-    }
-    // SAFETY: `value.len() + 1` is a nonzero size; `malloc` returns either a
-    // suitably-sized allocation or null, and the null case is checked below.
-    let output = unsafe { libc::malloc(value.len() + 1) }.cast::<u8>();
-    if output.is_null() {
-        return std::ptr::null_mut();
-    }
-    // SAFETY: `output` was just malloc'd with room for `value.len() + 1` bytes
-    // and checked non-null above; `value.as_ptr()` is valid for `value.len()`
-    // bytes and does not overlap the fresh `output` allocation.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast::<c_char>()
 }
 
 /// A per-registry collection of Prometheus metrics.
@@ -151,46 +132,37 @@ fn metric_index(handle: i64, expected: MetricKind) -> Result<usize, i32> {
     usize::try_from(handle / METRIC_KIND_COUNT).map_err(|_| STATUS_INVALID)
 }
 
-unsafe fn c_string(ptr: *const c_char, len: i64) -> Option<String> {
-    let len = usize::try_from(len).ok()?;
-    if ptr.is_null() {
-        return (len == 0).then(String::new);
+/// Split a managed string into its delimited, non-empty parts.
+///
+/// # Safety
+/// `value` must be null (empty) or a live managed Hew string.
+unsafe fn parse_string_list(value: *const HewString) -> Vec<String> {
+    // SAFETY: the caller supplies a live managed handle borrowed for this call.
+    unsafe { string_as_str(value) }
+        .split([',', '\n', '\r', '\t', ' '])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// Parse a bucket list, falling back to the Prometheus defaults when empty.
+///
+/// # Safety
+/// `value` must be null (empty) or a live managed Hew string.
+unsafe fn parse_buckets(value: *const HewString) -> Option<Vec<f64>> {
+    // SAFETY: forwards this function's own safety precondition unchanged.
+    let values = unsafe { parse_string_list(value) };
+    if values.is_empty() {
+        return Some(prometheus::DEFAULT_BUCKETS.to_vec());
     }
-    // SAFETY: the caller of this function (see its `# Safety` doc) guarantees
-    // `ptr` addresses `len` readable bytes.
-    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
-    std::str::from_utf8(bytes).ok().map(ToOwned::to_owned)
-}
-
-unsafe fn parse_string_list(ptr: *const c_char, len: i64) -> Option<Vec<String>> {
-    // SAFETY: forwards this function's own safety precondition on `ptr`/`len`
-    // unchanged to `c_string`.
-    let s = unsafe { c_string(ptr, len) }?;
-    Some(
-        s.split([',', '\n', '\r', '\t', ' '])
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .map(ToOwned::to_owned)
-            .collect(),
-    )
-}
-
-unsafe fn parse_buckets(ptr: *const c_char, len: i64) -> Option<Vec<f64>> {
-    // SAFETY: forwards this function's own safety precondition on `ptr`/`len`
-    // unchanged to `parse_string_list`.
-    let values = unsafe { parse_string_list(ptr, len) }?;
     let mut buckets = Vec::with_capacity(values.len());
     for value in values {
-        let Ok(bucket) = value.parse::<f64>() else {
-            return None;
-        };
+        let bucket = value.parse::<f64>().ok()?;
         if !bucket.is_finite() {
             return None;
         }
         buckets.push(bucket);
-    }
-    if buckets.is_empty() {
-        return None;
     }
     Some(buckets)
 }
@@ -255,27 +227,21 @@ pub extern "C" fn hew_metrics_registry_count() -> i64 {
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8; null is allowed only with a zero length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_counter_new(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
+    name: *const HewString,
+    help: *const HewString,
 ) -> i64 {
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
-    // SAFETY: `name`/`name_len` satisfy this function's documented invariant.
-    let Some(name_str) = (unsafe { c_string(name, name_len) }) else {
-        return -1;
-    };
-    // SAFETY: `help`/`help_len` satisfy this function's documented invariant.
-    let Some(help_str) = (unsafe { c_string(help, help_len) }) else {
-        return -1;
-    };
+    // SAFETY: `name` is a managed handle borrowed for this call.
+    let name_str = unsafe { string_as_str(name) };
+    // SAFETY: `help` is a managed handle borrowed for this call.
+    let help_str = unsafe { string_as_str(help) };
     let Ok(counter) = prometheus::Counter::with_opts(prometheus::Opts::new(name_str, help_str))
     else {
         return -1;
@@ -293,34 +259,24 @@ pub unsafe extern "C" fn hew_metrics_counter_new(
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8; null is allowed only with a zero length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_counter_vec_new(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
-    label_names: *const c_char,
-    label_names_len: i64,
+    name: *const HewString,
+    help: *const HewString,
+    label_names: *const HewString,
 ) -> i64 {
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
-    // SAFETY: `name`/`name_len` satisfy this function's documented invariant.
-    let Some(name_str) = (unsafe { c_string(name, name_len) }) else {
-        return -1;
-    };
-    // SAFETY: `help`/`help_len` satisfy this function's documented invariant.
-    let Some(help_str) = (unsafe { c_string(help, help_len) }) else {
-        return -1;
-    };
-    // SAFETY: `label_names`/`label_names_len` satisfy this function's documented
-    // invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_names, label_names_len) }) else {
-        return -1;
-    };
+    // SAFETY: `name` is a managed handle borrowed for this call.
+    let name_str = unsafe { string_as_str(name) };
+    // SAFETY: `help` is a managed handle borrowed for this call.
+    let help_str = unsafe { string_as_str(help) };
+    // SAFETY: `label_names` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_names) };
     if labels.is_empty() {
         return -1;
     }
@@ -347,27 +303,21 @@ pub unsafe extern "C" fn hew_metrics_counter_vec_new(
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8; null is allowed only with a zero length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_gauge_new(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
+    name: *const HewString,
+    help: *const HewString,
 ) -> i64 {
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
-    // SAFETY: `name`/`name_len` satisfy this function's documented invariant.
-    let Some(name_str) = (unsafe { c_string(name, name_len) }) else {
-        return -1;
-    };
-    // SAFETY: `help`/`help_len` satisfy this function's documented invariant.
-    let Some(help_str) = (unsafe { c_string(help, help_len) }) else {
-        return -1;
-    };
+    // SAFETY: `name` is a managed handle borrowed for this call.
+    let name_str = unsafe { string_as_str(name) };
+    // SAFETY: `help` is a managed handle borrowed for this call.
+    let help_str = unsafe { string_as_str(help) };
     let Ok(gauge) = prometheus::Gauge::with_opts(prometheus::Opts::new(name_str, help_str)) else {
         return -1;
     };
@@ -384,34 +334,24 @@ pub unsafe extern "C" fn hew_metrics_gauge_new(
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8; null is allowed only with a zero length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_gauge_vec_new(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
-    label_names: *const c_char,
-    label_names_len: i64,
+    name: *const HewString,
+    help: *const HewString,
+    label_names: *const HewString,
 ) -> i64 {
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
-    // SAFETY: `name`/`name_len` satisfy this function's documented invariant.
-    let Some(name_str) = (unsafe { c_string(name, name_len) }) else {
-        return -1;
-    };
-    // SAFETY: `help`/`help_len` satisfy this function's documented invariant.
-    let Some(help_str) = (unsafe { c_string(help, help_len) }) else {
-        return -1;
-    };
-    // SAFETY: `label_names`/`label_names_len` satisfy this function's documented
-    // invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_names, label_names_len) }) else {
-        return -1;
-    };
+    // SAFETY: `name` is a managed handle borrowed for this call.
+    let name_str = unsafe { string_as_str(name) };
+    // SAFETY: `help` is a managed handle borrowed for this call.
+    let help_str = unsafe { string_as_str(help) };
+    // SAFETY: `label_names` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_names) };
     if labels.is_empty() {
         return -1;
     }
@@ -436,29 +376,17 @@ pub unsafe extern "C" fn hew_metrics_gauge_vec_new(
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8; null is allowed only with a zero length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_histogram_new(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
+    name: *const HewString,
+    help: *const HewString,
 ) -> i64 {
     // SAFETY: forwards this function's own safety precondition unchanged to
     // `hew_metrics_histogram_with_buckets`.
-    unsafe {
-        hew_metrics_histogram_with_buckets(
-            reg_handle,
-            name,
-            name_len,
-            help,
-            help_len,
-            std::ptr::null(),
-            0,
-        )
-    }
+    unsafe { hew_metrics_histogram_with_buckets(reg_handle, name, help, std::ptr::null()) }
 }
 
 /// Register a histogram with custom buckets, or defaults when `buckets` is null.
@@ -467,39 +395,25 @@ pub unsafe extern "C" fn hew_metrics_histogram_new(
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8. `buckets` may be null only when `buckets_len` is
-/// zero; other pointers may be null only with a zero paired length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle. An empty bucket list selects the default buckets.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_histogram_with_buckets(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
-    buckets: *const c_char,
-    buckets_len: i64,
+    name: *const HewString,
+    help: *const HewString,
+    buckets: *const HewString,
 ) -> i64 {
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
-    // SAFETY: `name`/`name_len` satisfy this function's documented invariant.
-    let Some(name_str) = (unsafe { c_string(name, name_len) }) else {
+    // SAFETY: `name` is a managed handle borrowed for this call.
+    let name_str = unsafe { string_as_str(name) };
+    // SAFETY: `help` is a managed handle borrowed for this call.
+    let help_str = unsafe { string_as_str(help) };
+    // SAFETY: `buckets` is a managed handle borrowed for this call.
+    let Some(bucket_values) = (unsafe { parse_buckets(buckets) }) else {
         return -1;
-    };
-    // SAFETY: `help`/`help_len` satisfy this function's documented invariant.
-    let Some(help_str) = (unsafe { c_string(help, help_len) }) else {
-        return -1;
-    };
-    let bucket_values = if buckets.is_null() {
-        prometheus::DEFAULT_BUCKETS.to_vec()
-    } else {
-        // SAFETY: `buckets` is non-null here (checked above) and `buckets_len`
-        // pairs with it per this function's documented invariant.
-        let Some(parsed) = (unsafe { parse_buckets(buckets, buckets_len) }) else {
-            return -1;
-        };
-        parsed
     };
     let Ok(histogram) = prometheus::Histogram::with_opts(
         prometheus::HistogramOpts::new(name_str, help_str).buckets(bucket_values),
@@ -517,32 +431,19 @@ pub unsafe extern "C" fn hew_metrics_histogram_with_buckets(
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8; null is allowed only with a zero length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_histogram_vec_new(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
-    label_names: *const c_char,
-    label_names_len: i64,
+    name: *const HewString,
+    help: *const HewString,
+    label_names: *const HewString,
 ) -> i64 {
     // SAFETY: forwards this function's own safety precondition unchanged to
     // `hew_metrics_histogram_vec_with_buckets`.
     unsafe {
-        hew_metrics_histogram_vec_with_buckets(
-            reg_handle,
-            name,
-            name_len,
-            help,
-            help_len,
-            label_names,
-            label_names_len,
-            std::ptr::null(),
-            0,
-        )
+        hew_metrics_histogram_vec_with_buckets(reg_handle, name, help, label_names, std::ptr::null())
     }
 }
 
@@ -550,49 +451,31 @@ pub unsafe extern "C" fn hew_metrics_histogram_vec_new(
 ///
 /// # Safety
 ///
-/// Each string pointer must address its paired length in readable bytes
-/// containing valid UTF-8. `buckets` may be null only when `buckets_len` is
-/// zero; other pointers may be null only with a zero paired length.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle. An empty bucket list selects the default buckets.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_histogram_vec_with_buckets(
     reg_handle: i64,
-    name: *const c_char,
-    name_len: i64,
-    help: *const c_char,
-    help_len: i64,
-    label_names: *const c_char,
-    label_names_len: i64,
-    buckets: *const c_char,
-    buckets_len: i64,
+    name: *const HewString,
+    help: *const HewString,
+    label_names: *const HewString,
+    buckets: *const HewString,
 ) -> i64 {
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
-    // SAFETY: `name`/`name_len` satisfy this function's documented invariant.
-    let Some(name_str) = (unsafe { c_string(name, name_len) }) else {
-        return -1;
-    };
-    // SAFETY: `help`/`help_len` satisfy this function's documented invariant.
-    let Some(help_str) = (unsafe { c_string(help, help_len) }) else {
-        return -1;
-    };
-    // SAFETY: `label_names`/`label_names_len` satisfy this function's documented
-    // invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_names, label_names_len) }) else {
-        return -1;
-    };
+    // SAFETY: `name` is a managed handle borrowed for this call.
+    let name_str = unsafe { string_as_str(name) };
+    // SAFETY: `help` is a managed handle borrowed for this call.
+    let help_str = unsafe { string_as_str(help) };
+    // SAFETY: `label_names` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_names) };
     if labels.is_empty() {
         return -1;
     }
-    let bucket_values = if buckets.is_null() {
-        prometheus::DEFAULT_BUCKETS.to_vec()
-    } else {
-        // SAFETY: `buckets` is non-null here (checked above) and `buckets_len`
-        // pairs with it per this function's documented invariant.
-        let Some(parsed) = (unsafe { parse_buckets(buckets, buckets_len) }) else {
-            return -1;
-        };
-        parsed
+    // SAFETY: `buckets` is a managed handle borrowed for this call.
+    let Some(bucket_values) = (unsafe { parse_buckets(buckets) }) else {
+        return -1;
     };
     let label_refs = label_refs(&labels);
     let Ok(histogram) = prometheus::HistogramVec::new(
@@ -659,42 +542,37 @@ pub extern "C" fn hew_metrics_counter_add(reg_handle: i64, metric: i64, value: f
 ///
 /// # Safety
 ///
-/// `label_values` must address `label_values_len` readable bytes containing
-/// valid UTF-8; null is allowed only when the length is zero.
+/// `label_values` must be null (the empty string) or a live managed Hew
+/// string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_counter_vec_inc(
     reg_handle: i64,
     metric: i64,
-    label_values: *const c_char,
-    label_values_len: i64,
+    label_values: *const HewString,
 ) -> i32 {
     // SAFETY: forwards this function's own safety precondition unchanged to
     // `hew_metrics_counter_vec_add`.
-    unsafe { hew_metrics_counter_vec_add(reg_handle, metric, label_values, label_values_len, 1.0) }
+    unsafe { hew_metrics_counter_vec_add(reg_handle, metric, label_values, 1.0) }
 }
 
 /// Add a non-negative, finite value to a labeled counter.
 ///
 /// # Safety
 ///
-/// `label_values` must address `label_values_len` readable bytes containing
-/// valid UTF-8; null is allowed only when the length is zero.
+/// `label_values` must be null (the empty string) or a live managed Hew
+/// string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_counter_vec_add(
     reg_handle: i64,
     metric: i64,
-    label_values: *const c_char,
-    label_values_len: i64,
+    label_values: *const HewString,
     value: f64,
 ) -> i32 {
     if !value.is_finite() || value < 0.0 {
         return -1;
     }
-    // SAFETY: `label_values`/`label_values_len` satisfy this function's
-    // documented invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_values, label_values_len) }) else {
-        return -1;
-    };
+    // SAFETY: `label_values` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_values) };
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
@@ -788,24 +666,20 @@ pub extern "C" fn hew_metrics_gauge_dec(reg_handle: i64, metric: i64, value: f64
 ///
 /// # Safety
 ///
-/// `label_values` must address `label_values_len` readable bytes containing
-/// valid UTF-8; null is allowed only when the length is zero.
+/// `label_values` must be null (the empty string) or a live managed Hew
+/// string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_gauge_vec_set(
     reg_handle: i64,
     metric: i64,
-    label_values: *const c_char,
-    label_values_len: i64,
+    label_values: *const HewString,
     value: f64,
 ) -> i32 {
     if !value.is_finite() {
         return -1;
     }
-    // SAFETY: `label_values`/`label_values_len` satisfy this function's
-    // documented invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_values, label_values_len) }) else {
-        return -1;
-    };
+    // SAFETY: `label_values` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_values) };
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
@@ -832,24 +706,20 @@ pub unsafe extern "C" fn hew_metrics_gauge_vec_set(
 ///
 /// # Safety
 ///
-/// `label_values` must address `label_values_len` readable bytes containing
-/// valid UTF-8; null is allowed only when the length is zero.
+/// `label_values` must be null (the empty string) or a live managed Hew
+/// string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_gauge_vec_add(
     reg_handle: i64,
     metric: i64,
-    label_values: *const c_char,
-    label_values_len: i64,
+    label_values: *const HewString,
     value: f64,
 ) -> i32 {
     if !value.is_finite() {
         return -1;
     }
-    // SAFETY: `label_values`/`label_values_len` satisfy this function's
-    // documented invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_values, label_values_len) }) else {
-        return -1;
-    };
+    // SAFETY: `label_values` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_values) };
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
@@ -876,24 +746,20 @@ pub unsafe extern "C" fn hew_metrics_gauge_vec_add(
 ///
 /// # Safety
 ///
-/// `label_values` must address `label_values_len` readable bytes containing
-/// valid UTF-8; null is allowed only when the length is zero.
+/// `label_values` must be null (the empty string) or a live managed Hew
+/// string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_gauge_vec_dec(
     reg_handle: i64,
     metric: i64,
-    label_values: *const c_char,
-    label_values_len: i64,
+    label_values: *const HewString,
     value: f64,
 ) -> i32 {
     if !value.is_finite() {
         return -1;
     }
-    // SAFETY: `label_values`/`label_values_len` satisfy this function's
-    // documented invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_values, label_values_len) }) else {
-        return -1;
-    };
+    // SAFETY: `label_values` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_values) };
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
@@ -945,24 +811,20 @@ pub extern "C" fn hew_metrics_histogram_observe(reg_handle: i64, metric: i64, va
 ///
 /// # Safety
 ///
-/// `label_values` must address `label_values_len` readable bytes containing
-/// valid UTF-8; null is allowed only when the length is zero.
+/// `label_values` must be null (the empty string) or a live managed Hew
+/// string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_metrics_histogram_vec_observe(
     reg_handle: i64,
     metric: i64,
-    label_values: *const c_char,
-    label_values_len: i64,
+    label_values: *const HewString,
     value: f64,
 ) -> i32 {
     if !value.is_finite() {
         return -1;
     }
-    // SAFETY: `label_values`/`label_values_len` satisfy this function's
-    // documented invariant.
-    let Some(labels) = (unsafe { parse_string_list(label_values, label_values_len) }) else {
-        return -1;
-    };
+    // SAFETY: `label_values` is a managed handle borrowed for this call.
+    let labels = unsafe { parse_string_list(label_values) };
     let Some(registry) = registry_for(reg_handle) else {
         return -1;
     };
@@ -991,21 +853,21 @@ pub unsafe extern "C" fn hew_metrics_histogram_vec_observe(
 
 /// Export all metrics in Prometheus text format.
 ///
-/// Returns an allocation-base, NUL-terminated `libc::malloc` buffer, or null
-/// on error. Hew takes ownership and releases that allocation base.
+/// Returns an owned managed Hew string; a closed registry or an encoder
+/// failure exports as the empty string.
 #[no_mangle]
-pub extern "C" fn hew_metrics_export(reg_handle: i64) -> *mut c_char {
+pub extern "C" fn hew_metrics_export(reg_handle: i64) -> *mut HewString {
     let Some(registry) = registry_for(reg_handle) else {
-        return std::ptr::null_mut();
+        return string_from_str("");
     };
     let reg = lock_or_recover(&registry.inner);
     let encoder = prometheus::TextEncoder::new();
     let metric_families = reg.registry.gather();
     let mut output = String::new();
     if encoder.encode_utf8(&metric_families, &mut output).is_err() {
-        return std::ptr::null_mut();
+        return string_from_str("");
     }
-    str_to_malloc(&output)
+    string_from_str(&output)
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,313 +877,289 @@ pub extern "C" fn hew_metrics_export(reg_handle: i64) -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hew_cabi::string::string_release;
 
-    unsafe fn cstr(ptr: *mut c_char) -> String {
-        assert!(!ptr.is_null());
-        // SAFETY: `ptr` is non-null (asserted above) and is a NUL-terminated
-        // `libc::malloc` buffer produced by this crate's own FFI functions.
-        let s = unsafe { std::ffi::CStr::from_ptr(ptr) }
-            .to_string_lossy()
-            .into_owned();
-        // SAFETY: `ptr` is the same allocation-base pointer validated and read via
-        // `CStr::from_ptr` immediately above; freed exactly once here.
-        unsafe { libc::free(ptr.cast()) };
-        s
+    /// Allocate one managed string argument for a boundary call.
+    fn managed(value: &str) -> *mut HewString {
+        string_from_str(value)
+    }
+
+    /// Read and release the managed string a boundary call returned.
+    unsafe fn owned_text(value: *mut HewString) -> String {
+        // SAFETY: `value` is the owner a crate entry point just returned.
+        let text = unsafe { string_as_str(value) }.to_owned();
+        // SAFETY: the same owner, released exactly once here.
+        unsafe { string_release(value) };
+        text
+    }
+
+    /// Register a counter from Rust-side managed strings.
+    fn counter(reg: i64, name: &str, help: &str) -> i64 {
+        let name = managed(name);
+        let help = managed(help);
+        // SAFETY: both handles are live managed strings for the call.
+        let handle = unsafe { hew_metrics_counter_new(reg, name, help) };
+        // SAFETY: this test module owns both handles.
+        unsafe {
+            string_release(name);
+            string_release(help);
+        }
+        handle
     }
 
     #[test]
-    fn test_new_and_close() {
+    fn closed_registry_exports_the_empty_string() {
         let reg = hew_metrics_new();
         assert!(reg > 0);
         hew_metrics_close(reg);
-        assert!(hew_metrics_export(reg).is_null());
+        // SAFETY: the export owner is read and released once.
+        assert_eq!(unsafe { owned_text(hew_metrics_export(reg)) }, "");
+        // SAFETY: as above, for the never-registered handle.
+        assert_eq!(unsafe { owned_text(hew_metrics_export(0)) }, "");
     }
 
     #[test]
-    fn test_close_null_and_repeated_are_noop() {
+    fn close_is_idempotent_for_absent_and_repeated_handles() {
         hew_metrics_close(0);
         hew_metrics_close(-1);
         let reg = hew_metrics_new();
         hew_metrics_close(reg);
         hew_metrics_close(reg);
-        assert!(hew_metrics_export(reg).is_null());
+        // SAFETY: the export owner is read and released once.
+        assert_eq!(unsafe { owned_text(hew_metrics_export(reg)) }, "");
     }
 
     #[test]
-    fn test_counter_basic() {
-        // SAFETY: all pointers below are backed by live `CString` locals paired
-        // with their own byte length, satisfying the callees' documented
-        // invariants.
+    fn counter_round_trips_a_multibyte_help_string_through_the_export() {
+        let reg = hew_metrics_new();
+        let handle = counter(
+            reg,
+            "requetes_traitees_par_le_serveur_total",
+            "Requêtes traitées — 雪",
+        );
+        assert!(handle >= 0);
+        assert_eq!(hew_metrics_counter_inc(reg, handle), 0);
+        // SAFETY: the export owner is read and released once.
+        let output = unsafe { owned_text(hew_metrics_export(reg)) };
+        assert!(
+            output.contains("requetes_traitees_par_le_serveur_total 1"),
+            "{output}"
+        );
+        assert!(output.contains("Requêtes traitées — 雪"), "{output}");
+        hew_metrics_close(reg);
+    }
+
+    #[test]
+    fn counter_add_rejects_negative_and_nan() {
+        let reg = hew_metrics_new();
+        let handle = counter(reg, "safe_add_counter", "Counter with checked add");
+        assert!(handle >= 0);
+        assert_eq!(hew_metrics_counter_add(reg, handle, 5.0), 0);
+        assert_eq!(hew_metrics_counter_add(reg, handle, -1.0), -1);
+        assert_eq!(hew_metrics_counter_add(reg, handle, f64::NAN), -1);
+        // SAFETY: the export owner is read and released once.
+        let output = unsafe { owned_text(hew_metrics_export(reg)) };
+        assert!(output.contains("safe_add_counter 5"), "{output}");
+        hew_metrics_close(reg);
+    }
+
+    #[test]
+    fn gauge_set_add_and_dec_accumulate() {
+        let reg = hew_metrics_new();
+        let name = managed("test_gauge");
+        let help = managed("A test gauge");
+        // SAFETY: both handles are live managed strings for the call.
+        let handle = unsafe { hew_metrics_gauge_new(reg, name, help) };
+        // SAFETY: this test module owns both handles.
         unsafe {
-            let reg = hew_metrics_new();
-            let name = std::ffi::CString::new("test_counter").unwrap();
-            let help = std::ffi::CString::new("A test counter").unwrap();
-            let handle = hew_metrics_counter_new(
-                reg,
-                name.as_ptr(),
-                i64::try_from(name.as_bytes().len()).unwrap(),
-                help.as_ptr(),
-                i64::try_from(help.as_bytes().len()).unwrap(),
-            );
-            assert!(handle >= 0);
-
-            assert_eq!(hew_metrics_counter_inc(reg, handle), 0);
-
-            let s = cstr(hew_metrics_export(reg));
-            assert!(s.contains("test_counter"));
-            hew_metrics_close(reg);
+            string_release(name);
+            string_release(help);
         }
+        assert!(handle >= 0);
+        assert_eq!(hew_metrics_gauge_set(reg, handle, 100.0), 0);
+        assert_eq!(hew_metrics_gauge_add(reg, handle, 50.0), 0);
+        assert_eq!(hew_metrics_gauge_dec(reg, handle, 25.0), 0);
+        // SAFETY: the export owner is read and released once.
+        let output = unsafe { owned_text(hew_metrics_export(reg)) };
+        assert!(output.contains("test_gauge 125"), "{output}");
+        hew_metrics_close(reg);
     }
 
     #[test]
-    fn test_counter_add_rejects_negative_and_nan() {
-        // SAFETY: all pointers below are backed by live `CString` locals paired
-        // with their own byte length, satisfying the callees' documented
-        // invariants.
+    fn histogram_uses_custom_buckets_and_defaults_when_empty() {
+        let reg = hew_metrics_new();
+        let name = managed("custom_histogram");
+        let help = managed("A custom histogram");
+        let buckets = managed("0.1,0.5,1.0");
+        // SAFETY: all three handles are live managed strings for the call.
+        let handle = unsafe { hew_metrics_histogram_with_buckets(reg, name, help, buckets) };
+        assert!(handle >= 0);
+        assert_eq!(hew_metrics_histogram_observe(reg, handle, 0.42), 0);
+
+        let default_name = managed("default_histogram");
+        // SAFETY: both handles are live managed strings for the call.
+        let defaulted = unsafe { hew_metrics_histogram_new(reg, default_name, help) };
+        assert!(defaulted >= 0);
+        assert_eq!(hew_metrics_histogram_observe(reg, defaulted, 0.42), 0);
+
+        let invalid_name = managed("invalid_histogram");
+        let invalid_buckets = managed("0.1,not-a-number");
+        // SAFETY: all three handles are live managed strings for the call.
+        let rejected =
+            unsafe { hew_metrics_histogram_with_buckets(reg, invalid_name, help, invalid_buckets) };
+        assert_eq!(rejected, -1);
+
+        // SAFETY: this test module owns every handle allocated above.
         unsafe {
-            let reg = hew_metrics_new();
-            let name = std::ffi::CString::new("safe_add_counter").unwrap();
-            let help = std::ffi::CString::new("Counter with checked add").unwrap();
-            let handle = hew_metrics_counter_new(
-                reg,
-                name.as_ptr(),
-                i64::try_from(name.as_bytes().len()).unwrap(),
-                help.as_ptr(),
-                i64::try_from(help.as_bytes().len()).unwrap(),
-            );
-            assert!(handle >= 0);
-
-            assert_eq!(hew_metrics_counter_add(reg, handle, 5.0), 0);
-            assert_eq!(hew_metrics_counter_add(reg, handle, -1.0), -1);
-            assert_eq!(hew_metrics_counter_add(reg, handle, f64::NAN), -1);
-
-            let s = cstr(hew_metrics_export(reg));
-            assert!(s.contains("safe_add_counter") && s.contains('5'));
-            assert!(!s.contains("-1"));
-            hew_metrics_close(reg);
+            string_release(name);
+            string_release(help);
+            string_release(buckets);
+            string_release(default_name);
+            string_release(invalid_name);
+            string_release(invalid_buckets);
         }
+
+        // SAFETY: the export owner is read and released once.
+        let output = unsafe { owned_text(hew_metrics_export(reg)) };
+        assert!(
+            output.contains("custom_histogram_bucket{le=\"0.5\"} 1"),
+            "{output}"
+        );
+        assert!(
+            output.contains("default_histogram_bucket{le=\"0.5\"} 1"),
+            "{output}"
+        );
+        assert!(!output.contains("invalid_histogram"), "{output}");
+        hew_metrics_close(reg);
     }
 
     #[test]
-    fn test_gauge_set_add_and_dec() {
-        // SAFETY: all pointers below are backed by live `CString` locals paired
-        // with their own byte length, satisfying the callees' documented
-        // invariants.
+    fn labeled_counter_gauge_and_histogram_export_their_series() {
+        let reg = hew_metrics_new();
+        let labels = managed("method,status");
+        let values = managed("GET,200");
+        let counter_name = managed("labeled_requests_total");
+        let counter_help = managed("Labeled requests");
+        let gauge_name = managed("labeled_inflight");
+        let gauge_help = managed("Labeled inflight");
+        let histogram_name = managed("labeled_latency_seconds");
+        let histogram_help = managed("Labeled latency");
+        let buckets = managed("0.1,1.0");
+
+        // SAFETY: every handle below is a live managed string for its call.
         unsafe {
-            let reg = hew_metrics_new();
-            let name = std::ffi::CString::new("test_gauge").unwrap();
-            let help = std::ffi::CString::new("A test gauge").unwrap();
-            let handle = hew_metrics_gauge_new(
+            let counter = hew_metrics_counter_vec_new(reg, counter_name, counter_help, labels);
+            assert!(counter >= 0);
+            assert_eq!(hew_metrics_counter_vec_add(reg, counter, values, 3.0), 0);
+
+            let gauge = hew_metrics_gauge_vec_new(reg, gauge_name, gauge_help, labels);
+            assert!(gauge >= 0);
+            assert_eq!(hew_metrics_gauge_vec_set(reg, gauge, values, 8.0), 0);
+            assert_eq!(hew_metrics_gauge_vec_dec(reg, gauge, values, 2.0), 0);
+
+            let histogram = hew_metrics_histogram_vec_with_buckets(
                 reg,
-                name.as_ptr(),
-                i64::try_from(name.as_bytes().len()).unwrap(),
-                help.as_ptr(),
-                i64::try_from(help.as_bytes().len()).unwrap(),
+                histogram_name,
+                histogram_help,
+                labels,
+                buckets,
             );
-            assert!(handle >= 0);
-
-            assert_eq!(hew_metrics_gauge_set(reg, handle, 100.0), 0);
-            assert_eq!(hew_metrics_gauge_add(reg, handle, 50.0), 0);
-            assert_eq!(hew_metrics_gauge_dec(reg, handle, 25.0), 0);
-
-            let s = cstr(hew_metrics_export(reg));
-            assert!(s.contains("test_gauge"));
-            assert!(s.contains("125"));
-            hew_metrics_close(reg);
-        }
-    }
-
-    #[test]
-    fn test_histogram_custom_buckets() {
-        // SAFETY: all pointers below are backed by live `CString` locals paired
-        // with their own byte length, satisfying the callees' documented
-        // invariants.
-        unsafe {
-            let reg = hew_metrics_new();
-            let name = std::ffi::CString::new("custom_histogram").unwrap();
-            let help = std::ffi::CString::new("A custom histogram").unwrap();
-            let buckets = std::ffi::CString::new("0.1,0.5,1.0").unwrap();
-            let handle = hew_metrics_histogram_with_buckets(
-                reg,
-                name.as_ptr(),
-                i64::try_from(name.as_bytes().len()).unwrap(),
-                help.as_ptr(),
-                i64::try_from(help.as_bytes().len()).unwrap(),
-                buckets.as_ptr(),
-                i64::try_from(buckets.as_bytes().len()).unwrap(),
-            );
-            assert!(handle >= 0);
-
-            assert_eq!(hew_metrics_histogram_observe(reg, handle, 0.42), 0);
-
-            let s = cstr(hew_metrics_export(reg));
-            assert!(s.contains("custom_histogram_bucket{le=\"0.5\"} 1"));
-            hew_metrics_close(reg);
-        }
-    }
-
-    #[test]
-    fn test_labeled_counter_gauge_and_histogram() {
-        // SAFETY: all pointers below are backed by live `CString` locals paired
-        // with their own byte length, satisfying the callees' documented
-        // invariants.
-        unsafe {
-            let reg = hew_metrics_new();
-            let labels = std::ffi::CString::new("method,status").unwrap();
-            let values = std::ffi::CString::new("GET,200").unwrap();
-
-            let cn = std::ffi::CString::new("labeled_requests_total").unwrap();
-            let ch = std::ffi::CString::new("Labeled requests").unwrap();
-            let c = hew_metrics_counter_vec_new(
-                reg,
-                cn.as_ptr(),
-                i64::try_from(cn.as_bytes().len()).unwrap(),
-                ch.as_ptr(),
-                i64::try_from(ch.as_bytes().len()).unwrap(),
-                labels.as_ptr(),
-                i64::try_from(labels.as_bytes().len()).unwrap(),
-            );
-            assert!(c >= 0);
+            assert!(histogram >= 0);
             assert_eq!(
-                hew_metrics_counter_vec_add(
-                    reg,
-                    c,
-                    values.as_ptr(),
-                    i64::try_from(values.as_bytes().len()).unwrap(),
-                    3.0
-                ),
+                hew_metrics_histogram_vec_observe(reg, histogram, values, 0.2),
                 0
             );
+        }
 
-            let gn = std::ffi::CString::new("labeled_inflight").unwrap();
-            let gh = std::ffi::CString::new("Labeled inflight").unwrap();
-            let g = hew_metrics_gauge_vec_new(
-                reg,
-                gn.as_ptr(),
-                i64::try_from(gn.as_bytes().len()).unwrap(),
-                gh.as_ptr(),
-                i64::try_from(gh.as_bytes().len()).unwrap(),
-                labels.as_ptr(),
-                i64::try_from(labels.as_bytes().len()).unwrap(),
-            );
-            assert!(g >= 0);
-            assert_eq!(
-                hew_metrics_gauge_vec_set(
-                    reg,
-                    g,
-                    values.as_ptr(),
-                    i64::try_from(values.as_bytes().len()).unwrap(),
-                    8.0
-                ),
-                0
-            );
-            assert_eq!(
-                hew_metrics_gauge_vec_dec(
-                    reg,
-                    g,
-                    values.as_ptr(),
-                    i64::try_from(values.as_bytes().len()).unwrap(),
-                    2.0
-                ),
-                0
-            );
+        // SAFETY: this test module owns every handle allocated above.
+        unsafe {
+            string_release(labels);
+            string_release(values);
+            string_release(counter_name);
+            string_release(counter_help);
+            string_release(gauge_name);
+            string_release(gauge_help);
+            string_release(histogram_name);
+            string_release(histogram_help);
+            string_release(buckets);
+        }
 
-            let hn = std::ffi::CString::new("labeled_latency_seconds").unwrap();
-            let hh = std::ffi::CString::new("Labeled latency").unwrap();
-            let buckets = std::ffi::CString::new("0.1,1.0").unwrap();
-            let h = hew_metrics_histogram_vec_with_buckets(
-                reg,
-                hn.as_ptr(),
-                i64::try_from(hn.as_bytes().len()).unwrap(),
-                hh.as_ptr(),
-                i64::try_from(hh.as_bytes().len()).unwrap(),
-                labels.as_ptr(),
-                i64::try_from(labels.as_bytes().len()).unwrap(),
-                buckets.as_ptr(),
-                i64::try_from(buckets.as_bytes().len()).unwrap(),
-            );
-            assert!(h >= 0);
-            assert_eq!(
-                hew_metrics_histogram_vec_observe(
-                    reg,
-                    h,
-                    values.as_ptr(),
-                    i64::try_from(values.as_bytes().len()).unwrap(),
-                    0.2
-                ),
-                0
-            );
-
-            let s = cstr(hew_metrics_export(reg));
-            assert!(s.contains("labeled_requests_total{method=\"GET\",status=\"200\"} 3"));
-            assert!(s.contains("labeled_inflight{method=\"GET\",status=\"200\"} 6"));
-            assert!(s.contains(
+        // SAFETY: the export owner is read and released once.
+        let output = unsafe { owned_text(hew_metrics_export(reg)) };
+        assert!(
+            output.contains("labeled_requests_total{method=\"GET\",status=\"200\"} 3"),
+            "{output}"
+        );
+        assert!(
+            output.contains("labeled_inflight{method=\"GET\",status=\"200\"} 6"),
+            "{output}"
+        );
+        assert!(
+            output.contains(
                 "labeled_latency_seconds_bucket{method=\"GET\",status=\"200\",le=\"1\"} 1"
-            ));
-            hew_metrics_close(reg);
-        }
+            ),
+            "{output}"
+        );
+        hew_metrics_close(reg);
     }
 
     #[test]
     fn labeled_metric_rejects_new_series_at_limit() {
-        // SAFETY: all pointers below are backed by live byte-slice locals (`b"..."`)
-        // paired with their own length, satisfying the callees' documented
-        // invariants.
+        let reg = hew_metrics_new();
+        let name = managed("bounded_requests_total");
+        let help = managed("Bounded requests");
+        let labels = managed("route");
+        // SAFETY: all three handles are live managed strings for the call.
+        let metric = unsafe { hew_metrics_counter_vec_new(reg, name, help, labels) };
+        assert!(metric >= 0);
+
+        for index in 0..MAX_SERIES_PER_METRIC {
+            let value = managed(&index.to_string());
+            // SAFETY: `value` is a live managed string for the call.
+            assert_eq!(unsafe { hew_metrics_counter_vec_inc(reg, metric, value) }, 0);
+            // SAFETY: this test module owns `value`.
+            unsafe { string_release(value) };
+        }
+
+        let overflow = managed("overflow");
+        let existing = managed("0");
+        // SAFETY: both handles are live managed strings for their calls.
         unsafe {
-            let reg = hew_metrics_new();
-            let name = b"bounded_requests_total";
-            let help = b"Bounded requests";
-            let labels = b"route";
-            let metric = hew_metrics_counter_vec_new(
-                reg,
-                name.as_ptr().cast(),
-                i64::try_from(name.len()).unwrap(),
-                help.as_ptr().cast(),
-                i64::try_from(help.len()).unwrap(),
-                labels.as_ptr().cast(),
-                i64::try_from(labels.len()).unwrap(),
-            );
-            assert!(metric >= 0);
-
-            for index in 0..MAX_SERIES_PER_METRIC {
-                let value = index.to_string();
-                assert_eq!(
-                    hew_metrics_counter_vec_inc(
-                        reg,
-                        metric,
-                        value.as_ptr().cast(),
-                        i64::try_from(value.len()).unwrap(),
-                    ),
-                    0
-                );
-            }
-
-            let overflow = b"overflow";
             assert_eq!(
-                hew_metrics_counter_vec_inc(
-                    reg,
-                    metric,
-                    overflow.as_ptr().cast(),
-                    i64::try_from(overflow.len()).unwrap(),
-                ),
+                hew_metrics_counter_vec_inc(reg, metric, overflow),
                 STATUS_SERIES_LIMIT
             );
-            let existing = b"0";
-            assert_eq!(
-                hew_metrics_counter_vec_inc(
-                    reg,
-                    metric,
-                    existing.as_ptr().cast(),
-                    i64::try_from(existing.len()).unwrap(),
-                ),
-                0
-            );
-            hew_metrics_close(reg);
+            assert_eq!(hew_metrics_counter_vec_inc(reg, metric, existing), 0);
         }
+        // SAFETY: this test module owns every handle allocated above.
+        unsafe {
+            string_release(name);
+            string_release(help);
+            string_release(labels);
+            string_release(overflow);
+            string_release(existing);
+        }
+        hew_metrics_close(reg);
     }
 
     #[test]
-    fn test_invalid_handle_is_noop() {
+    fn labeled_registration_rejects_an_empty_label_list() {
+        let reg = hew_metrics_new();
+        let name = managed("unlabeled_vec_total");
+        let help = managed("Missing labels");
+        // SAFETY: both handles are live; the empty label list is the null string.
+        let metric = unsafe { hew_metrics_counter_vec_new(reg, name, help, std::ptr::null()) };
+        assert_eq!(metric, -1);
+        // SAFETY: this test module owns both handles.
+        unsafe {
+            string_release(name);
+            string_release(help);
+        }
+        hew_metrics_close(reg);
+    }
+
+    #[test]
+    fn invalid_metric_handles_are_rejected() {
         let reg = hew_metrics_new();
         assert_eq!(hew_metrics_counter_inc(reg, -1), -1);
         assert_eq!(hew_metrics_counter_inc(reg, 6000), -1);
@@ -1333,130 +1171,70 @@ mod tests {
     }
 
     #[test]
-    fn test_null_reg_counter_returns_minus_one() {
-        // SAFETY: `name`/`help` below are backed by live `CString` locals paired
-        // with their own byte length, satisfying the callees' documented
-        // invariant.
-        unsafe {
-            let name = std::ffi::CString::new("x").unwrap();
-            let help = std::ffi::CString::new("x").unwrap();
-            let h = hew_metrics_counter_new(
-                0,
-                name.as_ptr(),
-                i64::try_from(name.as_bytes().len()).unwrap(),
-                help.as_ptr(),
-                i64::try_from(help.as_bytes().len()).unwrap(),
-            );
-            assert_eq!(h, -1);
-        }
+    fn registration_against_an_absent_registry_is_rejected() {
+        assert_eq!(counter(0, "x", "x"), -1);
     }
 
     #[test]
     fn embedded_nul_metric_name_is_not_truncated() {
         let reg = hew_metrics_new();
-        let name = b"valid_name\0invalid";
-        let help = b"help";
-        // SAFETY: `name`/`help` below are backed by live byte-slice locals paired
-        // with their own length, satisfying the callees' documented invariant.
-        let handle = unsafe {
-            hew_metrics_counter_new(
-                reg,
-                name.as_ptr().cast(),
-                i64::try_from(name.len()).unwrap(),
-                help.as_ptr().cast(),
-                i64::try_from(help.len()).unwrap(),
-            )
-        };
-        assert_eq!(handle, -1);
+        assert_eq!(counter(reg, "valid_name\0invalid", "help"), -1);
         hew_metrics_close(reg);
     }
 
     #[test]
-    fn test_export_null_returns_null() {
-        let ptr = hew_metrics_export(0);
-        assert!(ptr.is_null());
+    fn metric_kinds_reject_another_kind_s_operations() {
+        let reg = hew_metrics_new();
+        let counter_handle = counter(reg, "kind_counter_total", "Kind tagged metric");
+        let name = managed("kind_gauge");
+        let help = managed("Kind tagged metric");
+        // SAFETY: both handles are live managed strings for the call.
+        let gauge = unsafe { hew_metrics_gauge_new(reg, name, help) };
+        // SAFETY: this test module owns both handles.
+        unsafe {
+            string_release(name);
+            string_release(help);
+        }
+
+        assert_ne!(counter_handle, gauge);
+        assert_eq!(hew_metrics_gauge_set(reg, gauge, 5.0), 0);
+        assert_eq!(
+            hew_metrics_gauge_set(reg, counter_handle, 99.0),
+            STATUS_KIND_MISMATCH
+        );
+        assert_eq!(hew_metrics_counter_inc(reg, gauge), STATUS_KIND_MISMATCH);
+
+        // SAFETY: the export owner is read and released once.
+        let output = unsafe { owned_text(hew_metrics_export(reg)) };
+        assert!(output.contains("kind_gauge 5"), "{output}");
+        assert!(!output.contains("kind_gauge 99"), "{output}");
+        hew_metrics_close(reg);
     }
 
     #[test]
-    fn test_multiple_metrics_independent() {
-        // SAFETY: all pointers below are backed by live `CString` locals paired
-        // with their own byte length, satisfying the callees' documented
-        // invariants.
+    fn registries_hold_independent_metrics() {
+        let reg = hew_metrics_new();
+        let requests = counter(reg, "requests_total", "Total requests");
+        assert_eq!(requests, MetricKind::Counter as i64);
+        let name = managed("memory_bytes");
+        let help = managed("Memory bytes");
+        // SAFETY: both handles are live managed strings for the call.
+        let memory = unsafe { hew_metrics_gauge_new(reg, name, help) };
+        // SAFETY: this test module owns both handles.
         unsafe {
-            let reg = hew_metrics_new();
-
-            let n1 = std::ffi::CString::new("requests_total").unwrap();
-            let h1 = std::ffi::CString::new("Total requests").unwrap();
-            let c_handle = hew_metrics_counter_new(
-                reg,
-                n1.as_ptr(),
-                i64::try_from(n1.as_bytes().len()).unwrap(),
-                h1.as_ptr(),
-                i64::try_from(h1.as_bytes().len()).unwrap(),
-            );
-            assert_eq!(c_handle, MetricKind::Counter as i64);
-
-            let n2 = std::ffi::CString::new("memory_bytes").unwrap();
-            let h2 = std::ffi::CString::new("Memory bytes").unwrap();
-            let g_handle = hew_metrics_gauge_new(
-                reg,
-                n2.as_ptr(),
-                i64::try_from(n2.as_bytes().len()).unwrap(),
-                h2.as_ptr(),
-                i64::try_from(h2.as_bytes().len()).unwrap(),
-            );
-            assert_eq!(g_handle, MetricKind::Gauge as i64);
-
-            assert_eq!(hew_metrics_counter_inc(reg, c_handle), 0);
-            assert_eq!(hew_metrics_counter_inc(reg, c_handle), 0);
-            assert_eq!(hew_metrics_gauge_set(reg, g_handle, 4096.0), 0);
-
-            let s = cstr(hew_metrics_export(reg));
-            assert!(s.contains("requests_total"));
-            assert!(s.contains("memory_bytes"));
-            assert!(s.contains('2'));
-            assert!(s.contains("4096"));
-
-            hew_metrics_close(reg);
+            string_release(name);
+            string_release(help);
         }
-    }
+        assert_eq!(memory, MetricKind::Gauge as i64);
 
-    #[test]
-    fn handles_reject_operations_for_another_metric_kind() {
-        // SAFETY: all pointers below are backed by live byte-slice locals paired
-        // with their own length, satisfying the callees' documented invariants.
-        unsafe {
-            let reg = hew_metrics_new();
-            let counter_name = b"kind_counter_total";
-            let gauge_name = b"kind_gauge";
-            let help = b"Kind tagged metric";
-            let counter = hew_metrics_counter_new(
-                reg,
-                counter_name.as_ptr().cast(),
-                i64::try_from(counter_name.len()).unwrap(),
-                help.as_ptr().cast(),
-                i64::try_from(help.len()).unwrap(),
-            );
-            let gauge = hew_metrics_gauge_new(
-                reg,
-                gauge_name.as_ptr().cast(),
-                i64::try_from(gauge_name.len()).unwrap(),
-                help.as_ptr().cast(),
-                i64::try_from(help.len()).unwrap(),
-            );
+        assert_eq!(hew_metrics_counter_inc(reg, requests), 0);
+        assert_eq!(hew_metrics_counter_inc(reg, requests), 0);
+        assert_eq!(hew_metrics_gauge_set(reg, memory, 4096.0), 0);
 
-            assert_ne!(counter, gauge);
-            assert_eq!(hew_metrics_gauge_set(reg, gauge, 5.0), 0);
-            assert_eq!(
-                hew_metrics_gauge_set(reg, counter, 99.0),
-                STATUS_KIND_MISMATCH
-            );
-            assert_eq!(hew_metrics_counter_inc(reg, gauge), STATUS_KIND_MISMATCH);
-
-            let output = cstr(hew_metrics_export(reg));
-            assert!(output.contains("kind_gauge 5"));
-            assert!(!output.contains("kind_gauge 99"));
-            hew_metrics_close(reg);
-        }
+        // SAFETY: the export owner is read and released once.
+        let output = unsafe { owned_text(hew_metrics_export(reg)) };
+        assert!(output.contains("requests_total 2"), "{output}");
+        assert!(output.contains("memory_bytes 4096"), "{output}");
+        hew_metrics_close(reg);
     }
 }
