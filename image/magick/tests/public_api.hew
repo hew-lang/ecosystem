@@ -1,10 +1,17 @@
+import std.fs;
+import std.os;
 import std.testing;
 
 import hew.image.magick;
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<magick.Image>);
     fn hew_magick_image_count() -> i64;
+}
+
+/// Scratch files live in the system temporary directory, never beside the
+/// program that ran the test.
+fn scratch_path(name: string) -> string {
+    os.temp_dir() + "/" + name
 }
 
 fn assert_ok_i64(result: Result<i64, magick.MagickError>) {
@@ -15,6 +22,8 @@ fn assert_ok_i64(result: Result<i64, magick.MagickError>) {
 }
 
 fn transformations_cover_public_surface() {
+    let path = scratch_path("magick-public-api.png");
+    let _ = fs.delete(path);
     let image = spawn magick.Image(source: Source.Blank(80, 40, "blue"));
     match image.width() {
         .Ok(.Ok(value)) => testing.assert_eq(value as i64, 80),
@@ -56,41 +65,88 @@ fn transformations_cover_public_surface() {
         .Ok(result) => assert_ok_i64(result),
         _ => testing.assert_true(false),
     }
-    match image.write("magick-public-api.png") {
+    match image.write(path) {
         .Ok(result) => assert_ok_i64(result),
         _ => testing.assert_true(false),
     }
     let _ = image.close();
     sleep(20ms);
-    let reopened = spawn magick.Image(source: Source.File("magick-public-api.png"));
+    let reopened = spawn magick.Image(source: Source.File(path));
     match reopened.format() {
-        .Ok(.Ok(value)) => testing.assert_true(!value.is_empty()),
+        .Ok(.Ok(value)) => testing.assert_true(value == "PNG"),
         _ => testing.assert_true(false),
     }
     let _ = reopened.close();
+    sleep(20ms);
+    let _ = fs.delete(path);
+}
+
+/// A path carrying non-ASCII text and more than sixteen bytes has to reach
+/// ImageMagick exactly as written, and the format has to come back out.
+fn long_unicode_path_round_trips_a_written_image() {
+    let path = scratch_path("magick-héllo-wörld-très-longue-imagé.png");
+    let _ = fs.delete(path);
+
+    let image = spawn magick.Image(source: Source.Blank(48, 32, "#3366cc"));
+    match image.write(path) {
+        .Ok(result) => assert_ok_i64(result),
+        _ => testing.assert_true(false),
+    }
+    let _ = image.close();
+    sleep(20ms);
+    testing.assert_true(fs.exists(path));
+
+    let reopened = spawn magick.Image(source: Source.File(path));
+    match reopened.width() {
+        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 48),
+        _ => testing.assert_true(false),
+    }
+    match reopened.height() {
+        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 32),
+        _ => testing.assert_true(false),
+    }
+    match reopened.format() {
+        .Ok(.Ok(value)) => testing.assert_true(value == "PNG"),
+        _ => testing.assert_true(false),
+    }
+    let _ = reopened.close();
+    sleep(20ms);
+    let _ = fs.delete(path);
+}
+
+/// ImageMagick names the file it could not open, so the diagnostic proves the
+/// path travelled in and the message travelled back out intact.
+fn missing_file_error_carries_the_path() {
+    let path = scratch_path("magick-manquant-wörld-très-longue.png");
+    let _ = fs.delete(path);
+    testing.assert_true(!fs.exists(path));
+
+    let missing = spawn magick.Image(source: Source.File(path));
+    match missing.width() {
+        .Ok(.Err(error)) => testing.assert_true(magick.error_message(error).contains(path)),
+        _ => testing.assert_true(false),
+    }
+    let _ = missing.close();
     sleep(20ms);
 }
 
 fn invalid_inputs_return_typed_errors() {
     let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
     match image.resize(0, 1) {
-        .Ok(result) => match result {
-            .Err(error) => testing.assert_true(!magick.error_message(error).is_empty()),
-            .Ok(_) => testing.assert_true(false),
-        },
-        .Err(_) => testing.assert_true(false),
+        .Ok(.Err(error)) => testing.assert_true(!magick.error_message(error).is_empty()),
+        _ => testing.assert_true(false),
     }
     let _ = image.close();
     sleep(20ms);
-    let missing = spawn magick.Image(source: Source.File("missing-image-file.png"));
-    match missing.width() {
-        .Ok(result) => match result {
-            .Err(error) => testing.assert_true(!magick.error_message(error).is_empty()),
-            .Ok(_) => testing.assert_true(false),
+
+    let rejected = spawn magick.Image(source: Source.Blank(10, 10, "pas-une-couleur"));
+    match rejected.width() {
+        .Ok(.Err(.InvalidInput(message))) => {
+            testing.assert_true(message.contains("invalid image colour"));
         },
-        .Err(_) => testing.assert_true(false),
+        _ => testing.assert_true(false),
     }
-    let _ = missing.close();
+    let _ = rejected.close();
     sleep(20ms);
 }
 
@@ -123,10 +179,7 @@ fn blob_round_trip_preserves_a_real_image() {
     sleep(20ms);
 }
 
-fn actor_stop_releases_relative_registry_count() {
-    let before = unsafe {
-        hew_magick_image_count()
-    };
+fn image_without_close(before: i64) -> LocalPid<magick.Image> {
     let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
     match image.width() {
         .Ok(.Ok(value)) => testing.assert_eq(value as i64, 10),
@@ -135,10 +188,23 @@ fn actor_stop_releases_relative_registry_count() {
     testing.assert_eq(unsafe {
         hew_magick_image_count()
     }, before + 1);
-    unsafe {
-        hew_actor_stop(image);
+    image
+}
+
+fn actor_stop_releases_relative_registry_count() {
+    let before = unsafe {
+        hew_magick_image_count()
     };
-    sleep(20ms);
+    testing.assert_true(before >= 0);
+    let image = image_without_close(before);
+    close(image);
+    var attempts = 0;
+    while unsafe {
+        hew_magick_image_count()
+    } != before && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
     testing.assert_eq(unsafe {
         hew_magick_image_count()
     }, before);
@@ -146,6 +212,8 @@ fn actor_stop_releases_relative_registry_count() {
 
 fn main() {
     transformations_cover_public_surface();
+    long_unicode_path_round_trips_a_written_image();
+    missing_file_error_carries_the_path();
     invalid_inputs_return_typed_errors();
     blob_round_trip_preserves_a_real_image();
     actor_stop_releases_relative_registry_count();

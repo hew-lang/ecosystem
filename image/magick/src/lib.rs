@@ -1,15 +1,17 @@
 //! Hew runtime: image processing via `ImageMagick` (`MagickWand`).
 //!
 //! Wraps `magick_rust` to provide image loading, transformation, and
-//! output operations for compiled Hew programs. All returned strings are
-//! returned as header-aware, NUL-terminated Hew allocations. Image handles are
-//! registered under opaque integer handles and must be released with
-//! [`hew_magick_destroy`].
+//! output operations for compiled Hew programs. Strings cross the boundary as
+//! managed Hew allocations; `magick_rust` owns the C-string edge into
+//! `MagickWand`. Image handles are registered under opaque integer handles and
+//! must be released with [`hew_magick_destroy`].
 
+#[cfg(test)]
+use hew_cabi::string::string_release;
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use magick_rust::{magick_wand_genesis, MagickWand};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::os::raw::c_char;
 use std::slice;
 use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Once};
@@ -148,46 +150,21 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
     });
 }
 
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: size includes a trailing NUL and the allocation is checked.
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    // SAFETY: output names size writable bytes.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
-
-unsafe fn utf8_with_len<'a>(ptr: *const c_char, len: i64, what: &str) -> Option<&'a str> {
-    let Ok(len) = usize::try_from(len) else {
+/// Borrow a managed string that `MagickWand` will receive as a C string.
+///
+/// `MagickWand` cannot carry an embedded NUL, so one is a typed invalid input
+/// rather than a silently truncated path, colour or format.
+unsafe fn text_input<'a>(value: *const HewString, what: &str) -> Option<&'a str> {
+    // SAFETY: the caller supplies a live managed string handle.
+    let value = unsafe { string_as_str(value) };
+    if value.as_bytes().contains(&0) {
         set_error(
             ErrorKind::InvalidInput,
-            format!("{what} length is negative"),
+            format!("{what} contains an embedded NUL byte"),
         );
-        return None;
-    };
-    if ptr.is_null() {
-        if len == 0 {
-            return Some("");
-        }
-        set_error(ErrorKind::InvalidInput, format!("{what} pointer is null"));
-        return None;
-    }
-    // SAFETY: the caller promises `len` readable bytes.
-    let bytes = unsafe { slice::from_raw_parts(ptr.cast::<u8>(), len) };
-    match std::str::from_utf8(bytes) {
-        Ok(v) => Some(v),
-        Err(e) => {
-            set_error(ErrorKind::InvalidInput, format!("{what} is not UTF-8: {e}"));
-            None
-        }
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -197,8 +174,8 @@ pub extern "C" fn hew_magick_last_error_kind() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn hew_magick_last_error() -> *mut c_char {
-    LAST_ERROR.with(|s| malloc_c_string(&s.borrow().message))
+pub extern "C" fn hew_magick_last_error() -> *mut HewString {
+    LAST_ERROR.with(|s| string_from_str(&s.borrow().message))
 }
 
 #[unsafe(no_mangle)]
@@ -310,15 +287,12 @@ fn transform_status<E: std::fmt::Display>(result: Result<(), E>, operation: &str
 ///
 /// # Safety
 ///
-/// `path` must be a valid NUL-terminated C string.
+/// `path` must be a managed Hew string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_magick_open_len(
-    path: *const c_char,
-    path_len: i64,
-) -> HewMagickImageHandle {
+pub unsafe extern "C" fn hew_magick_open(path: *const HewString) -> HewMagickImageHandle {
     ensure_init();
-    // SAFETY: the caller provides the declared readable byte range.
-    let Some(path_str) = (unsafe { utf8_with_len(path, path_len, "path") }) else {
+    // SAFETY: the caller provides a live managed string handle.
+    let Some(path_str) = (unsafe { text_input(path, "path") }) else {
         return HewMagickImageHandle::null();
     };
     let wand = MagickWand::new();
@@ -369,26 +343,25 @@ pub unsafe extern "C" fn hew_magick_open_blob(blob: *const BytesTriple) -> HewMa
 ///
 /// # Safety
 ///
-/// `color` must be a valid NUL-terminated C string (e.g. "white", "#FF0000").
+/// `colour` must be a managed Hew string (e.g. "white", "#FF0000").
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_magick_new_len(
+pub unsafe extern "C" fn hew_magick_new(
     width: i32,
     height: i32,
-    color: *const c_char,
-    color_len: i64,
+    colour: *const HewString,
 ) -> HewMagickImageHandle {
     ensure_init();
-    // SAFETY: the caller provides the declared readable byte range.
-    let Some(color_str) = (unsafe { utf8_with_len(color, color_len, "color") }) else {
+    // SAFETY: the caller provides a live managed string handle.
+    let Some(colour_text) = (unsafe { text_input(colour, "colour") }) else {
         return HewMagickImageHandle::null();
     };
 
     let wand = MagickWand::new();
     let mut pw = magick_rust::PixelWand::new();
-    if let Err(error) = pw.set_color(color_str) {
+    if let Err(error) = pw.set_color(colour_text) {
         set_error(
             ErrorKind::InvalidInput,
-            format!("invalid image color: {error}"),
+            format!("invalid image colour: {error}"),
         );
         return HewMagickImageHandle::null();
     }
@@ -422,15 +395,14 @@ pub unsafe extern "C" fn hew_magick_new_len(
 /// # Safety
 ///
 /// - `img` must be a valid handle from [`hew_magick_open`] or [`hew_magick_new`].
-/// - `path` must be a valid NUL-terminated C string.
+/// - `path` must be a managed Hew string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_magick_write_len(
+pub unsafe extern "C" fn hew_magick_write(
     img: HewMagickImageHandle,
-    path: *const c_char,
-    path_len: i64,
+    path: *const HewString,
 ) -> i32 {
-    // SAFETY: the caller provides the declared readable byte range.
-    let Some(path_str) = (unsafe { utf8_with_len(path, path_len, "path") }) else {
+    // SAFETY: the caller provides a live managed string handle.
+    let Some(path_str) = (unsafe { text_input(path, "path") }) else {
         return -1;
     };
     with_image(
@@ -457,16 +429,14 @@ pub unsafe extern "C" fn hew_magick_write_len(
 ///
 /// # Safety
 ///
-/// `img` must be a live image handle and `format` must name `format_len`
-/// readable UTF-8 bytes.
+/// `img` must be a live image handle and `format` must be a managed Hew string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_magick_write_blob_len(
+pub unsafe extern "C" fn hew_magick_write_blob(
     img: HewMagickImageHandle,
-    format: *const c_char,
-    format_len: i64,
+    format: *const HewString,
 ) -> BytesTriple {
-    // SAFETY: the caller provides the declared readable byte range.
-    let Some(format) = (unsafe { utf8_with_len(format, format_len, "format") }) else {
+    // SAFETY: the caller provides a live managed string handle.
+    let Some(format) = (unsafe { text_input(format, "format") }) else {
         return empty_bytes();
     };
     if format.is_empty() {
@@ -492,41 +462,6 @@ pub unsafe extern "C" fn hew_magick_write_blob_len(
             }
         }
     })
-}
-
-#[cfg(test)]
-unsafe fn c_string_len(value: *const c_char) -> i64 {
-    if value.is_null() {
-        return 0;
-    }
-    // SAFETY: test callers pass either null or valid C strings.
-    unsafe { i64::try_from(std::ffi::CStr::from_ptr(value).to_bytes().len()).unwrap() }
-}
-
-#[cfg(test)]
-unsafe fn hew_magick_open(path: *const c_char) -> HewMagickImageHandle {
-    // SAFETY: forwards the same test C string and its measured payload length.
-    unsafe { hew_magick_open_len(path, c_string_len(path)) }
-}
-
-#[cfg(test)]
-unsafe fn hew_magick_new(width: i32, height: i32, color: *const c_char) -> HewMagickImageHandle {
-    // SAFETY: forwards the same test C string and its measured payload length.
-    unsafe { hew_magick_new_len(width, height, color, c_string_len(color)) }
-}
-
-#[cfg(test)]
-unsafe fn hew_magick_write(img: HewMagickImageHandle, path: *const c_char) -> i32 {
-    // SAFETY: forwards the same test C string and its measured payload length.
-    unsafe { hew_magick_write_len(img, path, c_string_len(path)) }
-}
-
-#[cfg(test)]
-unsafe fn free_cstring(value: *mut c_char) {
-    // SAFETY: test callers pass an allocation-base pointer returned by this module.
-    unsafe {
-        libc::free(value.cast());
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -720,13 +655,13 @@ pub unsafe extern "C" fn hew_magick_height(img: HewMagickImageHandle) -> i32 {
 
 /// Get the image format (e.g. "JPEG", "PNG").
 ///
-/// Returns a `malloc`-allocated NUL-terminated string, or null on error.
+/// Returns a managed Hew string, empty on error.
 ///
 /// # Safety
 ///
 /// `img` must be a valid handle from image creation functions.
 #[no_mangle]
-pub unsafe extern "C" fn hew_magick_format(img: HewMagickImageHandle) -> *mut c_char {
+pub unsafe extern "C" fn hew_magick_format(img: HewMagickImageHandle) -> *mut HewString {
     let fmt = with_image(
         img,
         || Err("image handle is closed".to_owned()),
@@ -740,7 +675,7 @@ pub unsafe extern "C" fn hew_magick_format(img: HewMagickImageHandle) -> *mut c_
     match fmt {
         Ok(f) => {
             clear_error();
-            malloc_c_string(&f)
+            string_from_str(&f)
         }
         Err(error) => {
             set_error(
@@ -801,6 +736,52 @@ mod tests {
         }
     }
 
+    /// Call an entry point with a managed string owned only for the call, the
+    /// way a compiled Hew program passes a borrowed argument.
+    fn with_managed<R>(value: &str, f: impl FnOnce(*const HewString) -> R) -> R {
+        let managed = string_from_str(value);
+        let result = f(managed);
+        // SAFETY: `managed` was allocated just above and has no other owner.
+        unsafe { string_release(managed) };
+        result
+    }
+
+    fn new_image(width: i32, height: i32, colour: &str) -> HewMagickImageHandle {
+        // SAFETY: the managed colour handle is live for the duration of the call.
+        with_managed(colour, |colour| unsafe {
+            hew_magick_new(width, height, colour)
+        })
+    }
+
+    fn open_image(path: &str) -> HewMagickImageHandle {
+        // SAFETY: the managed path handle is live for the duration of the call.
+        with_managed(path, |path| unsafe { hew_magick_open(path) })
+    }
+
+    fn write_image(img: HewMagickImageHandle, path: &str) -> i32 {
+        // SAFETY: `img` is a live handle and the managed path outlives the call.
+        with_managed(path, |path| unsafe { hew_magick_write(img, path) })
+    }
+
+    /// Read a managed string out of the package and release the returned owner,
+    /// as the compiled Hew drop path does.
+    fn take_managed(value: *mut HewString) -> String {
+        // SAFETY: `value` is a managed owner returned by this module.
+        let text = unsafe { string_as_str(value) }.to_owned();
+        // SAFETY: this is the sole owner of the returned allocation.
+        unsafe { string_release(value) };
+        text
+    }
+
+    fn format_of(img: HewMagickImageHandle) -> String {
+        // SAFETY: `img` is a live handle.
+        take_managed(unsafe { hew_magick_format(img) })
+    }
+
+    fn last_error() -> String {
+        take_managed(hew_magick_last_error())
+    }
+
     fn test_path(name: &str, ext: &str) -> std::path::PathBuf {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
@@ -818,10 +799,20 @@ mod tests {
     }
 
     #[test]
-    fn null_open_returns_null() {
+    fn empty_path_open_returns_null() {
+        // Null is the canonical managed empty string, which names no image.
         // SAFETY: null is the scenario under test.
         let img = unsafe { hew_magick_open(std::ptr::null()) };
         assert!(img.is_null());
+        assert!(open_image("").is_null());
+    }
+
+    #[test]
+    fn embedded_nul_path_is_a_typed_invalid_input() {
+        let img = open_image("frame\0.png");
+        assert!(img.is_null());
+        assert_eq!(hew_magick_last_error_kind(), ErrorKind::InvalidInput as i32);
+        assert!(last_error().contains("embedded NUL"));
     }
 
     #[test]
@@ -832,9 +823,7 @@ mod tests {
 
     #[test]
     fn destroy_is_idempotent_and_stale_handle_is_rejected() {
-        let color = std::ffi::CString::new("white").unwrap();
-        // SAFETY: color is a valid CString.
-        let img = unsafe { hew_magick_new(8, 8, color.as_ptr()) };
+        let img = new_image(8, 8, "white");
         assert!(!img.is_null());
 
         // SAFETY: img was allocated by hew_magick_new.
@@ -849,10 +838,16 @@ mod tests {
     }
 
     #[test]
+    fn invalid_colour_reports_the_rejected_text() {
+        let img = new_image(8, 8, "definitely-not-a-colour");
+        assert!(img.is_null());
+        assert_eq!(hew_magick_last_error_kind(), ErrorKind::InvalidInput as i32);
+        assert!(last_error().starts_with("invalid image color"));
+    }
+
+    #[test]
     fn new_image_has_correct_dimensions() {
-        let color = std::ffi::CString::new("white").unwrap();
-        // SAFETY: color is a valid CString.
-        let img = unsafe { hew_magick_new(100, 50, color.as_ptr()) };
+        let img = new_image(100, 50, "white");
         assert!(!img.is_null());
 
         // SAFETY: img is valid from hew_magick_new.
@@ -868,9 +863,7 @@ mod tests {
 
     #[test]
     fn resize_changes_dimensions() {
-        let color = std::ffi::CString::new("blue").unwrap();
-        // SAFETY: color is a valid CString.
-        let img = unsafe { hew_magick_new(200, 100, color.as_ptr()) };
+        let img = new_image(200, 100, "blue");
         assert!(!img.is_null());
 
         // SAFETY: img is valid.
@@ -888,9 +881,7 @@ mod tests {
 
     #[test]
     fn crop_changes_dimensions() {
-        let color = std::ffi::CString::new("blue").unwrap();
-        // SAFETY: color is a valid CString.
-        let img = unsafe { hew_magick_new(120, 80, color.as_ptr()) };
+        let img = new_image(120, 80, "blue");
         assert!(!img.is_null());
 
         // SAFETY: img is valid.
@@ -906,9 +897,7 @@ mod tests {
 
     #[test]
     fn rotate_right_angle_swaps_dimensions() {
-        let color = std::ffi::CString::new("yellow").unwrap();
-        // SAFETY: color is a valid CString.
-        let img = unsafe { hew_magick_new(40, 20, color.as_ptr()) };
+        let img = new_image(40, 20, "yellow");
         assert!(!img.is_null());
 
         // SAFETY: img is valid.
@@ -924,9 +913,7 @@ mod tests {
 
     #[test]
     fn flip_flop_succeed() {
-        let color = std::ffi::CString::new("red").unwrap();
-        // SAFETY: color is a valid CString.
-        let img = unsafe { hew_magick_new(10, 10, color.as_ptr()) };
+        let img = new_image(10, 10, "red");
         assert!(!img.is_null());
 
         // SAFETY: img is valid.
@@ -940,17 +927,11 @@ mod tests {
 
     #[test]
     fn write_to_test_output_file() {
-        let color = std::ffi::CString::new("green").unwrap();
-        // SAFETY: color is a valid CString.
-        let img = unsafe { hew_magick_new(10, 10, color.as_ptr()) };
+        let img = new_image(10, 10, "green");
         assert!(!img.is_null());
 
         let path = test_path("hew-magick-test", "png");
-        let path_cstr = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
-
-        // SAFETY: img and path_cstr are valid.
-        let rc = unsafe { hew_magick_write(img, path_cstr.as_ptr()) };
-        assert_eq!(rc, 0);
+        assert_eq!(write_image(img, path.to_str().unwrap()), 0);
         assert!(path.exists());
 
         // Clean up
@@ -959,29 +940,62 @@ mod tests {
         unsafe { hew_magick_destroy(img) };
     }
 
+    /// A path longer than the managed inline budget and carrying non-ASCII text
+    /// has to survive both directions, and the format has to come back out.
+    #[test]
+    fn non_ascii_path_round_trips_through_the_managed_abi() {
+        let path = test_path("héllo-wörld-très-longue-imagé", "png");
+        let name = path.to_str().unwrap();
+        assert!(name.len() > 16);
+
+        let img = new_image(24, 18, "#2f80ed");
+        assert!(!img.is_null());
+        assert_eq!(write_image(img, name), 0);
+        // SAFETY: img was allocated by hew_magick_new.
+        unsafe { hew_magick_destroy(img) };
+        assert!(path.exists());
+
+        let reopened = open_image(name);
+        assert!(!reopened.is_null());
+        // SAFETY: reopened is live.
+        assert_eq!(unsafe { hew_magick_width(reopened) }, 24);
+        assert_eq!(format_of(reopened), "PNG");
+        // SAFETY: reopened was allocated by hew_magick_open.
+        unsafe { hew_magick_destroy(reopened) };
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn missing_path_open_reports_the_path_it_was_given() {
+        let path = test_path("manquant-héllo-wörld", "png");
+        let name = path.to_str().unwrap();
+        assert!(!path.exists());
+
+        assert!(open_image(name).is_null());
+        assert_eq!(hew_magick_last_error_kind(), ErrorKind::Decode as i32);
+        assert!(last_error().contains(name));
+    }
+
     /// Full round-trip: create image → write PNG → open PNG → resize →
     /// blur → write JPEG → open JPEG → verify dimensions and format.
     #[test]
     fn thumbnail_round_trip() {
         let src_path = test_path("hew-magick-src", "png");
         let thumb_path = test_path("hew-magick-thumb", "jpg");
+        let src_name = src_path.to_str().unwrap();
+        let thumb_name = thumb_path.to_str().unwrap();
 
         // 1. Create a 400x300 source image and write it as PNG.
-        let color = std::ffi::CString::new("#3366CC").unwrap();
-        // SAFETY: color is a valid CString.
-        let src = unsafe { hew_magick_new(400, 300, color.as_ptr()) };
+        let src = new_image(400, 300, "#3366CC");
         assert!(!src.is_null());
-
-        let src_cstr = std::ffi::CString::new(src_path.to_str().unwrap()).unwrap();
-        // SAFETY: src and src_cstr are valid.
-        assert_eq!(unsafe { hew_magick_write(src, src_cstr.as_ptr()) }, 0);
+        assert_eq!(write_image(src, src_name), 0);
         // SAFETY: src was allocated by hew_magick_new.
         unsafe { hew_magick_destroy(src) };
         assert!(src_path.exists());
 
         // 2. Open the PNG we just wrote.
-        // SAFETY: src_cstr points to a file that exists.
-        let img = unsafe { hew_magick_open(src_cstr.as_ptr()) };
+        let img = open_image(src_name);
         assert!(!img.is_null());
         // SAFETY: img is valid.
         assert_eq!(unsafe { hew_magick_width(img) }, 400);
@@ -1003,33 +1017,19 @@ mod tests {
         assert_eq!(unsafe { hew_magick_sharpen(img, 0.0, 0.5) }, 0);
 
         // 5. Write as JPEG (format inferred from extension).
-        let thumb_cstr = std::ffi::CString::new(thumb_path.to_str().unwrap()).unwrap();
-        // SAFETY: img and thumb_cstr are valid.
-        assert_eq!(unsafe { hew_magick_write(img, thumb_cstr.as_ptr()) }, 0);
+        assert_eq!(write_image(img, thumb_name), 0);
         // SAFETY: img was allocated by hew_magick_open.
         unsafe { hew_magick_destroy(img) };
         assert!(thumb_path.exists());
 
         // 6. Re-open the JPEG and verify dimensions + format.
-        // SAFETY: thumb_cstr points to a file that exists.
-        let thumb = unsafe { hew_magick_open(thumb_cstr.as_ptr()) };
+        let thumb = open_image(thumb_name);
         assert!(!thumb.is_null());
         // SAFETY: thumb is valid.
         assert_eq!(unsafe { hew_magick_width(thumb) }, 80);
         // SAFETY: thumb is valid.
         assert_eq!(unsafe { hew_magick_height(thumb) }, 60);
-
-        // SAFETY: thumb is valid.
-        let fmt_ptr = unsafe { hew_magick_format(thumb) };
-        assert!(!fmt_ptr.is_null());
-        // SAFETY: fmt_ptr is a malloc-allocated NUL-terminated string.
-        let fmt = unsafe { std::ffi::CStr::from_ptr(fmt_ptr) }
-            .to_str()
-            .unwrap()
-            .to_owned();
-        // SAFETY: fmt_ptr was allocated with malloc.
-        unsafe { free_cstring(fmt_ptr) };
-        assert_eq!(fmt, "JPEG");
+        assert_eq!(format_of(thumb), "JPEG");
 
         // SAFETY: thumb was allocated by hew_magick_open.
         unsafe { hew_magick_destroy(thumb) };
@@ -1041,20 +1041,13 @@ mod tests {
 
     #[test]
     fn encoded_blob_round_trips_a_real_image() {
-        let color = std::ffi::CString::new("#2f80ed").unwrap();
-        // SAFETY: color is a valid CString.
-        let source = unsafe { hew_magick_new(37, 19, color.as_ptr()) };
+        let source = new_image(37, 19, "#2f80ed");
         assert!(!source.is_null());
 
-        let png = b"PNG";
-        // SAFETY: source is live and png is valid for its declared length.
-        let blob = unsafe {
-            hew_magick_write_blob_len(
-                source,
-                png.as_ptr().cast(),
-                i64::try_from(png.len()).unwrap(),
-            )
-        };
+        // SAFETY: source is live and the managed format outlives the call.
+        let blob = with_managed("PNG", |format| unsafe {
+            hew_magick_write_blob(source, format)
+        });
         assert!(!blob.ptr.is_null());
         assert!(blob.len > 8);
         // SAFETY: blob was just populated above; its ptr/offset/len describe
@@ -1070,9 +1063,10 @@ mod tests {
         assert_eq!(unsafe { hew_magick_width(decoded) }, 37);
         // SAFETY: decoded was just opened above and is live.
         assert_eq!(unsafe { hew_magick_height(decoded) }, 19);
+        assert_eq!(format_of(decoded), "PNG");
 
         // SAFETY: source and decoded were opened above and blob is the live
-        // Hew bytes allocation written by hew_magick_write_blob_len; each is
+        // Hew bytes allocation written by hew_magick_write_blob; each is
         // released here exactly once.
         unsafe {
             hew_magick_destroy(source);
