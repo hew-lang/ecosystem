@@ -22,16 +22,16 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
         hew_mqtt_message_count()
     };
     let client = spawn mqtt.Conn(options: options("hew-mqtt-integration"));
-    match await client.subscribe("hew/integration", mqtt.QoS.AtLeastOnce) {
+    match client.subscribe("hew/integration", mqtt.QoS.AtLeastOnce) {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
     sleep(100ms);
-    match await client.publish("hew/integration", "exact payload", mqtt.QoS.AtLeastOnce, false) {
+    match client.publish("hew/integration", "exact payload", mqtt.QoS.AtLeastOnce, false) {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
-    match await client.next_message(3000) {
+    match client.next_message(3000) {
         .Ok(.Ok(.Message(message))) => {
             testing.assert_eq_str(message.topic, "hew/integration");
             testing.assert_eq_str(message.payload, "exact payload");
@@ -41,7 +41,7 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
     testing.assert_eq(unsafe {
         hew_mqtt_message_count()
     }, previous_messages);
-    match await client.next_message(50) {
+    match client.next_message(50) {
         .Ok(.Ok(.Missing)) => {},
         _ => testing.assert_true(false),
     }

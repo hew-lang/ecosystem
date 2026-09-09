@@ -10,7 +10,7 @@ extern "C" {
 }
 
 fn nul_value() -> bytes {
-    let value: bytes = bytes.new();
+    var value: bytes = bytes.new();
     value.push(65);
     value.push(0);
     value.push(66);
@@ -18,7 +18,7 @@ fn nul_value() -> bytes {
 }
 
 fn invalid_utf8() -> bytes {
-    let value: bytes = bytes.new();
+    var value: bytes = bytes.new();
     value.push(255);
     value
 }
@@ -62,23 +62,23 @@ fn connection() -> LocalPid<mysql.Conn> {
 
 fn query_snapshot_preserves_values_null_empty_and_nul() {
     let db = connection();
-    match await db.execute("DROP TABLE IF EXISTS hew_sql_beta") {
+    match db.execute("DROP TABLE IF EXISTS hew_sql_beta") {
         .Ok(result) => expect_count(result, 0),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.execute("CREATE TABLE hew_sql_beta (id BIGINT PRIMARY KEY, value TEXT NULL)") {
+    match db.execute("CREATE TABLE hew_sql_beta (id BIGINT PRIMARY KEY, value TEXT NULL)") {
         .Ok(result) => expect_count(result, 0),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.execute_params("INSERT INTO hew_sql_beta VALUES (?, ?)", insert_params()) {
+    match db.execute_params("INSERT INTO hew_sql_beta VALUES (?, ?)", insert_params()) {
         .Ok(result) => expect_count(result, 1),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.execute("INSERT INTO hew_sql_beta VALUES (2, ''), (3, NULL)") {
+    match db.execute("INSERT INTO hew_sql_beta VALUES (2, ''), (3, NULL)") {
         .Ok(result) => expect_count(result, 2),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.query("SELECT id, value FROM hew_sql_beta ORDER BY id") {
+    match db.query("SELECT id, value FROM hew_sql_beta ORDER BY id") {
         .Ok(.Ok(query)) => {
             testing.assert_eq(query.columns.len(), 2);
             testing.assert_eq(query.rows.len(), 3);
@@ -97,7 +97,7 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
         },
         _ => testing.assert_true(false),
     }
-    match await db.query_params("SELECT value FROM hew_sql_beta WHERE id = ?", "1".to_bytes()) {
+    match db.query_params("SELECT value FROM hew_sql_beta WHERE id = ?", "1".to_bytes()) {
         .Ok(.Ok(query)) => {
             testing.assert_eq(query.rows.len(), 1);
             match query.rows[0].values[0] {
@@ -107,9 +107,9 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
         },
         _ => testing.assert_true(false),
     }
-    match await db.query("SELECT X'FF00' AS binary_value") {
+    match db.query("SELECT X'FF00' AS binary_value") {
         .Ok(.Ok(query)) => {
-            let expected: bytes = bytes.new();
+            var expected: bytes = bytes.new();
             expected.push(255);
             expected.push(0);
             match query.rows[0].values[0] {
@@ -124,20 +124,20 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
 
 fn actual_database_failures_are_typed() {
     let db = connection();
-    match await db.execute("NOT SQL") {
+    match db.execute("NOT SQL") {
         .Ok(result) => expect_query_error(result),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.query("SELECT * FROM table_that_does_not_exist") {
+    match db.query("SELECT * FROM table_that_does_not_exist") {
         .Ok(result) => expect_query_error(result),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.query_params("SELECT ?", invalid_utf8()) {
+    match db.query_params("SELECT ?", invalid_utf8()) {
         .Ok(.Err(.InvalidInput(message))) => testing.assert_true(!message.is_empty()),
         _ => testing.assert_true(false),
     }
     let _ = db.close();
-    match await db.query("SELECT 1") {
+    match db.query("SELECT 1") {
         .Ok(.Err(.Closed(_))) => testing.assert_true(true),
         _ => testing.assert_true(false),
     }
@@ -145,7 +145,7 @@ fn actual_database_failures_are_typed() {
 
 fn actor_without_close(previous: i64) -> LocalPid<mysql.Conn> {
     let db = connection();
-    match await db.query("SELECT 1") {
+    match db.query("SELECT 1") {
         .Ok(.Ok(_)) => testing.assert_true(true),
         _ => testing.assert_true(false),
     }

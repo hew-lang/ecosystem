@@ -5,12 +5,12 @@
 
 #[wire]
 pub enum MagickError {
-    InvalidInput(string);
-    Decode(string);
-    Transform(string);
-    Io(string);
-    Closed(string);
-    Internal(string);
+    InvalidInput(string),
+    Decode(string),
+    Transform(string),
+    Io(string),
+    Closed(string),
+    Internal(string),
 }
 
 /// Return the diagnostic carried by an image error.
@@ -27,9 +27,9 @@ pub fn error_message(error: MagickError) -> string {
 
 #[wire]
 pub enum Source {
-    File(string);
-    Blob(bytes);
-    Blank(i32, i32, string);
+    File(string),
+    Blob(bytes),
+    Blank(i32, i32, string),
 }
 
 fn native_error_from(kind: i32, message: string) -> MagickError {
@@ -72,10 +72,10 @@ fn operation(status: i32) -> Result<i64, MagickError> {
 
 /// A mailbox-serialized owner of one ImageMagick image.
 pub actor Image {
-    var native_handle: i64 = 0;
-    var init_error_kind: i32 = 0;
-    var init_error_message: string = "";
-    var closed: bool = false;
+    var native_handle: i64 = 0,
+    var init_error_kind: i32 = 0,
+    var init_error_message: string = "",
+    var closed: bool = false,
 
     init(source: Source) {
         native_handle = match source {

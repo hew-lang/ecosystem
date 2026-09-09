@@ -10,7 +10,7 @@ fn error_variants_return_exact_diagnostics() {
 
 fn unavailable_connection_returns_typed_error() {
     let client = spawn redis.Conn(options: Options { url: "redis://127.0.0.1:1/" });
-    match await client.get("key") {
+    match client.get("key") {
         .Ok(result) => match result {
             .Ok(_) => testing.assert_true(false),
             .Err(error) => testing.assert_true(!redis.error_message(error).is_empty()),

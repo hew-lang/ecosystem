@@ -18,38 +18,38 @@ fn store() -> LocalPid<s3.Bucket> {
 
 fn binary_round_trip_and_missing_are_distinct() {
     let client = store();
-    let body: bytes = bytes.new();
+    var body: bytes = bytes.new();
     body.push(65);
     body.push(0);
     body.push(66);
-    match await client.put("hew/integration.bin", body, "application/octet-stream") {
+    match client.put("hew/integration.bin", body, "application/octet-stream") {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
-    match await client.get("hew/integration.bin") {
+    match client.get("hew/integration.bin") {
         .Ok(.Ok(.Found(value))) => {
             testing.assert_eq(value.len(), 3);
             testing.assert_eq(value[1] as i64, 0);
         },
         _ => testing.assert_true(false),
     }
-    match await client.exists("hew/integration.bin") {
+    match client.exists("hew/integration.bin") {
         .Ok(.Ok(value)) => testing.assert_true(value),
         _ => testing.assert_true(false),
     }
-    match await client.list("hew/") {
+    match client.list("hew/") {
         .Ok(.Ok(values)) => testing.assert_true(!values.is_empty()),
         _ => testing.assert_true(false),
     }
-    match await client.presign("hew/integration.bin", "GET", 60) {
+    match client.presign("hew/integration.bin", "GET", 60) {
         .Ok(.Ok(url)) => testing.assert_true(url.contains("X-Amz-Signature")),
         _ => testing.assert_true(false),
     }
-    match await client.delete("hew/integration.bin") {
+    match client.delete("hew/integration.bin") {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
-    match await client.get("hew/integration.bin") {
+    match client.get("hew/integration.bin") {
         .Ok(.Ok(.Missing)) => {},
         _ => testing.assert_true(false),
     }
@@ -62,7 +62,7 @@ fn actor_stop_releases_relative_bucket_count() {
         hew_s3_bucket_count()
     };
     let client = store();
-    match await client.presign("actor-stop", "GET", 60) {
+    match client.presign("actor-stop", "GET", 60) {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
@@ -80,7 +80,7 @@ fn actor_stop_releases_relative_bucket_count() {
 
 fn invalid_presign_fails_typed() {
     let client = store();
-    match await client.presign("key", "POST", 60) {
+    match client.presign("key", "POST", 60) {
         .Ok(.Err(error)) => testing.assert_true(!s3.error_message(error).is_empty()),
         _ => testing.assert_true(false),
     }

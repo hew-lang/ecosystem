@@ -6,17 +6,17 @@
 
 #[wire]
 pub enum S3Error {
-    Connection(string);
-    InvalidInput(string);
-    NotFound(string);
-    AccessDenied(string);
-    Throttled(string);
-    ServerError(i64, string);
-    Network(string);
-    HttpStatus(i64, string);
-    Decode(string);
-    Closed(string);
-    Internal(string);
+    Connection(string),
+    InvalidInput(string),
+    NotFound(string),
+    AccessDenied(string),
+    Throttled(string),
+    ServerError(i64, string),
+    Network(string),
+    HttpStatus(i64, string),
+    Decode(string),
+    Closed(string),
+    Internal(string),
 }
 
 /// Return the diagnostic carried by an S3 error.
@@ -38,8 +38,8 @@ pub fn error_message(error: S3Error) -> string {
 
 #[wire]
 pub enum ObjectLookup {
-    Missing;
-    Found(bytes);
+    Missing,
+    Found(bytes),
 }
 
 #[wire]
@@ -104,7 +104,7 @@ fn unit_result(status: i32) -> Result<i64, S3Error> {
 
 #[resource]
 type GetResource {
-    handle: i64;
+    handle: i64,
 }
 
 impl GetResource {
@@ -120,7 +120,7 @@ impl GetResource {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_s3_get_free(self.handle)
         };
@@ -129,7 +129,7 @@ impl GetResource {
 
 #[resource]
 type ListResource {
-    handle: i64;
+    handle: i64,
 }
 
 impl ListResource {
@@ -151,7 +151,7 @@ impl ListResource {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_s3_list_free(self.handle)
         };
@@ -160,11 +160,11 @@ impl ListResource {
 
 /// A mailbox-serialized owner of one native S3 bucket client.
 pub actor Bucket {
-    var native_handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_status: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var native_handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_status: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(options: Options) {
         native_handle = unsafe {
@@ -239,7 +239,7 @@ pub actor Bucket {
             result.close();
             return Err(error);
         }
-        let entries: Vec<ObjectInfo> = Vec.new();
+        var entries: Vec<ObjectInfo> = Vec.new();
         for index in 0 .. count {
             entries.push(ObjectInfo { key: result.key(index), size: result.size(index) });
         }

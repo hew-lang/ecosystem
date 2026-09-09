@@ -24,7 +24,7 @@ fn error_variants_return_exact_messages() {
 
 fn invalid_endpoint_returns_typed_error() {
     let store = spawn s3.Bucket(options: Options { endpoint: "not a URL", region: "us-east-1", bucket: "test", access_key: "x", secret_key: "y" });
-    match await store.exists("key") {
+    match store.exists("key") {
         .Ok(.Err(error)) => testing.assert_true(!s3.error_message(error).is_empty()),
         _ => testing.assert_true(false),
     }

@@ -3,13 +3,15 @@
 //! Every fallible operation returns `Result`. Query rows are immutable,
 //! `#[wire]` snapshots, and SQL `NULL` is represented by `CellValue.Null`.
 
+import std.encoding.utf8;
+
 #[wire]
 pub enum MysqlError {
-    Connect(string);
-    InvalidInput(string);
-    Query(string);
-    Closed(string);
-    Internal(string);
+    Connect(string),
+    InvalidInput(string),
+    Query(string),
+    Closed(string),
+    Internal(string),
 }
 
 /// Return the diagnostic carried by a `MysqlError`.
@@ -25,8 +27,8 @@ pub fn error_message(error: MysqlError) -> string {
 
 #[wire]
 pub enum CellValue {
-    Null;
-    Text(bytes);
+    Null,
+    Text(bytes),
 }
 
 #[wire]
@@ -73,7 +75,7 @@ fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: 
 
 #[resource]
 type NativeResult {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativeResult {
@@ -107,7 +109,7 @@ impl NativeResult {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_mysql_result_free(self.handle)
         };
@@ -122,14 +124,14 @@ fn collect_result(result: NativeResult) -> Result<QueryResult, MysqlError> {
         result.close();
         return Err(error);
     }
-    let columns: Vec<string> = Vec.new();
+    var columns: Vec<string> = Vec.new();
     for column in 0 .. column_count {
         let value = result.column(column);
-        columns.push(value.to_string());
+        columns.push(utf8.decode_lossy(value));
     }
-    let rows: Vec<Row> = Vec.new();
+    var rows: Vec<Row> = Vec.new();
     for row in 0 .. row_count {
-        let values: Vec<CellValue> = Vec.new();
+        var values: Vec<CellValue> = Vec.new();
         for column in 0 .. column_count {
             match result.cell_kind(row, column) {
                 0 => values.push(CellValue.Null),
@@ -152,10 +154,10 @@ fn collect_result(result: NativeResult) -> Result<QueryResult, MysqlError> {
 
 /// An actor that owns and serializes one MySQL connection.
 pub actor Conn {
-    var handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(url: string) {
         handle = unsafe {

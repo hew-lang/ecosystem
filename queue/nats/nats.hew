@@ -36,17 +36,17 @@
 #[wire]
 pub enum NatsError {
     /// The server could not be reached or the connection was lost.
-    Connection(string);
+    Connection(string),
     /// A URL, subject, payload, reply target, or timeout was invalid.
-    InvalidInput(string);
+    InvalidInput(string),
     /// The server or client rejected an operation.
-    Operation(string);
+    Operation(string),
     /// A bounded operation failed because its deadline elapsed.
-    Timeout(string);
+    Timeout(string),
     /// The connection or subscription is already closed.
-    Closed(string);
+    Closed(string),
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string),
 }
 
 /// Return the diagnostic carried by a NATS error.
@@ -74,9 +74,9 @@ pub type Subscription {
 #[wire]
 pub enum ReplyTo {
     /// The publisher did not request a reply.
-    Missing;
+    Missing,
     /// Replies should be published to this subject.
-    Subject(string);
+    Subject(string),
 }
 
 #[wire]
@@ -89,9 +89,9 @@ pub type Delivery {
 #[wire]
 pub enum Receive {
     /// No message arrived before the deadline.
-    Missing;
+    Missing,
     /// A complete message arrived.
-    Message(Delivery);
+    Message(Delivery),
 }
 
 fn native_error_from(kind: i32, message: string) -> NatsError {
@@ -126,7 +126,7 @@ fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: stri
 
 #[resource]
 type NativeMessage {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativeMessage {
@@ -154,7 +154,7 @@ impl NativeMessage {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_nats_message_free(self.handle)
         };
@@ -192,10 +192,10 @@ fn receive_result(handle: i64) -> Result<Receive, NatsError> {
 
 /// An actor that owns one NATS connection and every subscription it creates.
 pub actor Conn {
-    var native_handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var native_handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(options: Options) {
         native_handle = unsafe {

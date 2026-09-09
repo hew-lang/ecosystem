@@ -84,15 +84,15 @@ pub type Token {
 #[wire]
 pub enum OAuthError {
     /// A required URL, code, verifier, or credential was invalid.
-    InvalidInput(string);
+    InvalidInput(string),
     /// The authorization server could not be reached.
-    Transport(string);
+    Transport(string),
     /// The token endpoint rejected the request or returned an invalid body.
-    TokenEndpoint(i64, string);
+    TokenEndpoint(i64, string),
     /// The client has already been closed.
-    Closed(string);
+    Closed(string),
     /// The native layer could not complete the operation.
-    Internal(string);
+    Internal(string),
 }
 
 /// Return the diagnostic carried by an `OAuthError`.
@@ -208,8 +208,8 @@ fn live_handle(closed: bool, handle: i64) -> Result<i64, OAuthError> {
 }
 
 pub actor Client {
-    var handle: i64 = 0;
-    var closed: bool = false;
+    var handle: i64 = 0,
+    var closed: bool = false,
     init(client_id: string, client_secret: string) {
         handle = unsafe {
             hew_oauth_new(client_id, client_id.len(), client_secret, client_secret.len())

@@ -1,17 +1,18 @@
 import hew.db.redis;
+import std.encoding.utf8;
 
 fn main() {
     let client = spawn redis.Conn(options: Options { url: "redis://127.0.0.1/" });
-    match await client.set("greeting", "hello".to_bytes()) {
+    match client.set("greeting", "hello".to_bytes()) {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(error) => println(redis.error_message(error)),
         },
         .Err(_) => println("Redis actor stopped before replying"),
     }
-    match await client.get("greeting") {
+    match client.get("greeting") {
         .Ok(result) => match result {
-            .Ok(.Value(value)) => println(value.to_string()),
+            .Ok(.Value(value)) => println(utf8.decode_lossy(value)),
             .Ok(.Missing) => println("greeting is missing"),
             .Err(error) => println(redis.error_message(error)),
         },

@@ -73,17 +73,17 @@
 #[wire]
 pub enum MetricsError {
     /// A metric name, help string, label set, bucket list, or value was invalid.
-    InvalidInput(string);
+    InvalidInput(string),
     /// A metric handle did not identify a registered metric.
-    UnknownMetric(i64);
+    UnknownMetric(i64),
     /// A metric handle was used with an operation for another metric kind.
-    WrongMetricKind(i64);
+    WrongMetricKind(i64),
     /// A new label tuple would exceed the metric's 1024-series limit.
-    SeriesLimit(i64);
+    SeriesLimit(i64),
     /// The registry has already been closed.
-    Closed(string);
+    Closed(string),
     /// The native registry could not complete the operation.
-    Internal(string);
+    Internal(string),
 }
 
 /// Return the diagnostic carried by a `MetricsError`.
@@ -131,8 +131,8 @@ fn changed(metric: i64, status: i32) -> Result<i64, MetricsError> {
 /// Each actor owns an independent native registry. Every fallible operation
 /// returns a typed `Result`; no handle or empty-string sentinel is public.
 pub actor Registry {
-    var handle: i64 = 0;
-    var closed: bool = false;
+    var handle: i64 = 0,
+    var closed: bool = false,
     init() {
         handle = unsafe {
             hew_metrics_new()

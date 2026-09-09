@@ -34,17 +34,17 @@
 #[wire]
 pub enum RedisError {
     /// The server could not be reached or the connection was lost.
-    Connection(string);
+    Connection(string),
     /// An input such as a URL, TTL, timeout, or UTF-8 key was invalid.
-    InvalidInput(string);
+    InvalidInput(string),
     /// Redis rejected a command or returned an incompatible value.
-    Command(string);
+    Command(string),
     /// A bounded operation elapsed before producing a value.
-    Timeout(string);
+    Timeout(string),
     /// The actor or an owned resource has already been closed.
-    Closed(string);
+    Closed(string),
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string),
 }
 
 /// Return the diagnostic carried by a `RedisError`.
@@ -62,19 +62,19 @@ pub fn error_message(error: RedisError) -> string {
 #[wire]
 pub enum Lookup {
     /// Redis returned nil because the key, field, or list element is absent.
-    Missing;
+    Missing,
     /// Redis returned exact bytes. An empty buffer remains a present value.
-    Value(bytes);
+    Value(bytes),
 }
 
 #[wire]
 pub enum KeyTtl {
     /// The key does not exist.
-    Missing;
+    Missing,
     /// The key exists without an expiration.
-    Persistent;
+    Persistent,
     /// The key expires after this many seconds.
-    Seconds(i64);
+    Seconds(i64),
 }
 
 #[wire]
@@ -96,13 +96,13 @@ pub type Options {
 #[wire]
 pub enum PipelineCommand {
     /// Queue `PING`.
-    Ping;
+    Ping,
     /// Queue `DEL key`.
-    Del(string);
+    Del(string),
     /// Queue `SET key value` with an exact binary value.
-    Set(string, bytes);
+    Set(string, bytes),
     /// Queue `HSET key field value` with an exact binary value.
-    Hset(string, string, bytes);
+    Hset(string, string, bytes),
 }
 
 fn native_error() -> RedisError {
@@ -116,7 +116,7 @@ fn native_error() -> RedisError {
 
 #[resource]
 type StringResource {
-    handle: i64;
+    handle: i64,
 }
 
 impl StringResource {
@@ -132,7 +132,7 @@ impl StringResource {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_redis_string_free(self.handle)
         };
@@ -141,7 +141,7 @@ impl StringResource {
 
 #[resource]
 type HashResource {
-    handle: i64;
+    handle: i64,
 }
 
 impl HashResource {
@@ -163,7 +163,7 @@ impl HashResource {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_redis_hgetall_free(self.handle)
         };
@@ -172,7 +172,7 @@ impl HashResource {
 
 #[resource]
 type SetResource {
-    handle: i64;
+    handle: i64,
 }
 
 impl SetResource {
@@ -188,7 +188,7 @@ impl SetResource {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_redis_smembers_free(self.handle)
         };
@@ -244,11 +244,11 @@ fn native_error_from(kind: i32, message: string) -> RedisError {
 
 #[resource]
 type NativePipeline {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativePipeline {
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_redis_pipeline_free(self.handle)
         };
@@ -257,10 +257,10 @@ impl NativePipeline {
 
 /// An actor that owns and serializes one Redis connection.
 pub actor Conn {
-    var native_handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var native_handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(options: Options) {
         native_handle = unsafe {
@@ -404,7 +404,7 @@ pub actor Conn {
             result.close();
             return Err(error);
         }
-        let entries: Vec<HashEntry> = Vec.new();
+        var entries: Vec<HashEntry> = Vec.new();
         for i in 0 .. count {
             entries.push(HashEntry { field: result.key(i), value: result.value(i) });
         }
@@ -445,7 +445,7 @@ pub actor Conn {
             result.close();
             return Err(error);
         }
-        let members: Vec<SetMember> = Vec.new();
+        var members: Vec<SetMember> = Vec.new();
         for i in 0 .. count {
             members.push(SetMember { value: result.value(i) });
         }
