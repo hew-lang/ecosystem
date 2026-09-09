@@ -58,6 +58,22 @@ fn find_one_existing_document_returns_found_value(db: LocalPid<mongodb.Conn>) {
     cleanup_fixture(db, collection, filter);
 }
 
+fn insert_and_find_preserve_unicode_document_values(db: LocalPid<mongodb.Conn>) {
+    let collection = "beta_unicode";
+    let filter = "{\"test_key\":\"unicode\"}";
+    cleanup_fixture(db, collection, filter.clone());
+    insert_fixture(db, collection, "{\"test_key\":\"unicode\",\"note\":\"Requêtes traitées — 雪の結晶\"}");
+    match db.find_one(collection, filter.clone()) {
+        .Ok(result) => match result {
+            .Ok(.Found(document)) => assert(document.contains("Requêtes traitées — 雪の結晶")),
+            .Ok(.Missing) => panic("unicode fixture document was missing"),
+            .Err(error) => panic(mongodb.error_message(error)),
+        },
+        .Err(_) => panic("actor stopped during unicode find_one"),
+    }
+    cleanup_fixture(db, collection, filter);
+}
+
 fn find_one_absent_document_returns_missing_value(db: LocalPid<mongodb.Conn>) {
     let collection = "beta_missing";
     let filter = "{\"test_key\":\"absent\"}";
@@ -243,6 +259,7 @@ fn main() {
     let db = spawn mongodb.Conn(uri: "mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=1000", database: "hew_mongodb_public_integration");
     insert_one_valid_document_returns_nonempty_id(db);
     find_one_existing_document_returns_found_value(db);
+    insert_and_find_preserve_unicode_document_values(db);
     find_one_absent_document_returns_missing_value(db);
     find_matching_documents_returns_exact_query_contents(db);
     repeated_find_returns_fresh_results_after_cursor_cleanup(db);

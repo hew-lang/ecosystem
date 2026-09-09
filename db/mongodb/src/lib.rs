@@ -1,44 +1,23 @@
 #![expect(
     clippy::undocumented_unsafe_blocks,
-    reason = "C ABI entry points validate pointer/length and registered-handle contracts before each unsafe call"
+    reason = "C ABI entry points validate managed-string and registered-handle contracts before each unsafe call"
 )]
 
 //! Native `MongoDB` support for `hew.db.mongodb`.
 //!
-//! Every string input is a pointer-and-length pair. Operation status, error
-//! kind, and value presence are thread-local so the Hew actor can distinguish
-//! errors, missing documents, empty values, and cursor exhaustion.
+//! Strings cross the boundary as managed Hew strings: inbound handles are
+//! borrowed for the call and returned handles are freshly allocated owners.
+//! Operation status, error kind, and value presence are thread-local so the
+//! Hew actor can distinguish errors, missing documents, empty values, and
+//! cursor exhaustion.
 
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use mongodb::bson::{doc, Document};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
-use std::os::raw::c_char;
-use std::slice;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
-
-/// Return a string through Hew's foreign-package ABI.
-///
-/// Package `extern "C" -> string` results are adopted by Hew and released
-/// with `libc::free`, so the returned pointer must be the allocation base.
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: `size` includes the trailing NUL and is non-zero.
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    // SAFETY: `output` names `size` writable bytes and does not overlap the
-    // borrowed string payload.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
 
 static CONNECTIONS: LazyLock<Mutex<HashMap<i64, Arc<MongoConnection>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -142,35 +121,6 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
         state.message = message.into();
         state.value_present = 0;
     });
-}
-
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64) -> Result<&'a str, &'static str> {
-    let len = usize::try_from(len).map_err(|_| "negative or oversized string length")?;
-    if value.is_null() {
-        return if len == 0 {
-            Ok("")
-        } else {
-            Err("null string pointer with non-zero length")
-        };
-    }
-    // SAFETY: the caller guarantees `value` addresses at least `len` bytes.
-    let bytes = unsafe { slice::from_raw_parts(value.cast::<u8>(), len) };
-    std::str::from_utf8(bytes).map_err(|_| "string input was not valid UTF-8")
-}
-
-unsafe fn input<'a>(
-    value: *const c_char,
-    len: i64,
-    kind: ErrorKind,
-    label: &'static str,
-) -> Option<&'a str> {
-    match unsafe { utf8_with_len(value, len) } {
-        Ok(value) => Some(value),
-        Err(error) => {
-            set_error(kind, format!("{label}: {error}"));
-            None
-        }
-    }
 }
 
 fn json_to_doc(json: &str, label: &str) -> Result<Document, String> {
@@ -311,28 +261,15 @@ fn cursor(handle: i64) -> Option<RegisteredMut<'static, MongoCursor>> {
 /// Connect and ping a `MongoDB` server, returning an owned native handle.
 ///
 /// # Safety
-/// `uri` and `database` must point to their respective byte lengths.
+/// `uri` and `database` must each be null (the empty string) or a live
+/// managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_mongodb_connect(
-    uri: *const c_char,
-    uri_len: i64,
-    database: *const c_char,
-    database_len: i64,
+    uri: *const HewString,
+    database: *const HewString,
 ) -> i64 {
-    let Some(uri) = (unsafe { input(uri, uri_len, ErrorKind::Connect, "invalid MongoDB URI") })
-    else {
-        return 0;
-    };
-    let Some(database) = (unsafe {
-        input(
-            database,
-            database_len,
-            ErrorKind::Connect,
-            "invalid database name",
-        )
-    }) else {
-        return 0;
-    };
+    let uri = unsafe { string_as_str(uri) };
+    let database = unsafe { string_as_str(database) };
     if database.is_empty() {
         set_error(
             ErrorKind::Connect,
@@ -371,38 +308,19 @@ pub unsafe extern "C" fn hew_mongodb_connect(
 /// Insert one JSON document.
 ///
 /// # Safety
-/// `conn` must be live and both string pointers must address their byte lengths.
+/// `conn` must be live and each string argument must be null (the empty
+/// string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_mongodb_insert_one(
     conn: i64,
-    collection: *const c_char,
-    collection_len: i64,
-    document: *const c_char,
-    document_len: i64,
+    collection: *const HewString,
+    document: *const HewString,
 ) -> BytesTriple {
     let Some(conn) = connection(conn) else {
         return empty_bytes();
     };
-    let Some(collection) = (unsafe {
-        input(
-            collection,
-            collection_len,
-            ErrorKind::Operation,
-            "invalid collection",
-        )
-    }) else {
-        return empty_bytes();
-    };
-    let Some(document) = (unsafe {
-        input(
-            document,
-            document_len,
-            ErrorKind::InvalidJson,
-            "invalid document",
-        )
-    }) else {
-        return empty_bytes();
-    };
+    let collection = unsafe { string_as_str(collection) };
+    let document = unsafe { string_as_str(document) };
     let document = match json_to_doc(document, "document") {
         Ok(document) => document,
         Err(error) => {
@@ -431,33 +349,19 @@ pub unsafe extern "C" fn hew_mongodb_insert_one(
 /// Find the first matching document.
 ///
 /// # Safety
-/// `conn` must be live and both string pointers must address their byte lengths.
+/// `conn` must be live and each string argument must be null (the empty
+/// string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_mongodb_find_one(
     conn: i64,
-    collection: *const c_char,
-    collection_len: i64,
-    filter: *const c_char,
-    filter_len: i64,
+    collection: *const HewString,
+    filter: *const HewString,
 ) -> BytesTriple {
     let Some(conn) = connection(conn) else {
         return empty_bytes();
     };
-    let Some(collection) = (unsafe {
-        input(
-            collection,
-            collection_len,
-            ErrorKind::Operation,
-            "invalid collection",
-        )
-    }) else {
-        return empty_bytes();
-    };
-    let Some(filter) =
-        (unsafe { input(filter, filter_len, ErrorKind::InvalidJson, "invalid filter") })
-    else {
-        return empty_bytes();
-    };
+    let collection = unsafe { string_as_str(collection) };
+    let filter = unsafe { string_as_str(filter) };
     let filter = match json_to_doc(filter, "filter") {
         Ok(filter) => filter,
         Err(error) => {
@@ -496,33 +400,19 @@ pub unsafe extern "C" fn hew_mongodb_find_one(
 /// Start a query and prefetch its documents into an owned cursor.
 ///
 /// # Safety
-/// `conn` must be live and both string pointers must address their byte lengths.
+/// `conn` must be live and each string argument must be null (the empty
+/// string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_mongodb_find(
     conn: i64,
-    collection: *const c_char,
-    collection_len: i64,
-    filter: *const c_char,
-    filter_len: i64,
+    collection: *const HewString,
+    filter: *const HewString,
 ) -> i64 {
     let Some(conn) = connection(conn) else {
         return 0;
     };
-    let Some(collection) = (unsafe {
-        input(
-            collection,
-            collection_len,
-            ErrorKind::Operation,
-            "invalid collection",
-        )
-    }) else {
-        return 0;
-    };
-    let Some(filter) =
-        (unsafe { input(filter, filter_len, ErrorKind::InvalidJson, "invalid filter") })
-    else {
-        return 0;
-    };
+    let collection = unsafe { string_as_str(collection) };
+    let filter = unsafe { string_as_str(filter) };
     let filter = match json_to_doc(filter, "filter") {
         Ok(filter) => filter,
         Err(error) => {
@@ -594,40 +484,21 @@ fn parse_operation_inputs<'a>(
 /// Update the first matching document.
 ///
 /// # Safety
-/// `conn` must be live and all string pointers must address their byte lengths.
+/// `conn` must be live and each string argument must be null (the empty
+/// string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_mongodb_update_one(
     conn: i64,
-    collection: *const c_char,
-    collection_len: i64,
-    filter: *const c_char,
-    filter_len: i64,
-    update: *const c_char,
-    update_len: i64,
+    collection: *const HewString,
+    filter: *const HewString,
+    update: *const HewString,
 ) -> i64 {
     let Some(conn) = connection(conn) else {
         return 0;
     };
-    let Some(collection) = (unsafe {
-        input(
-            collection,
-            collection_len,
-            ErrorKind::Operation,
-            "invalid collection",
-        )
-    }) else {
-        return 0;
-    };
-    let Some(filter) =
-        (unsafe { input(filter, filter_len, ErrorKind::InvalidJson, "invalid filter") })
-    else {
-        return 0;
-    };
-    let Some(update) =
-        (unsafe { input(update, update_len, ErrorKind::InvalidJson, "invalid update") })
-    else {
-        return 0;
-    };
+    let collection = unsafe { string_as_str(collection) };
+    let filter = unsafe { string_as_str(filter) };
+    let update = unsafe { string_as_str(update) };
     let (collection, filter) = match parse_operation_inputs(collection, filter) {
         Ok(values) => values,
         Err(error) => {
@@ -668,33 +539,19 @@ pub unsafe extern "C" fn hew_mongodb_update_one(
 /// Delete the first matching document.
 ///
 /// # Safety
-/// `conn` must be live and both string pointers must address their byte lengths.
+/// `conn` must be live and each string argument must be null (the empty
+/// string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_mongodb_delete_one(
     conn: i64,
-    collection: *const c_char,
-    collection_len: i64,
-    filter: *const c_char,
-    filter_len: i64,
+    collection: *const HewString,
+    filter: *const HewString,
 ) -> i64 {
     let Some(conn) = connection(conn) else {
         return 0;
     };
-    let Some(collection) = (unsafe {
-        input(
-            collection,
-            collection_len,
-            ErrorKind::Operation,
-            "invalid collection",
-        )
-    }) else {
-        return 0;
-    };
-    let Some(filter) =
-        (unsafe { input(filter, filter_len, ErrorKind::InvalidJson, "invalid filter") })
-    else {
-        return 0;
-    };
+    let collection = unsafe { string_as_str(collection) };
+    let filter = unsafe { string_as_str(filter) };
     let (collection, filter) = match parse_operation_inputs(collection, filter) {
         Ok(values) => values,
         Err(error) => {
@@ -728,33 +585,19 @@ pub unsafe extern "C" fn hew_mongodb_delete_one(
 /// Count matching documents.
 ///
 /// # Safety
-/// `conn` must be live and both string pointers must address their byte lengths.
+/// `conn` must be live and each string argument must be null (the empty
+/// string) or a live managed Hew string handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_mongodb_count(
     conn: i64,
-    collection: *const c_char,
-    collection_len: i64,
-    filter: *const c_char,
-    filter_len: i64,
+    collection: *const HewString,
+    filter: *const HewString,
 ) -> i64 {
     let Some(conn) = connection(conn) else {
         return 0;
     };
-    let Some(collection) = (unsafe {
-        input(
-            collection,
-            collection_len,
-            ErrorKind::Operation,
-            "invalid collection",
-        )
-    }) else {
-        return 0;
-    };
-    let Some(filter) =
-        (unsafe { input(filter, filter_len, ErrorKind::InvalidJson, "invalid filter") })
-    else {
-        return 0;
-    };
+    let collection = unsafe { string_as_str(collection) };
+    let filter = unsafe { string_as_str(filter) };
     let (collection, filter) = match parse_operation_inputs(collection, filter) {
         Ok(values) => values,
         Err(error) => {
@@ -840,8 +683,8 @@ pub unsafe extern "C" fn hew_mongodb_close(conn: i64) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn hew_mongodb_last_error() -> *mut c_char {
-    LAST_ERROR.with(|state| malloc_c_string(&state.borrow().message))
+pub extern "C" fn hew_mongodb_last_error() -> *mut HewString {
+    LAST_ERROR.with(|state| string_from_str(&state.borrow().message))
 }
 
 #[unsafe(no_mangle)]
@@ -862,18 +705,14 @@ pub extern "C" fn hew_mongodb_last_value_present() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
+    use hew_cabi::string::string_release;
 
-    unsafe fn owned_string(pointer: *mut c_char) -> String {
-        assert!(!pointer.is_null());
-        // SAFETY: native string returns are malloc-owned NUL-terminated strings.
-        let value = unsafe { CStr::from_ptr(pointer) }
-            .to_str()
-            .expect("native result should be UTF-8")
-            .to_owned();
-        // SAFETY: package string results are allocated with libc::malloc.
-        unsafe { libc::free(pointer.cast()) };
-        value
+    unsafe fn owned_string(value: *mut HewString) -> String {
+        // SAFETY: native string returns are managed string owners.
+        let text = unsafe { string_as_str(value) }.to_owned();
+        // SAFETY: this is the unique release of the returned owner.
+        unsafe { string_release(value) };
+        text
     }
 
     unsafe fn owned_byte_vec(value: BytesTriple) -> Vec<u8> {
@@ -885,7 +724,8 @@ mod tests {
         // SAFETY: the triple came from `owned_bytes`, so its active range is
         // initialized and its allocation starts eight bytes before `ptr`.
         let bytes = unsafe {
-            slice::from_raw_parts(value.ptr.add(value.offset as usize), value.len as usize).to_vec()
+            std::slice::from_raw_parts(value.ptr.add(value.offset as usize), value.len as usize)
+                .to_vec()
         };
         // SAFETY: this is the unique test-side release of the refcount-1
         // allocation produced by `owned_bytes`.
@@ -910,11 +750,12 @@ mod tests {
     }
 
     #[test]
-    fn pointer_length_input_preserves_embedded_nul() {
-        let bytes = b"a\0b";
-        // SAFETY: bytes is live for the requested three-byte slice.
-        let value = unsafe { utf8_with_len(bytes.as_ptr().cast(), 3) }.unwrap();
-        assert_eq!(value.as_bytes(), bytes);
+    fn managed_string_input_preserves_embedded_nul() {
+        let value = string_from_str("a\0b");
+        // SAFETY: `value` is a live managed string owned by this test.
+        assert_eq!(unsafe { string_as_str(value) }.as_bytes(), b"a\0b");
+        // SAFETY: this is the unique release of the managed allocation.
+        unsafe { string_release(value) };
     }
 
     #[test]
@@ -926,17 +767,21 @@ mod tests {
     }
 
     #[test]
-    fn package_string_return_uses_bare_malloc_ownership() {
-        set_error(ErrorKind::Operation, "allocator probe");
-        let pointer = hew_mongodb_last_error();
-        assert!(!pointer.is_null());
-        // SAFETY: the export returns a NUL-terminated foreign-package string.
-        assert_eq!(
-            unsafe { CStr::from_ptr(pointer) }.to_str().unwrap(),
-            "allocator probe"
-        );
-        // SAFETY: Hew releases package string returns with libc::free.
-        unsafe { libc::free(pointer.cast()) };
+    fn package_string_return_uses_the_managed_string_abi() {
+        set_error(ErrorKind::Operation, "sonde d’allocation — 雪");
+        let message = hew_mongodb_last_error();
+        assert!(!message.is_null());
+        // SAFETY: the export returns a freshly allocated managed string owner.
+        assert_eq!(unsafe { owned_string(message) }, "sonde d’allocation — 雪");
+    }
+
+    #[test]
+    fn empty_error_message_returns_the_canonical_null_string() {
+        clear_error(true);
+        let message = hew_mongodb_last_error();
+        assert!(message.is_null());
+        // SAFETY: null is the canonical empty string and reads as empty.
+        assert_eq!(unsafe { string_as_str(message) }, "");
     }
 
     #[test]
@@ -958,14 +803,15 @@ mod tests {
     }
 
     #[test]
-    fn null_pointer_with_length_returns_internal_error() {
-        // SAFETY: null is deliberate and rejected before dereference.
-        let result = unsafe { hew_mongodb_insert_one(0, std::ptr::null(), 1, std::ptr::null(), 1) };
+    fn stale_connection_handle_returns_internal_error() {
+        // SAFETY: the null handles are the canonical empty strings and the
+        // stale connection is rejected before they are read.
+        let result = unsafe { hew_mongodb_insert_one(0, std::ptr::null(), std::ptr::null()) };
         // SAFETY: result is an owned native bytes value.
         assert_eq!(unsafe { owned_byte_vec(result) }, b"");
         assert_eq!(hew_mongodb_last_status(), -1);
         assert_eq!(hew_mongodb_last_error_kind(), ErrorKind::Internal as i32);
-        // SAFETY: error pointer is an owned native string.
+        // SAFETY: error pointer is an owned managed string.
         let message = unsafe { owned_string(hew_mongodb_last_error()) };
         assert_eq!(message, "stale MongoDB connection handle");
     }
@@ -1025,7 +871,7 @@ mod tests {
         // SAFETY: second call deliberately exercises stale-handle rejection.
         unsafe { hew_mongodb_cursor_free(handle) };
         assert_eq!(hew_mongodb_last_status(), -1);
-        // SAFETY: error pointer is an owned native string.
+        // SAFETY: error pointer is an owned managed string.
         assert_eq!(
             unsafe { owned_string(hew_mongodb_last_error()) },
             "stale MongoDB cursor handle"
@@ -1065,17 +911,15 @@ mod tests {
 
     #[test]
     fn invalid_uri_returns_connect_error() {
-        let uri = b"not a uri";
-        let database = b"test";
-        // SAFETY: pointers address the supplied lengths.
-        let handle = unsafe {
-            hew_mongodb_connect(
-                uri.as_ptr().cast(),
-                i64::try_from(uri.len()).unwrap(),
-                database.as_ptr().cast(),
-                i64::try_from(database.len()).unwrap(),
-            )
-        };
+        let uri = string_from_str("not a uri");
+        let database = string_from_str("test");
+        // SAFETY: both arguments are live managed strings.
+        let handle = unsafe { hew_mongodb_connect(uri, database) };
+        // SAFETY: these are the unique releases of both managed allocations.
+        unsafe {
+            string_release(uri);
+            string_release(database);
+        }
         assert_eq!(handle, 0);
         assert_eq!(hew_mongodb_last_status(), -1);
         assert_eq!(hew_mongodb_last_error_kind(), ErrorKind::Connect as i32);
@@ -1083,19 +927,15 @@ mod tests {
 
     #[test]
     fn empty_database_returns_connect_error() {
-        let uri = b"mongodb://127.0.0.1:27017";
-        // SAFETY: URI pointer addresses its length; null with zero length is valid.
-        let handle = unsafe {
-            hew_mongodb_connect(
-                uri.as_ptr().cast(),
-                i64::try_from(uri.len()).unwrap(),
-                std::ptr::null(),
-                0,
-            )
-        };
+        let uri = string_from_str("mongodb://127.0.0.1:27017");
+        // SAFETY: the URI is a live managed string and null is the canonical
+        // empty database name.
+        let handle = unsafe { hew_mongodb_connect(uri, std::ptr::null()) };
+        // SAFETY: this is the unique release of the managed allocation.
+        unsafe { string_release(uri) };
         assert_eq!(handle, 0);
         assert_eq!(hew_mongodb_last_error_kind(), ErrorKind::Connect as i32);
-        // SAFETY: error pointer is an owned native string.
+        // SAFETY: error pointer is an owned managed string.
         assert_eq!(
             unsafe { owned_string(hew_mongodb_last_error()) },
             "MongoDB database name must not be empty"
@@ -1104,21 +944,21 @@ mod tests {
 
     #[test]
     fn refused_server_returns_connect_error() {
-        let uri = b"mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=10&connectTimeoutMS=10";
-        let database = b"test";
-        // SAFETY: both pointers address their supplied lengths.
-        let handle = unsafe {
-            hew_mongodb_connect(
-                uri.as_ptr().cast(),
-                i64::try_from(uri.len()).unwrap(),
-                database.as_ptr().cast(),
-                i64::try_from(database.len()).unwrap(),
-            )
-        };
+        let uri = string_from_str(
+            "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=10&connectTimeoutMS=10",
+        );
+        let database = string_from_str("test");
+        // SAFETY: both arguments are live managed strings.
+        let handle = unsafe { hew_mongodb_connect(uri, database) };
+        // SAFETY: these are the unique releases of both managed allocations.
+        unsafe {
+            string_release(uri);
+            string_release(database);
+        }
         assert_eq!(handle, 0);
         assert_eq!(hew_mongodb_last_status(), -1);
         assert_eq!(hew_mongodb_last_error_kind(), ErrorKind::Connect as i32);
-        // SAFETY: error pointer is an owned native string.
+        // SAFETY: error pointer is an owned managed string.
         let message = unsafe { owned_string(hew_mongodb_last_error()) };
         assert!(message.starts_with("could not connect to MongoDB:"));
     }

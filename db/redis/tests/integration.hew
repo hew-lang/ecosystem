@@ -5,12 +5,23 @@ import std.testing;
 import hew.db.redis;
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<redis.Conn>);
     fn hew_redis_connection_count() -> i64;
 }
 
 fn binary(text: string) -> bytes {
     text.to_bytes()
+}
+
+fn unicode_key() -> string {
+    "hew:redis:beta:unicode:clé-de-données-日本語"
+}
+
+fn unicode_field() -> string {
+    "champ-de-données-測試"
+}
+
+fn unicode_value() -> bytes {
+    "Requêtes traitées — 雪の結晶".to_bytes()
 }
 
 fn nul_value() -> bytes {
@@ -220,6 +231,29 @@ fn hash_commands_preserve_nul_and_missing_outcome() {
     let _ = client.close();
 }
 
+fn unicode_key_and_field_round_trip_through_native() {
+    let client = client_actor();
+    let _ = client.del(unicode_key());
+    match client.hset(unicode_key(), unicode_field(), unicode_value()) {
+        .Ok(result) => assert_bool(result, true),
+        .Err(_) => testing.assert_true(false),
+    }
+    match client.hget(unicode_key(), unicode_field()) {
+        .Ok(result) => assert_value(result, unicode_value()),
+        .Err(_) => testing.assert_true(false),
+    }
+    match client.hgetall(unicode_key()) {
+        .Ok(.Ok(entries)) => {
+            testing.assert_eq(entries.len(), 1);
+            testing.assert_eq_str(entries[0].field, unicode_field());
+            assert_bytes(entries[0].value, unicode_value());
+        },
+        _ => testing.assert_true(false),
+    }
+    let _ = client.del(unicode_key());
+    let _ = client.close();
+}
+
 fn set_commands_preserve_binary_members() {
     let client = client_actor();
     let key = "hew:redis:beta:set";
@@ -279,7 +313,7 @@ fn pubsub_preserves_binary_messages_and_times_out_typed() {
     let subscriber = client_actor();
     let publisher = client_actor();
     let delayed = spawn DelayedPublisher(client: publisher);
-    let _ = delayed.publish("hew:redis:beta:channel", nul_value());
+    let _ = mailbox(delayed, on_full: .Reject).publish("hew:redis:beta:channel", nul_value());
     match subscriber.subscribe_once("hew:redis:beta:channel", 1000) {
         .Ok(result) => assert_bytes_result(result, nul_value()),
         .Err(_) => testing.assert_true(false),
@@ -323,10 +357,14 @@ fn abandoned_actor_releases_connection_on_stop() {
     };
     testing.assert_true(previous_count >= 0);
     let client = create_actor_without_explicit_close(previous_count);
-    unsafe {
-        hew_actor_stop(client);
-    };
-    sleep(20ms);
+    close(client);
+    var attempts = 0;
+    while unsafe {
+        hew_redis_connection_count()
+    } != previous_count && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
     testing.assert_eq(unsafe {
         hew_redis_connection_count()
     }, previous_count);
@@ -339,6 +377,7 @@ fn main() {
     increment_returns_exact_new_value();
     list_commands_preserve_nul_and_empty_outcome();
     hash_commands_preserve_nul_and_missing_outcome();
+    unicode_key_and_field_round_trip_through_native();
     set_commands_preserve_binary_members();
     pipeline_executes_or_reports_command_error();
     pubsub_preserves_binary_messages_and_times_out_typed();

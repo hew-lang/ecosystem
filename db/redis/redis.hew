@@ -35,7 +35,7 @@
 pub enum RedisError {
     /// The server could not be reached or the connection was lost.
     Connection(string),
-    /// An input such as a URL, TTL, timeout, or UTF-8 key was invalid.
+    /// An input such as a URL, TTL, or timeout was invalid.
     InvalidInput(string),
     /// Redis rejected a command or returned an incompatible value.
     Command(string),
@@ -195,7 +195,7 @@ impl SetResource {
     }
 }
 
-fn lookup_result(result: StringResource) -> Result<Lookup, RedisError> {
+fn lookup_result(consume result: StringResource) -> Result<Lookup, RedisError> {
     let status = result.status();
     if status == 1 {
         let value = result.value();
@@ -264,7 +264,7 @@ pub actor Conn {
 
     init(options: Options) {
         native_handle = unsafe {
-            hew_redis_connect_len(options.url, options.url.len())
+            hew_redis_connect(options.url)
         };
         if native_handle == 0 {
             connect_error_kind = unsafe {
@@ -282,7 +282,7 @@ pub actor Conn {
     receive fn set(key: string, value: bytes) -> Result<i64, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
-            hew_redis_set_len(handle, key, key.len(), value)
+            hew_redis_set(handle, key, value)
         })
     }
 
@@ -290,7 +290,7 @@ pub actor Conn {
     receive fn get(key: string) -> Result<Lookup, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         lookup_result(StringResource { handle: unsafe {
-            hew_redis_get_len(handle, key, key.len())
+            hew_redis_get(handle, key)
         } })
     }
 
@@ -298,7 +298,7 @@ pub actor Conn {
     receive fn del(key: string) -> Result<i64, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
-            hew_redis_del_len(handle, key, key.len())
+            hew_redis_del(handle, key)
         })
     }
 
@@ -306,7 +306,7 @@ pub actor Conn {
     receive fn set_ex(key: string, value: bytes, ttl_seconds: i64) -> Result<i64, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
-            hew_redis_set_ex_len(handle, key, key.len(), value, ttl_seconds)
+            hew_redis_set_ex(handle, key, value, ttl_seconds)
         })
     }
 
@@ -314,7 +314,7 @@ pub actor Conn {
     receive fn expire(key: string, ttl_seconds: i64) -> Result<bool, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let changed = checked_count(unsafe {
-            hew_redis_expire_len(handle, key, key.len(), ttl_seconds)
+            hew_redis_expire(handle, key, ttl_seconds)
         })?;
         Ok(changed == 1)
     }
@@ -323,7 +323,7 @@ pub actor Conn {
     receive fn ttl(key: string) -> Result<KeyTtl, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let seconds = unsafe {
-            hew_redis_ttl_len(handle, key, key.len())
+            hew_redis_ttl(handle, key)
         };
         if unsafe {
             hew_redis_last_error_kind()
@@ -342,7 +342,7 @@ pub actor Conn {
     receive fn incr(key: string) -> Result<i64, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let value = unsafe {
-            hew_redis_incr_len(handle, key, key.len())
+            hew_redis_incr(handle, key)
         };
         checked_count(value)
     }
@@ -351,7 +351,7 @@ pub actor Conn {
     receive fn lpush(key: string, value: bytes) -> Result<i64, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
-            hew_redis_lpush_len(handle, key, key.len(), value)
+            hew_redis_lpush(handle, key, value)
         })
     }
 
@@ -359,7 +359,7 @@ pub actor Conn {
     receive fn rpop(key: string) -> Result<Lookup, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         lookup_result(StringResource { handle: unsafe {
-            hew_redis_rpop_len(handle, key, key.len())
+            hew_redis_rpop(handle, key)
         } })
     }
 
@@ -367,7 +367,7 @@ pub actor Conn {
     receive fn hset(key: string, field: string, value: bytes) -> Result<bool, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let added = checked_count(unsafe {
-            hew_redis_hset_len(handle, key, key.len(), field, field.len(), value)
+            hew_redis_hset(handle, key, field, value)
         })?;
         Ok(added == 1)
     }
@@ -376,7 +376,7 @@ pub actor Conn {
     receive fn hget(key: string, field: string) -> Result<Lookup, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         lookup_result(StringResource { handle: unsafe {
-            hew_redis_hget_len(handle, key, key.len(), field, field.len())
+            hew_redis_hget(handle, key, field)
         } })
     }
 
@@ -384,7 +384,7 @@ pub actor Conn {
     receive fn hdel(key: string, field: string) -> Result<bool, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let removed = checked_count(unsafe {
-            hew_redis_hdel_len(handle, key, key.len(), field, field.len())
+            hew_redis_hdel(handle, key, field)
         })?;
         Ok(removed == 1)
     }
@@ -393,7 +393,7 @@ pub actor Conn {
     receive fn hgetall(key: string) -> Result<Vec<HashEntry>, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let result = HashResource { handle: unsafe {
-            hew_redis_hgetall_len_ffi(handle, key, key.len())
+            hew_redis_hgetall(handle, key)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -416,7 +416,7 @@ pub actor Conn {
     receive fn sadd(key: string, member: bytes) -> Result<bool, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let added = checked_count(unsafe {
-            hew_redis_sadd_len(handle, key, key.len(), member)
+            hew_redis_sadd(handle, key, member)
         })?;
         Ok(added == 1)
     }
@@ -425,7 +425,7 @@ pub actor Conn {
     receive fn srem(key: string, member: bytes) -> Result<bool, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let removed = checked_count(unsafe {
-            hew_redis_srem_len(handle, key, key.len(), member)
+            hew_redis_srem(handle, key, member)
         })?;
         Ok(removed == 1)
     }
@@ -434,7 +434,7 @@ pub actor Conn {
     receive fn smembers(key: string) -> Result<Vec<SetMember>, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let result = SetResource { handle: unsafe {
-            hew_redis_smembers_len_ffi(handle, key, key.len())
+            hew_redis_smembers(handle, key)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -457,7 +457,7 @@ pub actor Conn {
     receive fn sismember(key: string, member: bytes) -> Result<bool, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let present = checked_count(unsafe {
-            hew_redis_sismember_len(handle, key, key.len(), member)
+            hew_redis_sismember(handle, key, member)
         })?;
         Ok(present == 1)
     }
@@ -466,7 +466,7 @@ pub actor Conn {
     receive fn publish(channel: string, message: bytes) -> Result<i64, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
-            hew_redis_publish_len(handle, channel, channel.len(), message)
+            hew_redis_publish(handle, channel, message)
         })
     }
 
@@ -474,7 +474,7 @@ pub actor Conn {
     receive fn subscribe_once(channel: string, timeout_ms: i64) -> Result<bytes, RedisError> {
         let handle = connection_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let result = StringResource { handle: unsafe {
-            hew_redis_subscribe_once_len(handle, channel, channel.len(), timeout_ms)
+            hew_redis_subscribe_once(handle, channel, timeout_ms)
         } };
         let status = result.status();
         if status == 1 {
@@ -497,16 +497,16 @@ pub actor Conn {
         for command in commands {
             let status = match command {
                 .Ping => unsafe {
-                    hew_redis_pipeline_add0_len(pipeline.handle, "PING", 4)
+                    hew_redis_pipeline_add0(pipeline.handle, "PING")
                 },
                 .Del(key) => unsafe {
-                    hew_redis_pipeline_add1_len(pipeline.handle, "DEL", 3, key.to_bytes())
+                    hew_redis_pipeline_add1(pipeline.handle, "DEL", key.to_bytes())
                 },
                 .Set(key, value) => unsafe {
-                    hew_redis_pipeline_add2_len(pipeline.handle, "SET", 3, key.to_bytes(), value)
+                    hew_redis_pipeline_add2(pipeline.handle, "SET", key.to_bytes(), value)
                 },
                 .Hset(key, field, value) => unsafe {
-                    hew_redis_pipeline_add3_len(pipeline.handle, "HSET", 4, key.to_bytes(), field.to_bytes(), value)
+                    hew_redis_pipeline_add3(pipeline.handle, "HSET", key.to_bytes(), field.to_bytes(), value)
                 },
             };
             if status < 0 {
@@ -547,42 +547,42 @@ pub actor Conn {
 extern "C" {
     fn hew_redis_last_error_kind() -> i32;
     fn hew_redis_last_error() -> string;
-    fn hew_redis_connect_len(url: string, url_len: i64) -> i64;
+    fn hew_redis_connect(url: string) -> i64;
     fn hew_redis_close(connection: i64);
-    fn hew_redis_set_len(connection: i64, key: string, key_len: i64, value: bytes) -> i64;
-    fn hew_redis_get_len(connection: i64, key: string, key_len: i64) -> i64;
-    fn hew_redis_del_len(connection: i64, key: string, key_len: i64) -> i64;
-    fn hew_redis_set_ex_len(connection: i64, key: string, key_len: i64, value: bytes, ttl: i64) -> i64;
-    fn hew_redis_expire_len(connection: i64, key: string, key_len: i64, ttl: i64) -> i64;
-    fn hew_redis_ttl_len(connection: i64, key: string, key_len: i64) -> i64;
-    fn hew_redis_incr_len(connection: i64, key: string, key_len: i64) -> i64;
-    fn hew_redis_lpush_len(connection: i64, key: string, key_len: i64, value: bytes) -> i64;
-    fn hew_redis_rpop_len(connection: i64, key: string, key_len: i64) -> i64;
-    fn hew_redis_hset_len(connection: i64, key: string, key_len: i64, field: string, field_len: i64, value: bytes) -> i64;
-    fn hew_redis_hget_len(connection: i64, key: string, key_len: i64, field: string, field_len: i64) -> i64;
-    fn hew_redis_hdel_len(connection: i64, key: string, key_len: i64, field: string, field_len: i64) -> i64;
-    fn hew_redis_hgetall_len_ffi(connection: i64, key: string, key_len: i64) -> i64;
+    fn hew_redis_set(connection: i64, key: string, value: bytes) -> i64;
+    fn hew_redis_get(connection: i64, key: string) -> i64;
+    fn hew_redis_del(connection: i64, key: string) -> i64;
+    fn hew_redis_set_ex(connection: i64, key: string, value: bytes, ttl: i64) -> i64;
+    fn hew_redis_expire(connection: i64, key: string, ttl: i64) -> i64;
+    fn hew_redis_ttl(connection: i64, key: string) -> i64;
+    fn hew_redis_incr(connection: i64, key: string) -> i64;
+    fn hew_redis_lpush(connection: i64, key: string, value: bytes) -> i64;
+    fn hew_redis_rpop(connection: i64, key: string) -> i64;
+    fn hew_redis_hset(connection: i64, key: string, field: string, value: bytes) -> i64;
+    fn hew_redis_hget(connection: i64, key: string, field: string) -> i64;
+    fn hew_redis_hdel(connection: i64, key: string, field: string) -> i64;
+    fn hew_redis_hgetall(connection: i64, key: string) -> i64;
     fn hew_redis_hgetall_count(result: i64) -> i64;
     fn hew_redis_hgetall_key(result: i64, index: i64) -> string;
     fn hew_redis_hgetall_value(result: i64, index: i64) -> bytes;
     fn hew_redis_hgetall_free(result: i64);
-    fn hew_redis_sadd_len(connection: i64, key: string, key_len: i64, member: bytes) -> i64;
-    fn hew_redis_srem_len(connection: i64, key: string, key_len: i64, member: bytes) -> i64;
-    fn hew_redis_sismember_len(connection: i64, key: string, key_len: i64, member: bytes) -> i64;
-    fn hew_redis_smembers_len_ffi(connection: i64, key: string, key_len: i64) -> i64;
+    fn hew_redis_sadd(connection: i64, key: string, member: bytes) -> i64;
+    fn hew_redis_srem(connection: i64, key: string, member: bytes) -> i64;
+    fn hew_redis_sismember(connection: i64, key: string, member: bytes) -> i64;
+    fn hew_redis_smembers(connection: i64, key: string) -> i64;
     fn hew_redis_smembers_count(result: i64) -> i64;
     fn hew_redis_smembers_get(result: i64, index: i64) -> bytes;
     fn hew_redis_smembers_free(result: i64);
-    fn hew_redis_publish_len(connection: i64, channel: string, channel_len: i64, message: bytes) -> i64;
-    fn hew_redis_subscribe_once_len(connection: i64, channel: string, channel_len: i64, timeout_ms: i64) -> i64;
+    fn hew_redis_publish(connection: i64, channel: string, message: bytes) -> i64;
+    fn hew_redis_subscribe_once(connection: i64, channel: string, timeout_ms: i64) -> i64;
     fn hew_redis_string_status(result: i64) -> i32;
     fn hew_redis_string_value(result: i64) -> bytes;
     fn hew_redis_string_free(result: i64);
     fn hew_redis_pipeline_new() -> i64;
-    fn hew_redis_pipeline_add0_len(pipeline: i64, command: string, command_len: i64) -> i64;
-    fn hew_redis_pipeline_add1_len(pipeline: i64, command: string, command_len: i64, arg1: bytes) -> i64;
-    fn hew_redis_pipeline_add2_len(pipeline: i64, command: string, command_len: i64, arg1: bytes, arg2: bytes) -> i64;
-    fn hew_redis_pipeline_add3_len(pipeline: i64, command: string, command_len: i64, arg1: bytes, arg2: bytes, arg3: bytes) -> i64;
+    fn hew_redis_pipeline_add0(pipeline: i64, command: string) -> i64;
+    fn hew_redis_pipeline_add1(pipeline: i64, command: string, arg1: bytes) -> i64;
+    fn hew_redis_pipeline_add2(pipeline: i64, command: string, arg1: bytes, arg2: bytes) -> i64;
+    fn hew_redis_pipeline_add3(pipeline: i64, command: string, arg1: bytes, arg2: bytes, arg3: bytes) -> i64;
     fn hew_redis_pipeline_exec(connection: i64, pipeline: i64) -> i64;
     fn hew_redis_pipeline_free(pipeline: i64);
 }
