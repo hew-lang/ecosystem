@@ -171,7 +171,7 @@ pub actor Conn {
 
     init(options: Options) {
         native_handle = unsafe {
-            hew_mqtt_connect_len(options.host, options.host.len(), options.port, options.client_id, options.client_id.len(), options.keepalive_seconds)
+            hew_mqtt_connect(options.host, options.port, options.client_id, options.keepalive_seconds)
         };
         if native_handle == 0 {
             connect_error_kind = unsafe {
@@ -194,7 +194,7 @@ pub actor Conn {
             0
         };
         let status = unsafe {
-            hew_mqtt_publish_len(handle, topic, topic.len(), payload, payload.len(), qos_level(qos), retain_flag)
+            hew_mqtt_publish(handle, topic, payload, qos_level(qos), retain_flag)
         };
         if status == 0 {
             Ok(())
@@ -207,7 +207,7 @@ pub actor Conn {
     receive fn subscribe(topic_filter: string, qos: QoS) -> Result<(), MqttError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let status = unsafe {
-            hew_mqtt_subscribe_len(handle, topic_filter, topic_filter.len(), qos_level(qos))
+            hew_mqtt_subscribe(handle, topic_filter, qos_level(qos))
         };
         if status == 0 {
             Ok(())
@@ -264,9 +264,9 @@ pub actor Conn {
 extern "C" {
     fn hew_mqtt_last_error_kind() -> i32;
     fn hew_mqtt_last_error() -> string;
-    fn hew_mqtt_connect_len(host: string, host_len: i64, port: i64, client_id: string, client_id_len: i64, keepalive_seconds: i64) -> i64;
-    fn hew_mqtt_publish_len(connection: i64, topic: string, topic_len: i64, payload: string, payload_len: i64, qos: i32, retain: i32) -> i32;
-    fn hew_mqtt_subscribe_len(connection: i64, topic_filter: string, topic_filter_len: i64, qos: i32) -> i32;
+    fn hew_mqtt_connect(host: string, port: i64, client_id: string, keepalive_seconds: i64) -> i64;
+    fn hew_mqtt_publish(connection: i64, topic: string, payload: string, qos: i32, retain: i32) -> i32;
+    fn hew_mqtt_subscribe(connection: i64, topic_filter: string, qos: i32) -> i32;
     fn hew_mqtt_next_result(connection: i64, timeout_ms: i64) -> i64;
     fn hew_mqtt_message_topic(message: i64) -> string;
     fn hew_mqtt_message_payload(message: i64) -> string;

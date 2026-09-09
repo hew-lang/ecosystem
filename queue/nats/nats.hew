@@ -161,7 +161,7 @@ impl NativeMessage {
     }
 }
 
-fn snapshot(result: NativeMessage) -> Delivery {
+fn snapshot(consume result: NativeMessage) -> Delivery {
     let reply = result.reply();
     let reply_to = if result.has_reply() {
         ReplyTo.Subject(reply.clone())
@@ -199,7 +199,7 @@ pub actor Conn {
 
     init(options: Options) {
         native_handle = unsafe {
-            hew_nats_connect_len(options.url, options.url.len())
+            hew_nats_connect(options.url)
         };
         if native_handle == 0 {
             connect_error_kind = unsafe {
@@ -217,7 +217,7 @@ pub actor Conn {
     receive fn publish(subject: string, data: string) -> Result<(), NatsError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let status = unsafe {
-            hew_nats_publish_len(handle, subject, subject.len(), data, data.len())
+            hew_nats_publish(handle, subject, data)
         };
         if status == 0 {
             Ok(())
@@ -230,7 +230,7 @@ pub actor Conn {
     receive fn subscribe(subject: string) -> Result<Subscription, NatsError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let subscription = unsafe {
-            hew_nats_subscribe_len(handle, subject, subject.len())
+            hew_nats_subscribe(handle, subject)
         };
         if subscription == 0 {
             Err(native_error())
@@ -251,7 +251,7 @@ pub actor Conn {
     receive fn request(subject: string, data: string, timeout_ms: i64) -> Result<Receive, NatsError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         receive_result(unsafe {
-            hew_nats_request_len(handle, subject, subject.len(), data, data.len(), timeout_ms)
+            hew_nats_request(handle, subject, data, timeout_ms)
         })
     }
 
@@ -262,7 +262,7 @@ pub actor Conn {
             .Missing => Err(NatsError.InvalidInput("NATS message has no reply subject")),
             .Subject(subject) => {
                 let status = unsafe {
-                    hew_nats_reply_len(handle, subject, subject.len(), data, data.len())
+                    hew_nats_reply(handle, subject, data)
                 };
                 if status == 0 {
                     Ok(())
@@ -305,12 +305,12 @@ pub actor Conn {
 extern "C" {
     fn hew_nats_last_error_kind() -> i32;
     fn hew_nats_last_error() -> string;
-    fn hew_nats_connect_len(url: string, url_len: i64) -> i64;
-    fn hew_nats_publish_len(connection: i64, subject: string, subject_len: i64, data: string, data_len: i64) -> i32;
-    fn hew_nats_subscribe_len(connection: i64, subject: string, subject_len: i64) -> i64;
+    fn hew_nats_connect(url: string) -> i64;
+    fn hew_nats_publish(connection: i64, subject: string, data: string) -> i32;
+    fn hew_nats_subscribe(connection: i64, subject: string) -> i64;
     fn hew_nats_next_result(subscription: i64, timeout_ms: i64) -> i64;
-    fn hew_nats_request_len(connection: i64, subject: string, subject_len: i64, data: string, data_len: i64, timeout_ms: i64) -> i64;
-    fn hew_nats_reply_len(connection: i64, reply_subject: string, reply_subject_len: i64, data: string, data_len: i64) -> i32;
+    fn hew_nats_request(connection: i64, subject: string, data: string, timeout_ms: i64) -> i64;
+    fn hew_nats_reply(connection: i64, reply_subject: string, data: string) -> i32;
     fn hew_nats_message_subject(message: i64) -> string;
     fn hew_nats_message_data(message: i64) -> string;
     fn hew_nats_message_reply(message: i64) -> string;

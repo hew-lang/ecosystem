@@ -5,7 +5,6 @@ import hew.queue.mqtt;
 import hew.queue.mqtt.{Options, Receive};
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<mqtt.Conn>);
     fn hew_mqtt_connection_count() -> i64;
     fn hew_mqtt_message_count() -> i64;
 }
@@ -27,14 +26,14 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
         _ => testing.assert_true(false),
     }
     sleep(100ms);
-    match client.publish("hew/integration", "exact payload", mqtt.QoS.AtLeastOnce, false) {
+    match client.publish("hew/integration", "exact payload — 雪の結晶", mqtt.QoS.AtLeastOnce, false) {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
     match client.next_message(3000) {
         .Ok(.Ok(.Message(message))) => {
             testing.assert_eq_str(message.topic, "hew/integration");
-            testing.assert_eq_str(message.payload, "exact payload");
+            testing.assert_eq_str(message.payload, "exact payload — 雪の結晶");
         },
         _ => testing.assert_true(false),
     }
@@ -73,9 +72,7 @@ fn actor_stop_releases_connection_relative_to_registry() {
     testing.assert_eq(unsafe {
         hew_mqtt_connection_count()
     }, previous + 1);
-    unsafe {
-        hew_actor_stop(client)
-    };
+    close(client);
     attempts = 0;
     while unsafe {
         hew_mqtt_connection_count()

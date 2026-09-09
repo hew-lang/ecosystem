@@ -5,7 +5,6 @@ import hew.queue.nats;
 import hew.queue.nats.{NatsError, Receive, ReplyTo, Subscription};
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<nats.Conn>);
     fn hew_nats_connection_count() -> i64;
     fn hew_nats_subscription_count() -> i64;
     fn hew_nats_message_count() -> i64;
@@ -30,14 +29,14 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
         .Ok(.Ok(value)) => value,
         _ => panic("NATS subscribe failed"),
     };
-    match client.publish("hew.integration", "exact payload") {
+    match client.publish("hew.integration", "exact payload — 雪の結晶") {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
     match client.next_message(subscription.clone(), 3000) {
         .Ok(.Ok(.Message(message))) => {
             testing.assert_eq_str(message.subject, "hew.integration");
-            testing.assert_eq_str(message.data, "exact payload");
+            testing.assert_eq_str(message.data, "exact payload — 雪の結晶");
             match message.reply_to {
                 .Missing => {},
                 _ => testing.assert_true(false),
@@ -98,7 +97,9 @@ fn request_reply_preserves_reply_subject_and_payload() {
     };
     let requester = connection();
     let harness = spawn ResponderHarness(responder: responder, subscription: subscription);
-    harness.serve();
+    // Fork the responder's listen-and-reply so it runs concurrently with the
+    // requester's blocking `request`, which needs a live listener to answer.
+    let serving = fork harness.serve();
     match requester.request("hew.request.double", "42", 3000) {
         .Ok(.Ok(.Message(message))) => {
             testing.assert_eq_str(message.data, "84");
@@ -109,6 +110,7 @@ fn request_reply_preserves_reply_subject_and_payload() {
         },
         _ => testing.assert_true(false),
     }
+    let _ = await serving;
     let no_reply = nats.Delivery { subject: "hew.event", data: "value", reply_to: nats.ReplyTo.Missing };
     match requester.reply(no_reply, "ignored") {
         .Ok(.Err(.InvalidInput(message))) => testing.assert_eq_str(message, "NATS message has no reply subject"),
@@ -145,9 +147,7 @@ fn actor_stop_releases_connection_and_subscription_relatively() {
     testing.assert_eq(unsafe {
         hew_nats_subscription_count()
     }, previous_subscriptions + 1);
-    unsafe {
-        hew_actor_stop(client)
-    };
+    close(client);
     var attempts = 0;
     while unsafe {
         hew_nats_connection_count()

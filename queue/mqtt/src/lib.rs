@@ -2,14 +2,14 @@
 //!
 //! Public handles are monotonic registry IDs rather than pointers. Registry
 //! locks protect only metadata: they are released before broker operations or
-//! bounded waits. Every text argument has an explicit byte length and every
-//! returned string points at the base allocation Hew will free.
+//! bounded waits. Strings cross the boundary as managed Hew strings: inbound
+//! handles are borrowed for the call, and returned handles are freshly
+//! allocated owners the caller releases.
 
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use rumqttc::{Client, Event, MqttOptions, Packet, QoS};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::os::raw::c_char;
-use std::slice;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -57,52 +57,6 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
         state.kind = kind;
         state.message = message.into();
     });
-}
-
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: `size` includes a trailing NUL and the allocation is checked.
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    // SAFETY: the destination owns `size` bytes and cannot overlap `value`.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
-
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64, what: &str) -> Option<&'a str> {
-    let Ok(len) = usize::try_from(len) else {
-        set_error(
-            ErrorKind::InvalidInput,
-            format!("{what} length is negative"),
-        );
-        return None;
-    };
-    if value.is_null() {
-        if len == 0 {
-            return Some("");
-        }
-        set_error(ErrorKind::InvalidInput, format!("{what} pointer is null"));
-        return None;
-    }
-    // SAFETY: the caller promises `len` readable bytes at `value`.
-    let bytes = unsafe { slice::from_raw_parts(value.cast::<u8>(), len) };
-    match std::str::from_utf8(bytes) {
-        Ok(text) => Some(text),
-        Err(error) => {
-            set_error(
-                ErrorKind::InvalidInput,
-                format!("{what} is not UTF-8: {error}"),
-            );
-            None
-        }
-    }
 }
 
 fn qos(value: i32) -> Option<QoS> {
@@ -225,30 +179,23 @@ pub extern "C" fn hew_mqtt_last_error_kind() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn hew_mqtt_last_error() -> *mut c_char {
-    LAST_ERROR.with(|state| malloc_c_string(&state.borrow().message))
+pub extern "C" fn hew_mqtt_last_error() -> *mut HewString {
+    LAST_ERROR.with(|state| string_from_str(&state.borrow().message))
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `host` and `client_id` must each be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mqtt_connect_len(
-    host: *const c_char,
-    host_len: i64,
+pub unsafe extern "C" fn hew_mqtt_connect(
+    host: *const HewString,
     port: i64,
-    client_id: *const c_char,
-    client_id_len: i64,
+    client_id: *const HewString,
     keepalive_secs: i64,
 ) -> i64 {
     // SAFETY: required by this function's contract.
-    let Some(host) = (unsafe { utf8_with_len(host, host_len, "MQTT host") }) else {
-        return 0;
-    };
+    let host = unsafe { string_as_str(host) };
     // SAFETY: required by this function's contract.
-    let Some(client_id) = (unsafe { utf8_with_len(client_id, client_id_len, "MQTT client ID") })
-    else {
-        return 0;
-    };
+    let client_id = unsafe { string_as_str(client_id) };
     let Ok(port) = u16::try_from(port) else {
         set_error(
             ErrorKind::InvalidInput,
@@ -325,14 +272,12 @@ pub unsafe extern "C" fn hew_mqtt_connect_len(
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `topic` and `payload` must each be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mqtt_publish_len(
+pub unsafe extern "C" fn hew_mqtt_publish(
     handle: i64,
-    topic: *const c_char,
-    topic_len: i64,
-    payload: *const c_char,
-    payload_len: i64,
+    topic: *const HewString,
+    payload: *const HewString,
     qos_value: i32,
     retain: i32,
 ) -> i32 {
@@ -340,13 +285,9 @@ pub unsafe extern "C" fn hew_mqtt_publish_len(
         return -1;
     };
     // SAFETY: required by this function's contract.
-    let Some(topic) = (unsafe { utf8_with_len(topic, topic_len, "MQTT topic") }) else {
-        return -1;
-    };
+    let topic = unsafe { string_as_str(topic) };
     // SAFETY: required by this function's contract.
-    let Some(payload) = (unsafe { utf8_with_len(payload, payload_len, "MQTT payload") }) else {
-        return -1;
-    };
+    let payload = unsafe { string_as_str(payload) };
     let Some(qos) = qos(qos_value) else {
         return -1;
     };
@@ -369,21 +310,18 @@ pub unsafe extern "C" fn hew_mqtt_publish_len(
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `topic` must be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mqtt_subscribe_len(
+pub unsafe extern "C" fn hew_mqtt_subscribe(
     handle: i64,
-    topic: *const c_char,
-    topic_len: i64,
+    topic: *const HewString,
     qos_value: i32,
 ) -> i32 {
     let Some(connection) = connection(handle) else {
         return -1;
     };
     // SAFETY: required by this function's contract.
-    let Some(topic) = (unsafe { utf8_with_len(topic, topic_len, "MQTT topic filter") }) else {
-        return -1;
-    };
+    let topic = unsafe { string_as_str(topic) };
     let Some(qos) = qos(qos_value) else {
         return -1;
     };
@@ -435,18 +373,18 @@ pub extern "C" fn hew_mqtt_next_result(handle: i64, timeout_ms: i64) -> i64 {
 }
 
 #[no_mangle]
-pub extern "C" fn hew_mqtt_message_topic(handle: i64) -> *mut c_char {
+pub extern "C" fn hew_mqtt_message_topic(handle: i64) -> *mut HewString {
     message(handle).map_or(std::ptr::null_mut(), |message| {
         clear_error();
-        malloc_c_string(&message.topic)
+        string_from_str(&message.topic)
     })
 }
 
 #[no_mangle]
-pub extern "C" fn hew_mqtt_message_payload(handle: i64) -> *mut c_char {
+pub extern "C" fn hew_mqtt_message_payload(handle: i64) -> *mut HewString {
     message(handle).map_or(std::ptr::null_mut(), |message| {
         clear_error();
-        malloc_c_string(String::from_utf8_lossy(&message.payload).as_ref())
+        string_from_str(String::from_utf8_lossy(&message.payload).as_ref())
     })
 }
 
@@ -487,7 +425,22 @@ pub extern "C" fn hew_mqtt_message_count() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
+    use hew_cabi::string::string_release;
+
+    /// Allocate one managed string argument for a boundary call.
+    #[cfg(feature = "integration")]
+    fn managed(value: &str) -> *mut HewString {
+        string_from_str(value)
+    }
+
+    /// Read and release the managed string a boundary call returned.
+    unsafe fn owned_text(value: *mut HewString) -> String {
+        // SAFETY: `value` is the owner a crate entry point just returned.
+        let text = unsafe { string_as_str(value) }.to_owned();
+        // SAFETY: the same owner, released exactly once here.
+        unsafe { string_release(value) };
+        text
+    }
 
     #[test]
     fn invalid_qos_is_rejected() {
@@ -514,11 +467,8 @@ mod tests {
         assert_eq!(hew_mqtt_message_count(), before + 1);
         let topic = hew_mqtt_message_topic(handle);
         assert!(!topic.is_null());
-        // SAFETY: the accessor returns a NUL-terminated base allocation.
-        unsafe {
-            assert_eq!(CStr::from_ptr(topic).to_str().unwrap(), "weather/edmonton");
-            libc::free(topic.cast());
-        }
+        // SAFETY: the accessor just returned this owner.
+        assert_eq!(unsafe { owned_text(topic) }, "weather/edmonton");
         hew_mqtt_message_free(handle);
         hew_mqtt_message_free(handle);
         assert_eq!(hew_mqtt_message_count(), before);
@@ -534,37 +484,24 @@ mod tests {
         hew_mqtt_close(i64::MAX);
     }
 
-    #[test]
-    fn invalid_utf8_input_is_typed() {
-        let bytes = [0xff_u8];
-        // SAFETY: the one-byte buffer is readable for the call.
-        assert!(unsafe { utf8_with_len(bytes.as_ptr().cast(), 1, "topic") }.is_none());
-        assert_eq!(hew_mqtt_last_error_kind(), ErrorKind::InvalidInput as i32);
-    }
-
     #[cfg(feature = "integration")]
     fn connect() -> i64 {
         static NEXT_ID: AtomicI64 = AtomicI64::new(1);
-        let host = "127.0.0.1";
-        let id = format!("hew-mqtt-test-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
-        // SAFETY: pointer/length pairs borrow valid Rust strings for this call.
-        let handle = unsafe {
-            hew_mqtt_connect_len(
-                host.as_ptr().cast(),
-                i64::try_from(host.len()).expect("host length fits in i64"),
-                11883,
-                id.as_ptr().cast(),
-                i64::try_from(id.len()).expect("client id length fits in i64"),
-                30,
-            )
-        };
+        let host = managed("127.0.0.1");
+        let id = managed(&format!(
+            "hew-mqtt-test-{}",
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        // SAFETY: `host` and `client_id` are live managed strings for the call.
+        let handle = unsafe { hew_mqtt_connect(host, 11883, id, 30) };
+        // SAFETY: this test owns both handles.
+        unsafe {
+            string_release(host);
+            string_release(id);
+        }
         assert_ne!(handle, 0, "MQTT broker is unavailable: {}", unsafe {
-            // SAFETY: `hew_mqtt_last_error` returns a NUL-terminated base allocation
-            // owned by the caller; it is freed immediately after being copied.
-            let error = hew_mqtt_last_error();
-            let value = CStr::from_ptr(error).to_string_lossy().into_owned();
-            libc::free(error.cast());
-            value
+            // SAFETY: `hew_mqtt_last_error` just returned this owner.
+            owned_text(hew_mqtt_last_error())
         });
         handle
     }
@@ -575,37 +512,29 @@ mod tests {
         let before_connections = hew_mqtt_connection_count();
         let before_messages = hew_mqtt_message_count();
         let handle = connect();
+        // A payload over 16 bytes with non-ASCII characters exercises the
+        // exact managed-string round trip rather than a short ASCII stand-in.
         let topic = format!("hew/tests/{handle}");
-        let payload = "hello mqtt";
-        let topic_len = i64::try_from(topic.len()).expect("topic length fits in i64");
-        let payload_len = i64::try_from(payload.len()).expect("payload length fits in i64");
-        // SAFETY: all pointer/length pairs borrow valid strings.
+        let payload = "hello mqtt — 雪の結晶";
+        let topic_arg = managed(&topic);
+        let payload_arg = managed(payload);
+        // SAFETY: `topic_arg` is a live managed string for the call.
+        assert_eq!(unsafe { hew_mqtt_subscribe(handle, topic_arg, 1) }, 0);
+        std::thread::sleep(Duration::from_millis(100));
+        // SAFETY: `topic_arg` and `payload_arg` are live managed strings.
+        let status = unsafe { hew_mqtt_publish(handle, topic_arg, payload_arg, 1, 0) };
+        assert_eq!(status, 0);
+        // SAFETY: this test owns both handles.
         unsafe {
-            assert_eq!(
-                hew_mqtt_subscribe_len(handle, topic.as_ptr().cast(), topic_len, 1),
-                0
-            );
-            std::thread::sleep(Duration::from_millis(100));
-            assert_eq!(
-                hew_mqtt_publish_len(
-                    handle,
-                    topic.as_ptr().cast(),
-                    topic_len,
-                    payload.as_ptr().cast(),
-                    payload_len,
-                    1,
-                    0,
-                ),
-                0
-            );
+            string_release(topic_arg);
+            string_release(payload_arg);
         }
         let message = hew_mqtt_next_result(handle, 3000);
         assert_ne!(message, 0);
-        let value = hew_mqtt_message_payload(message);
-        // SAFETY: accessor returns a NUL-terminated base allocation.
+        // SAFETY: the accessors just returned these owners.
         unsafe {
-            assert_eq!(CStr::from_ptr(value).to_str().unwrap(), payload);
-            libc::free(value.cast());
+            assert_eq!(owned_text(hew_mqtt_message_topic(message)), topic);
+            assert_eq!(owned_text(hew_mqtt_message_payload(message)), payload);
         }
         hew_mqtt_message_free(message);
         hew_mqtt_close(handle);
