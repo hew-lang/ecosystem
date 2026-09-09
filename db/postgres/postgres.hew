@@ -112,7 +112,7 @@ impl NativeResult {
     }
 }
 
-fn collect_result(result: NativeResult) -> Result<QueryResult, PostgresError> {
+fn collect_result(consume result: NativeResult) -> Result<QueryResult, PostgresError> {
     let row_count = result.row_count();
     let column_count = result.column_count();
     if row_count < 0 || column_count < 0 {

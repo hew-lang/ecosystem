@@ -5,7 +5,6 @@ import hew.db.sqlite;
 import hew.db.sqlite.{SqliteError, CellValue};
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<sqlite.Db>);
     fn hew_sqlite_connection_count() -> i64;
 }
 
@@ -24,7 +23,7 @@ fn invalid_utf8() -> bytes {
 }
 
 fn insert_params() -> bytes {
-    let value = "1\n".to_bytes();
+    var value = "1\n".to_bytes();
     value.append(nul_value());
     value
 }
@@ -166,9 +165,7 @@ fn explicit_actor_stop_releases_connection() {
     };
     testing.assert_true(previous >= 0);
     let db = actor_without_close(previous);
-    unsafe {
-        hew_actor_stop(db);
-    };
+    close(db);
     var attempts = 0;
     while unsafe {
         hew_sqlite_connection_count()
