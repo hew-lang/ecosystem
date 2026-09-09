@@ -212,7 +212,7 @@ pub actor Client {
     var closed: bool = false,
     init(client_id: string, client_secret: string) {
         handle = unsafe {
-            hew_oauth_new(client_id, client_id.len(), client_secret, client_secret.len())
+            hew_oauth_new(client_id, client_secret)
         };
     }
 
@@ -225,7 +225,7 @@ pub actor Client {
             return Err(OAuthError.InvalidInput("token URL must not be empty"));
         }
         token_result(unsafe {
-            hew_oauth_client_credentials(client, token_url, token_url.len(), oauth_scope, oauth_scope.len())
+            hew_oauth_client_credentials(client, token_url, oauth_scope)
         })
     }
 
@@ -238,7 +238,7 @@ pub actor Client {
             return Err(OAuthError.InvalidInput("authorization and redirect URLs must not be empty"));
         }
         let value = unsafe {
-            hew_oauth_auth_url(client, auth_url, auth_url.len(), redirect_uri, redirect_uri.len(), oauth_scope, oauth_scope.len(), state, state.len())
+            hew_oauth_auth_url(client, auth_url, redirect_uri, oauth_scope, state)
         };
         if value.is_empty() {
             Err(OAuthError.Internal("authorization URL generation failed"))
@@ -280,7 +280,7 @@ pub actor Client {
             return Err(OAuthError.InvalidInput("callback state must not be empty"));
         }
         Ok(unsafe {
-            hew_oauth_validate_state(client, callback_state, callback_state.len())
+            hew_oauth_validate_state(client, callback_state)
         } == 1)
     }
 
@@ -288,7 +288,7 @@ pub actor Client {
     receive fn exchange_code(token_url: string, code: string, redirect_uri: string) -> Result<Token, OAuthError> {
         let client = live_handle(closed, handle)?;
         token_result(unsafe {
-            hew_oauth_exchange_code(client, token_url, token_url.len(), code, code.len(), redirect_uri, redirect_uri.len())
+            hew_oauth_exchange_code(client, token_url, code, redirect_uri)
         })
     }
 
@@ -299,7 +299,7 @@ pub actor Client {
             return Err(OAuthError.InvalidInput("PKCE verifier must not be empty"));
         }
         token_result(unsafe {
-            hew_oauth_exchange_code_with_verifier(client, token_url, token_url.len(), code, code.len(), redirect_uri, redirect_uri.len(), code_verifier, code_verifier.len())
+            hew_oauth_exchange_code_with_verifier(client, token_url, code, redirect_uri, code_verifier)
         })
     }
 
@@ -310,7 +310,7 @@ pub actor Client {
             return Err(OAuthError.InvalidInput("refresh token must not be empty"));
         }
         token_result(unsafe {
-            hew_oauth_refresh(client, token_url, token_url.len(), refresh_token, refresh_token.len())
+            hew_oauth_refresh(client, token_url, refresh_token)
         })
     }
 
@@ -337,15 +337,15 @@ pub actor Client {
 
 // ── FFI bindings (implementation detail) ──────────────────────────────
 extern "C" {
-    fn hew_oauth_new(client_id: string, client_id_len: i64, client_secret: string, client_secret_len: i64) -> i64;
-    fn hew_oauth_client_credentials(client: i64, token_url: string, token_url_len: i64, oauth_scope: string, oauth_scope_len: i64) -> Token;
-    fn hew_oauth_auth_url(client: i64, auth_url: string, auth_url_len: i64, redirect_uri: string, redirect_uri_len: i64, oauth_scope: string, oauth_scope_len: i64, state: string, state_len: i64) -> string;
+    fn hew_oauth_new(client_id: string, client_secret: string) -> i64;
+    fn hew_oauth_client_credentials(client: i64, token_url: string, oauth_scope: string) -> Token;
+    fn hew_oauth_auth_url(client: i64, auth_url: string, redirect_uri: string, oauth_scope: string, state: string) -> string;
     fn hew_oauth_current_state(client: i64) -> string;
     fn hew_oauth_current_code_verifier(client: i64) -> string;
-    fn hew_oauth_validate_state(client: i64, callback_state: string, callback_state_len: i64) -> i32;
-    fn hew_oauth_exchange_code(client: i64, token_url: string, token_url_len: i64, code: string, code_len: i64, redirect_uri: string, redirect_uri_len: i64) -> Token;
-    fn hew_oauth_exchange_code_with_verifier(client: i64, token_url: string, token_url_len: i64, code: string, code_len: i64, redirect_uri: string, redirect_uri_len: i64, code_verifier: string, code_verifier_len: i64) -> Token;
-    fn hew_oauth_refresh(client: i64, token_url: string, token_url_len: i64, refresh_token: string, refresh_token_len: i64) -> Token;
+    fn hew_oauth_validate_state(client: i64, callback_state: string) -> i32;
+    fn hew_oauth_exchange_code(client: i64, token_url: string, code: string, redirect_uri: string) -> Token;
+    fn hew_oauth_exchange_code_with_verifier(client: i64, token_url: string, code: string, redirect_uri: string, code_verifier: string) -> Token;
+    fn hew_oauth_refresh(client: i64, token_url: string, refresh_token: string) -> Token;
     fn hew_oauth_token_access_token(token: Token) -> string;
     fn hew_oauth_token_is_ok(token: Token) -> i32;
     fn hew_oauth_token_error_status(token: Token) -> i64;
