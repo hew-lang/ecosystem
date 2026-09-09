@@ -71,9 +71,7 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
 actor ResponderHarness {
     let responder: LocalPid<nats.Conn>,
     let subscription: Subscription,
-
     init(responder: LocalPid<nats.Conn>, subscription: Subscription) {}
-
     receive fn serve() {
         match responder.next_message(subscription.clone(), 3000) {
             .Ok(.Ok(.Message(message))) => {

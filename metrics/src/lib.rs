@@ -443,7 +443,13 @@ pub unsafe extern "C" fn hew_metrics_histogram_vec_new(
     // SAFETY: forwards this function's own safety precondition unchanged to
     // `hew_metrics_histogram_vec_with_buckets`.
     unsafe {
-        hew_metrics_histogram_vec_with_buckets(reg_handle, name, help, label_names, std::ptr::null())
+        hew_metrics_histogram_vec_with_buckets(
+            reg_handle,
+            name,
+            help,
+            label_names,
+            std::ptr::null(),
+        )
     }
 }
 
@@ -1116,7 +1122,8 @@ mod tests {
         for index in 0..MAX_SERIES_PER_METRIC {
             let value = managed(&index.to_string());
             // SAFETY: `value` is a live managed string for the call.
-            assert_eq!(unsafe { hew_metrics_counter_vec_inc(reg, metric, value) }, 0);
+            let incremented = unsafe { hew_metrics_counter_vec_inc(reg, metric, value) };
+            assert_eq!(incremented, 0);
             // SAFETY: this test module owns `value`.
             unsafe { string_release(value) };
         }

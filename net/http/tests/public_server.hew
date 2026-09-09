@@ -409,10 +409,7 @@ fn round_trips_long_percent_encoded_text() {
     }
     match server.url_decode("bad%2") {
         .Ok(result) => match result {
-            .Err(error) => assert_eq(
-                http.error_message(error),
-                "decode failed: incomplete percent escape at byte 3",
-            ),
+            .Err(error) => assert_eq(http.error_message(error), "decode failed: incomplete percent escape at byte 3"),
             .Ok(_) => panic("expected Decode for a truncated escape"),
         },
         .Err(_) => panic("server actor stopped during malformed decode"),

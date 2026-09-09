@@ -4,9 +4,9 @@
 //! triple, and every opaque value lives in an idempotent handle registry.
 //! Registry locks are released before any blocking HTTP operation begins.
 
-use hew_cabi::string::{string_as_str, string_from_str, HewString};
 #[cfg(test)]
 use hew_cabi::string::string_release;
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use rusty_s3::S3Action as _;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -624,12 +624,12 @@ pub unsafe extern "C" fn hew_s3_list(handle: i64, prefix: *const HewString) -> i
                 return 0;
             }
         };
-        entries.extend(
-            response
-                .contents
-                .into_iter()
-                .map(|v| (percent_decode(&v.key), i64::try_from(v.size).unwrap_or(i64::MAX))),
-        );
+        entries.extend(response.contents.into_iter().map(|v| {
+            (
+                percent_decode(&v.key),
+                i64::try_from(v.size).unwrap_or(i64::MAX),
+            )
+        }));
         match response.next_continuation_token {
             Some(token) if !token.is_empty() => continuation = Some(token),
             _ => break,
@@ -767,8 +767,7 @@ mod tests {
         let secret_key = string_from_str("minioadmin");
         // SAFETY: every argument is a live managed Hew string, satisfying
         // hew_s3_connect's contract.
-        let handle =
-            unsafe { hew_s3_connect(endpoint, region, bucket, access_key, secret_key) };
+        let handle = unsafe { hew_s3_connect(endpoint, region, bucket, access_key, secret_key) };
         // SAFETY: each handle was produced by string_from_str above and is
         // still owned by this function; the callee never releases inbound
         // handles.

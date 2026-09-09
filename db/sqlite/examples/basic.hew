@@ -1,4 +1,5 @@
 import hew.db.sqlite;
+
 import std.encoding.utf8;
 
 fn main() {

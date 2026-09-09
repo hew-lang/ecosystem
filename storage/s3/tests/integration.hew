@@ -4,6 +4,7 @@
 // tests/integration.hew. This file also needs a live S3-compatible
 // endpoint (e.g. MinIO on 127.0.0.1:9000).
 import std.testing;
+
 import std.encoding.utf8;
 
 import hew.storage.s3;

@@ -1,5 +1,7 @@
 import std.fs;
+
 import std.os;
+
 import std.testing;
 
 import hew.image.magick;
@@ -86,7 +88,6 @@ fn transformations_cover_public_surface() {
 fn long_unicode_path_round_trips_a_written_image() {
     let path = scratch_path("magick-héllo-wörld-très-longue-imagé.png");
     let _ = fs.delete(path);
-
     let image = spawn magick.Image(source: Source.Blank(48, 32, "#3366cc"));
     match image.write(path) {
         .Ok(result) => assert_ok_i64(result),
@@ -95,7 +96,6 @@ fn long_unicode_path_round_trips_a_written_image() {
     let _ = image.close();
     sleep(20ms);
     testing.assert_true(fs.exists(path));
-
     let reopened = spawn magick.Image(source: Source.File(path));
     match reopened.width() {
         .Ok(.Ok(value)) => testing.assert_eq(value as i64, 48),
@@ -120,7 +120,6 @@ fn missing_file_error_carries_the_path() {
     let path = scratch_path("magick-manquant-wörld-très-longue.png");
     let _ = fs.delete(path);
     testing.assert_true(!fs.exists(path));
-
     let missing = spawn magick.Image(source: Source.File(path));
     match missing.width() {
         .Ok(.Err(error)) => testing.assert_true(magick.error_message(error).contains(path)),
@@ -138,7 +137,6 @@ fn invalid_inputs_return_typed_errors() {
     }
     let _ = image.close();
     sleep(20ms);
-
     let rejected = spawn magick.Image(source: Source.Blank(10, 10, "pas-une-couleur"));
     match rejected.width() {
         .Ok(.Err(.InvalidInput(message))) => {
