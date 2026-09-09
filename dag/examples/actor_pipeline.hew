@@ -31,17 +31,11 @@ actor Stage {
     }
 }
 
-extern "C" {
-    fn hew_actor_stop(pid: LocalPid<Stage>);
-}
-
 // Stop every stage spawned for a run. The driver calls this on both successful
 // completion and every failure path after the stage vector exists.
 fn stop_stages(stages: Vec<LocalPid<Stage>>) {
-    for i in 0 .. stages.len() {
-        unsafe {
-            hew_actor_stop(stages[i]);
-        }
+    for stage in stages {
+        close(stage);
     }
 }
 
