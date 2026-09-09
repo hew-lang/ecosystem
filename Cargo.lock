@@ -1100,6 +1100,7 @@ dependencies = [
 name = "hew-ecosystem-db-mongodb"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "mongodb",
  "serde_json",
@@ -1110,6 +1111,7 @@ dependencies = [
 name = "hew-ecosystem-db-mysql"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "mysql",
 ]
@@ -1118,6 +1120,7 @@ dependencies = [
 name = "hew-ecosystem-db-postgres"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "postgres",
 ]
@@ -1126,6 +1129,7 @@ dependencies = [
 name = "hew-ecosystem-db-redis"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "redis",
  "serial_test",
@@ -1162,6 +1166,7 @@ dependencies = [
 name = "hew-ecosystem-net-http"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "httparse",
  "libc",
 ]
