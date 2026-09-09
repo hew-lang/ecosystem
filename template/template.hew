@@ -39,6 +39,7 @@
 
 import std.string;
 
+import std.encoding.utf8;
 import std.testing;
 
 /// HTML-escape a string so it is safe to embed in HTML content or attributes.
@@ -64,7 +65,7 @@ pub fn escape(s: string) -> string {
 /// Unknown keys are replaced with an empty string.
 pub fn render(tmpl: string, ctx: string) -> string {
     let vars = parse_context(ctx);
-    let rendered: bytes = bytes.new();
+    var rendered: bytes = bytes.new();
     let template_len = tmpl.len();
     var cursor = 0;
     while cursor < template_len {
@@ -72,7 +73,7 @@ pub fn render(tmpl: string, ctx: string) -> string {
             .Some(index) => index,
             .None => {
                 rendered.append(tmpl.slice(cursor, template_len).to_bytes());
-                return rendered.to_string();
+                return utf8.decode_lossy(rendered);
             },
         };
         rendered.append(tmpl.slice(cursor, opening).to_bytes());
@@ -91,7 +92,7 @@ pub fn render(tmpl: string, ctx: string) -> string {
             .Some(index) => index,
             .None => {
                 rendered.append(tmpl.slice(opening, template_len).to_bytes());
-                return rendered.to_string();
+                return utf8.decode_lossy(rendered);
             },
         };
         let key = tmpl.slice(key_start, closing);
@@ -107,11 +108,11 @@ pub fn render(tmpl: string, ctx: string) -> string {
         rendered.append(substitution.to_bytes());
         cursor = closing + closing_len;
     }
-    rendered.to_string()
+    utf8.decode_lossy(rendered)
 }
 
 fn parse_context(ctx: string) -> HashMap<string, string> {
-    let vars: HashMap<string, string> = HashMap.new();
+    var vars: HashMap<string, string> = HashMap.new();
     if ctx.is_empty() {
         return vars;
     }

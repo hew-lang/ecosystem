@@ -32,17 +32,17 @@
 #[wire]
 pub enum MqttError {
     /// The broker could not be reached or the connection was lost.
-    Connection(string);
+    Connection(string),
     /// An option, topic, QoS level, payload, or timeout was invalid.
-    InvalidInput(string);
+    InvalidInput(string),
     /// The broker or client rejected an operation.
-    Operation(string);
+    Operation(string),
     /// A bounded operation failed because its deadline elapsed.
-    Timeout(string);
+    Timeout(string),
     /// The actor or native handle is already closed.
-    Closed(string);
+    Closed(string),
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string),
 }
 
 /// Return the diagnostic carried by an MQTT error.
@@ -60,11 +60,11 @@ pub fn error_message(error: MqttError) -> string {
 #[wire]
 pub enum QoS {
     /// Deliver at most once (MQTT QoS 0).
-    AtMostOnce;
+    AtMostOnce,
     /// Deliver at least once (MQTT QoS 1).
-    AtLeastOnce;
+    AtLeastOnce,
     /// Deliver exactly once (MQTT QoS 2).
-    ExactlyOnce;
+    ExactlyOnce,
 }
 
 /// Parse a numeric MQTT QoS level without a fail-open default.
@@ -102,9 +102,9 @@ pub type Delivery {
 #[wire]
 pub enum Receive {
     /// No message arrived before the deadline.
-    Missing;
+    Missing,
     /// A complete message arrived.
-    Message(Delivery);
+    Message(Delivery),
 }
 
 fn native_error_from(kind: i32, message: string) -> MqttError {
@@ -139,7 +139,7 @@ fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: stri
 
 #[resource]
 type NativeMessage {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativeMessage {
@@ -155,7 +155,7 @@ impl NativeMessage {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_mqtt_message_free(self.handle)
         };
@@ -164,10 +164,10 @@ impl NativeMessage {
 
 /// An actor that owns and serializes one MQTT connection.
 pub actor Conn {
-    var native_handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var native_handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(options: Options) {
         native_handle = unsafe {
