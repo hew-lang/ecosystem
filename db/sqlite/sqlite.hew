@@ -1,12 +1,14 @@
 //! Actor-owned SQLite client with typed query results.
 
+import std.encoding.utf8;
+
 #[wire]
 pub enum SqliteError {
-    Open(string);
-    InvalidInput(string);
-    Query(string);
-    Closed(string);
-    Internal(string);
+    Open(string),
+    InvalidInput(string),
+    Query(string),
+    Closed(string),
+    Internal(string),
 }
 
 pub fn error_message(error: SqliteError) -> string {
@@ -21,8 +23,8 @@ pub fn error_message(error: SqliteError) -> string {
 
 #[wire]
 pub enum CellValue {
-    Null;
-    Text(bytes);
+    Null,
+    Text(bytes),
 }
 
 #[wire]
@@ -69,7 +71,7 @@ fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: 
 
 #[resource]
 type NativeResult {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativeResult {
@@ -103,14 +105,14 @@ impl NativeResult {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_sqlite_result_free(self.handle)
         };
     }
 }
 
-fn collect_result(result: NativeResult) -> Result<QueryResult, SqliteError> {
+fn collect_result(consume result: NativeResult) -> Result<QueryResult, SqliteError> {
     let row_count = result.row_count();
     let column_count = result.column_count();
     if row_count < 0 || column_count < 0 {
@@ -118,14 +120,14 @@ fn collect_result(result: NativeResult) -> Result<QueryResult, SqliteError> {
         result.close();
         return Err(error);
     }
-    let columns: Vec<string> = Vec.new();
+    var columns: Vec<string> = Vec.new();
     for column in 0 .. column_count {
         let value = result.column(column);
-        columns.push(value.to_string());
+        columns.push(utf8.decode_lossy(value));
     }
-    let rows: Vec<Row> = Vec.new();
+    var rows: Vec<Row> = Vec.new();
     for row in 0 .. row_count {
-        let values: Vec<CellValue> = Vec.new();
+        var values: Vec<CellValue> = Vec.new();
         for column in 0 .. column_count {
             match result.cell_kind(row, column) {
                 0 => values.push(CellValue.Null),
@@ -148,14 +150,14 @@ fn collect_result(result: NativeResult) -> Result<QueryResult, SqliteError> {
 
 /// An actor that owns and serializes one SQLite connection.
 pub actor Db {
-    var handle: i64 = 0;
-    var open_error_kind: i32 = 0;
-    var open_error_message: string = "";
-    var closed: bool = false;
+    var handle: i64 = 0,
+    var open_error_kind: i32 = 0,
+    var open_error_message: string = "",
+    var closed: bool = false,
 
     init(path: string) {
         handle = unsafe {
-            hew_sqlite_open_len(path, path.len())
+            hew_sqlite_open(path)
         };
         if handle == 0 {
             open_error_kind = unsafe {
@@ -170,7 +172,7 @@ pub actor Db {
     receive fn execute(sql: string) -> Result<i64, SqliteError> {
         let connection = connection_handle(closed, handle, open_error_kind, open_error_message.clone())?;
         let affected = unsafe {
-            hew_sqlite_execute_len(connection, sql, sql.len())
+            hew_sqlite_execute(connection, sql)
         };
         if unsafe {
             hew_sqlite_last_error_kind()
@@ -184,7 +186,7 @@ pub actor Db {
     receive fn execute_params(sql: string, params: bytes) -> Result<i64, SqliteError> {
         let connection = connection_handle(closed, handle, open_error_kind, open_error_message.clone())?;
         let affected = unsafe {
-            hew_sqlite_execute_params_len(connection, sql, sql.len(), params)
+            hew_sqlite_execute_params(connection, sql, params)
         };
         if unsafe {
             hew_sqlite_last_error_kind()
@@ -198,7 +200,7 @@ pub actor Db {
     receive fn query(sql: string) -> Result<QueryResult, SqliteError> {
         let connection = connection_handle(closed, handle, open_error_kind, open_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_sqlite_query_len(connection, sql, sql.len())
+            hew_sqlite_query(connection, sql)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -209,7 +211,7 @@ pub actor Db {
     receive fn query_params(sql: string, params: bytes) -> Result<QueryResult, SqliteError> {
         let connection = connection_handle(closed, handle, open_error_kind, open_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_sqlite_query_params_len(connection, sql, sql.len(), params)
+            hew_sqlite_query_params(connection, sql, params)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -239,11 +241,11 @@ pub actor Db {
 }
 
 extern "C" {
-    fn hew_sqlite_open_len(path: string, path_len: i64) -> i64;
-    fn hew_sqlite_execute_len(connection: i64, sql: string, sql_len: i64) -> i64;
-    fn hew_sqlite_execute_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
-    fn hew_sqlite_query_len(connection: i64, sql: string, sql_len: i64) -> i64;
-    fn hew_sqlite_query_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
+    fn hew_sqlite_open(path: string) -> i64;
+    fn hew_sqlite_execute(connection: i64, sql: string) -> i64;
+    fn hew_sqlite_execute_params(connection: i64, sql: string, params: bytes) -> i64;
+    fn hew_sqlite_query(connection: i64, sql: string) -> i64;
+    fn hew_sqlite_query_params(connection: i64, sql: string, params: bytes) -> i64;
     fn hew_sqlite_result_rows(result: i64) -> i64;
     fn hew_sqlite_result_cols(result: i64) -> i64;
     fn hew_sqlite_result_column(result: i64, index: i64) -> bytes;

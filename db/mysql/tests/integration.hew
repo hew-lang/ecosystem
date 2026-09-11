@@ -5,12 +5,15 @@ import hew.db.mysql;
 import hew.db.mysql.{MysqlError, CellValue};
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<mysql.Conn>);
     fn hew_mysql_connection_count() -> i64;
 }
 
+fn unicode_text() -> string {
+    "Répertoire des requêtes traitées — 雪"
+}
+
 fn nul_value() -> bytes {
-    let value: bytes = bytes.new();
+    var value: bytes = bytes.new();
     value.push(65);
     value.push(0);
     value.push(66);
@@ -18,13 +21,13 @@ fn nul_value() -> bytes {
 }
 
 fn invalid_utf8() -> bytes {
-    let value: bytes = bytes.new();
+    var value: bytes = bytes.new();
     value.push(255);
     value
 }
 
 fn insert_params() -> bytes {
-    let value = "1\n".to_bytes();
+    var value = "1\n".to_bytes();
     value.append(nul_value());
     value
 }
@@ -56,29 +59,36 @@ fn expect_query_error<T>(result: Result<T, MysqlError>) {
     }
 }
 
+fn expect_query_error_reporting<T>(result: Result<T, MysqlError>, expected: string) {
+    match result {
+        .Err(.Query(message)) => testing.assert_true(message.contains(expected)),
+        _ => testing.assert_true(false),
+    }
+}
+
 fn connection() -> LocalPid<mysql.Conn> {
     spawn mysql.Conn(url: "mysql://hew:hew@127.0.0.1:3306/hew_test")
 }
 
 fn query_snapshot_preserves_values_null_empty_and_nul() {
     let db = connection();
-    match await db.execute("DROP TABLE IF EXISTS hew_sql_beta") {
+    match db.execute("DROP TABLE IF EXISTS hew_sql_beta") {
         .Ok(result) => expect_count(result, 0),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.execute("CREATE TABLE hew_sql_beta (id BIGINT PRIMARY KEY, value TEXT NULL)") {
+    match db.execute("CREATE TABLE hew_sql_beta (id BIGINT PRIMARY KEY, value TEXT NULL)") {
         .Ok(result) => expect_count(result, 0),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.execute_params("INSERT INTO hew_sql_beta VALUES (?, ?)", insert_params()) {
+    match db.execute_params("INSERT INTO hew_sql_beta VALUES (?, ?)", insert_params()) {
         .Ok(result) => expect_count(result, 1),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.execute("INSERT INTO hew_sql_beta VALUES (2, ''), (3, NULL)") {
+    match db.execute("INSERT INTO hew_sql_beta VALUES (2, ''), (3, NULL)") {
         .Ok(result) => expect_count(result, 2),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.query("SELECT id, value FROM hew_sql_beta ORDER BY id") {
+    match db.query("SELECT id, value FROM hew_sql_beta ORDER BY id") {
         .Ok(.Ok(query)) => {
             testing.assert_eq(query.columns.len(), 2);
             testing.assert_eq(query.rows.len(), 3);
@@ -97,7 +107,7 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
         },
         _ => testing.assert_true(false),
     }
-    match await db.query_params("SELECT value FROM hew_sql_beta WHERE id = ?", "1".to_bytes()) {
+    match db.query_params("SELECT value FROM hew_sql_beta WHERE id = ?", "1".to_bytes()) {
         .Ok(.Ok(query)) => {
             testing.assert_eq(query.rows.len(), 1);
             match query.rows[0].values[0] {
@@ -107,9 +117,19 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
         },
         _ => testing.assert_true(false),
     }
-    match await db.query("SELECT X'FF00' AS binary_value") {
+    match db.query("SELECT 'Répertoire des requêtes traitées — 雪' AS value") {
         .Ok(.Ok(query)) => {
-            let expected: bytes = bytes.new();
+            testing.assert_eq(query.rows.len(), 1);
+            match query.rows[0].values[0] {
+                .Text(value) => assert_bytes(value, unicode_text().to_bytes()),
+                _ => testing.assert_true(false),
+            }
+        },
+        _ => testing.assert_true(false),
+    }
+    match db.query("SELECT X'FF00' AS binary_value") {
+        .Ok(.Ok(query)) => {
+            var expected: bytes = bytes.new();
             expected.push(255);
             expected.push(0);
             match query.rows[0].values[0] {
@@ -124,20 +144,24 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
 
 fn actual_database_failures_are_typed() {
     let db = connection();
-    match await db.execute("NOT SQL") {
+    match db.execute("NOT SQL") {
         .Ok(result) => expect_query_error(result),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.query("SELECT * FROM table_that_does_not_exist") {
+    match db.query("SELECT * FROM table_that_does_not_exist") {
         .Ok(result) => expect_query_error(result),
         .Err(_) => testing.assert_true(false),
     }
-    match await db.query_params("SELECT ?", invalid_utf8()) {
+    match db.query("SELECT * FROM répertoire_des_requêtes_雪") {
+        .Ok(result) => expect_query_error_reporting(result, "répertoire_des_requêtes_雪"),
+        .Err(_) => testing.assert_true(false),
+    }
+    match db.query_params("SELECT ?", invalid_utf8()) {
         .Ok(.Err(.InvalidInput(message))) => testing.assert_true(!message.is_empty()),
         _ => testing.assert_true(false),
     }
     let _ = db.close();
-    match await db.query("SELECT 1") {
+    match db.query("SELECT 1") {
         .Ok(.Err(.Closed(_))) => testing.assert_true(true),
         _ => testing.assert_true(false),
     }
@@ -145,7 +169,7 @@ fn actual_database_failures_are_typed() {
 
 fn actor_without_close(previous: i64) -> LocalPid<mysql.Conn> {
     let db = connection();
-    match await db.query("SELECT 1") {
+    match db.query("SELECT 1") {
         .Ok(.Ok(_)) => testing.assert_true(true),
         _ => testing.assert_true(false),
     }
@@ -161,9 +185,7 @@ fn explicit_actor_stop_releases_connection() {
     };
     testing.assert_true(previous >= 0);
     let db = actor_without_close(previous);
-    unsafe {
-        hew_actor_stop(db);
-    };
+    close(db);
     var attempts = 0;
     while unsafe {
         hew_mysql_connection_count()

@@ -5,12 +5,12 @@
 
 #[wire]
 pub enum MagickError {
-    InvalidInput(string);
-    Decode(string);
-    Transform(string);
-    Io(string);
-    Closed(string);
-    Internal(string);
+    InvalidInput(string),
+    Decode(string),
+    Transform(string),
+    Io(string),
+    Closed(string),
+    Internal(string),
 }
 
 /// Return the diagnostic carried by an image error.
@@ -27,9 +27,9 @@ pub fn error_message(error: MagickError) -> string {
 
 #[wire]
 pub enum Source {
-    File(string);
-    Blob(bytes);
-    Blank(i32, i32, string);
+    File(string),
+    Blob(bytes),
+    Blank(i32, i32, string),
 }
 
 fn native_error_from(kind: i32, message: string) -> MagickError {
@@ -72,31 +72,29 @@ fn operation(status: i32) -> Result<i64, MagickError> {
 
 /// A mailbox-serialized owner of one ImageMagick image.
 pub actor Image {
-    var native_handle: i64 = 0;
-    var init_error_kind: i32 = 0;
-    var init_error_message: string = "";
-    var closed: bool = false;
+    var native_handle: i64 = 0,
+    var init_error_kind: i32 = 0,
+    var init_error_message: string = "",
+    var closed: bool = false,
 
     init(source: Source) {
         native_handle = match source {
             .File(path) => unsafe {
-                hew_magick_open_len(path, path.len())
+                hew_magick_open(path)
             },
             .Blob(blob) => unsafe {
                 hew_magick_open_blob(blob)
             },
-            .Blank(width, height, color) => unsafe {
-                hew_magick_new_len(width, height, color, color.len())
+            .Blank(width, height, colour) => unsafe {
+                hew_magick_new(width, height, colour)
             },
         };
         if native_handle == 0 {
             init_error_kind = unsafe {
                 hew_magick_last_error_kind()
             };
-            init_error_message = match init_error_kind {
-                1 => "image input is invalid",
-                2 => "image could not be decoded",
-                _ => "image initialization failed",
+            init_error_message = unsafe {
+                hew_magick_last_error()
             };
         }
     }
@@ -197,7 +195,7 @@ pub actor Image {
     receive fn write(path: string) -> Result<i64, MagickError> {
         let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
-            hew_magick_write_len(handle, path, path.len())
+            hew_magick_write(handle, path)
         })
     }
 
@@ -208,7 +206,7 @@ pub actor Image {
             return Err(MagickError.InvalidInput("image format must not be empty"));
         }
         let value = unsafe {
-            hew_magick_write_blob_len(handle, format, format.len())
+            hew_magick_write_blob(handle, format)
         };
         if value.is_empty() {
             Err(native_error())
@@ -267,11 +265,11 @@ pub actor Image {
 extern "C" {
     fn hew_magick_last_error_kind() -> i32;
     fn hew_magick_last_error() -> string;
-    fn hew_magick_open_len(path: string, path_len: i64) -> i64;
+    fn hew_magick_open(path: string) -> i64;
     fn hew_magick_open_blob(blob: bytes) -> i64;
-    fn hew_magick_new_len(width: i32, height: i32, color: string, color_len: i64) -> i64;
-    fn hew_magick_write_len(image: i64, path: string, path_len: i64) -> i32;
-    fn hew_magick_write_blob_len(image: i64, format: string, format_len: i64) -> bytes;
+    fn hew_magick_new(width: i32, height: i32, colour: string) -> i64;
+    fn hew_magick_write(image: i64, path: string) -> i32;
+    fn hew_magick_write_blob(image: i64, format: string) -> bytes;
     fn hew_magick_resize(image: i64, width: i32, height: i32) -> i32;
     fn hew_magick_crop(image: i64, width: i32, height: i32, x: i32, y: i32) -> i32;
     fn hew_magick_rotate(image: i64, degrees: f64) -> i32;

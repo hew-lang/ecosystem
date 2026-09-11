@@ -1077,8 +1077,8 @@ dependencies = [
 
 [[package]]
 name = "hew-cabi"
-version = "0.6.0-rc2"
-source = "git+https://github.com/hew-lang/hew?rev=84c34d2bd895fdaeb4c78b1774715f8576335f34#84c34d2bd895fdaeb4c78b1774715f8576335f34"
+version = "0.6.0-rc3"
+source = "git+https://github.com/hew-lang/hew?rev=c19f52e3d0726ac1cc956311d7b126144fc58d56#c19f52e3d0726ac1cc956311d7b126144fc58d56"
 dependencies = [
  "libc",
 ]
@@ -1090,7 +1090,6 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
  "hew-cabi",
- "libc",
  "serde_json",
  "sha2 0.10.9",
  "ureq",
@@ -1100,6 +1099,7 @@ dependencies = [
 name = "hew-ecosystem-db-mongodb"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "mongodb",
  "serde_json",
@@ -1110,6 +1110,7 @@ dependencies = [
 name = "hew-ecosystem-db-mysql"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "mysql",
 ]
@@ -1118,6 +1119,7 @@ dependencies = [
 name = "hew-ecosystem-db-postgres"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "postgres",
 ]
@@ -1126,6 +1128,7 @@ dependencies = [
 name = "hew-ecosystem-db-redis"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "redis",
  "serial_test",
@@ -1135,6 +1138,7 @@ dependencies = [
 name = "hew-ecosystem-db-sqlite"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "libc",
  "rusqlite",
 ]
@@ -1153,7 +1157,6 @@ name = "hew-ecosystem-metrics"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "prometheus",
 ]
 
@@ -1161,8 +1164,8 @@ dependencies = [
 name = "hew-ecosystem-net-http"
 version = "0.3.0"
 dependencies = [
+ "hew-cabi",
  "httparse",
- "libc",
 ]
 
 [[package]]
@@ -1170,7 +1173,6 @@ name = "hew-ecosystem-queue-mqtt"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "rumqttc",
 ]
 
@@ -1179,7 +1181,6 @@ name = "hew-ecosystem-queue-nats"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "nats",
 ]
 

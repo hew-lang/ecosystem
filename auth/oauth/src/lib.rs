@@ -1,51 +1,27 @@
 //! Hew runtime: `auth_oauth` module.
 //!
 //! Provides OAuth 2.0 client flows for compiled Hew programs.
-//! Returned strings are allocation-base, NUL-terminated `libc::malloc`
-//! buffers. Hew takes ownership and releases the allocation base. Opaque
-//! handles are freed via the corresponding free/close functions.
+//! Strings cross the boundary as managed Hew strings: inbound handles are
+//! borrowed for the call, and returned handles are freshly allocated owners
+//! the caller releases. Opaque client and token handles are freed via the
+//! corresponding close/free functions.
 //!
 //! Uses `ureq` directly for HTTP rather than `std::net::http_client` because
 //! the stdlib HTTP client does not yet expose response status codes, headers,
 //! or body text. Replace with stdlib once `Response` gains those capabilities.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+#[cfg(test)]
+use hew_cabi::string::string_release;
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use sha2::{Digest, Sha256};
 use std::{
     fmt::Write as _,
-    os::raw::c_char,
     sync::atomic::{AtomicI64, Ordering},
 };
 
 static ACTIVE_CLIENTS: AtomicI64 = AtomicI64::new(0);
 static ACTIVE_TOKENS: AtomicI64 = AtomicI64::new(0);
-
-fn str_to_malloc(value: &str) -> *mut c_char {
-    if value.as_bytes().contains(&0) {
-        return std::ptr::null_mut();
-    }
-    // SAFETY: requesting value.len() + 1 bytes; the null check below covers allocation failure.
-    let output = unsafe { libc::malloc(value.len() + 1) }.cast::<u8>();
-    if output.is_null() {
-        return std::ptr::null_mut();
-    }
-    // SAFETY: output was just allocated with value.len() + 1 bytes and is non-null.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast::<c_char>()
-}
-
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64) -> Option<&'a str> {
-    let len = usize::try_from(len).ok()?;
-    if value.is_null() {
-        return (len == 0).then_some("");
-    }
-    // SAFETY: value addresses len readable bytes per caller contract (checked above).
-    let bytes = unsafe { std::slice::from_raw_parts(value.cast::<u8>(), len) };
-    std::str::from_utf8(bytes).ok()
-}
 
 /// Opaque OAuth client handle holding client credentials.
 ///
@@ -202,33 +178,26 @@ fn post_form_token(token_url: &str, form: &str) -> *mut HewOauthToken {
 
 /// Create a new OAuth client with the given client credentials.
 ///
-/// Returns a heap-allocated [`HewOauthClient`] on success, or null on error.
-/// The caller must close the client with [`hew_oauth_close`].
+/// Returns a heap-allocated [`HewOauthClient`]. The caller must close the
+/// client with [`hew_oauth_close`].
 ///
 /// # Safety
 ///
-/// Each pointer must address its paired length in readable bytes containing
-/// valid UTF-8. A null pointer is allowed only when its paired length is zero.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_new(
-    client_id: *const c_char,
-    client_id_len: i64,
-    client_secret: *const c_char,
-    client_secret_len: i64,
+    client_id: *const HewString,
+    client_secret: *const HewString,
 ) -> *mut HewOauthClient {
-    // SAFETY: client_id addresses client_id_len readable bytes per caller contract.
-    let Some(client_id_str) = (unsafe { utf8_with_len(client_id, client_id_len) }) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: client_secret addresses client_secret_len readable bytes per caller contract.
-    let Some(client_secret_str) = (unsafe { utf8_with_len(client_secret, client_secret_len) })
-    else {
-        return std::ptr::null_mut();
-    };
+    // SAFETY: `client_id` is a managed handle borrowed for this call.
+    let client_id = unsafe { string_as_str(client_id) }.to_owned();
+    // SAFETY: `client_secret` is a managed handle borrowed for this call.
+    let client_secret = unsafe { string_as_str(client_secret) }.to_owned();
     ACTIVE_CLIENTS.fetch_add(1, Ordering::Relaxed);
     Box::into_raw(Box::new(HewOauthClient {
-        client_id: client_id_str.to_owned(),
-        client_secret: client_secret_str.to_owned(),
+        client_id,
+        client_secret,
         pending_state: String::new(),
         pending_code_verifier: String::new(),
     }))
@@ -237,33 +206,29 @@ pub unsafe extern "C" fn hew_oauth_new(
 /// Obtain an access token using the client credentials grant (machine-to-machine).
 ///
 /// POSTs to `token_url` with `grant_type=client_credentials`. `scope` may be
-/// empty. Returns a heap-allocated [`HewOauthToken`] on success, or null on
-/// error (network failure or missing `access_token` in response).
+/// empty. Returns a heap-allocated [`HewOauthToken`], carrying the endpoint
+/// diagnostic when the exchange failed, or null when `client_ptr` is null.
 ///
 /// The caller must free the token with [`hew_oauth_token_free`].
 ///
 /// # Safety
 ///
 /// - `client_ptr` must be a valid pointer returned by [`hew_oauth_new`].
-/// - Each string pointer must address its paired length in readable bytes
-///   containing valid UTF-8; null is allowed only with a zero length.
+/// - Each string argument must be null (the empty string) or a live managed
+///   Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_client_credentials(
     client_ptr: *mut HewOauthClient,
-    token_url: *const c_char,
-    token_url_len: i64,
-    scope: *const c_char,
-    scope_len: i64,
+    token_url: *const HewString,
+    scope: *const HewString,
 ) -> *mut HewOauthToken {
     if client_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    // SAFETY: token_url addresses token_url_len readable bytes per caller contract.
-    let Some(token_url_str) = (unsafe { utf8_with_len(token_url, token_url_len) }) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: scope addresses scope_len readable bytes per caller contract.
-    let scope_str = unsafe { utf8_with_len(scope, scope_len) }.unwrap_or("");
+    // SAFETY: `token_url` is a managed handle borrowed for this call.
+    let token_url_str = unsafe { string_as_str(token_url) };
+    // SAFETY: `scope` is a managed handle borrowed for this call.
+    let scope_str = unsafe { string_as_str(scope) };
     // SAFETY: client_ptr is a valid HewOauthClient pointer per caller contract.
     let client = unsafe { &*client_ptr };
 
@@ -282,41 +247,33 @@ pub unsafe extern "C" fn hew_oauth_client_credentials(
 /// Generate an authorization URL for the authorization code grant.
 ///
 /// Builds a URL with `response_type=code` and the provided parameters.
-/// Returns an allocation-base, NUL-terminated `libc::malloc` buffer that Hew
-/// takes ownership of. Returns null when an input or allocation is invalid.
+/// Returns a freshly allocated managed string the caller releases. Returns
+/// null (the empty string) when `client_ptr` is null or the CSPRNG fails.
 ///
 /// # Safety
 ///
 /// - `client_ptr` must be a valid pointer returned by [`hew_oauth_new`].
-/// - Each string pointer must address its paired length in readable bytes
-///   containing valid UTF-8; null is allowed only with a zero length.
+/// - Each string argument must be null (the empty string) or a live managed
+///   Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_auth_url(
     client_ptr: *mut HewOauthClient,
-    auth_url: *const c_char,
-    auth_url_len: i64,
-    redirect_uri: *const c_char,
-    redirect_uri_len: i64,
-    scope: *const c_char,
-    scope_len: i64,
-    state: *const c_char,
-    state_len: i64,
-) -> *mut c_char {
+    auth_url: *const HewString,
+    redirect_uri: *const HewString,
+    scope: *const HewString,
+    state: *const HewString,
+) -> *mut HewString {
     if client_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    // SAFETY: auth_url addresses auth_url_len readable bytes per caller contract.
-    let Some(auth_url_str) = (unsafe { utf8_with_len(auth_url, auth_url_len) }) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: redirect_uri addresses redirect_uri_len readable bytes per caller contract.
-    let Some(redirect_uri_str) = (unsafe { utf8_with_len(redirect_uri, redirect_uri_len) }) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: scope addresses scope_len readable bytes per caller contract.
-    let scope_str = unsafe { utf8_with_len(scope, scope_len) }.unwrap_or("");
-    // SAFETY: state addresses state_len readable bytes per caller contract.
-    let state_str = unsafe { utf8_with_len(state, state_len) }.unwrap_or("");
+    // SAFETY: `auth_url` is a managed handle borrowed for this call.
+    let auth_url_str = unsafe { string_as_str(auth_url) };
+    // SAFETY: `redirect_uri` is a managed handle borrowed for this call.
+    let redirect_uri_str = unsafe { string_as_str(redirect_uri) };
+    // SAFETY: `scope` is a managed handle borrowed for this call.
+    let scope_str = unsafe { string_as_str(scope) };
+    // SAFETY: `state` is a managed handle borrowed for this call.
+    let state_str = unsafe { string_as_str(state) };
     // SAFETY: client_ptr is a valid HewOauthClient pointer per caller contract.
     let client = unsafe { &mut *client_ptr };
 
@@ -344,46 +301,37 @@ pub unsafe extern "C" fn hew_oauth_auth_url(
         url_encode(&state),
         url_encode(&code_challenge),
     );
-    str_to_malloc(&url)
+    string_from_str(&url)
 }
 
 /// Exchange an authorization code for a token (authorization code grant).
 ///
 /// POSTs to `token_url` with `grant_type=authorization_code`. Returns a
-/// heap-allocated [`HewOauthToken`] on success, or null on error.
+/// heap-allocated [`HewOauthToken`], or null when `client_ptr` is null.
 ///
 /// The caller must free the token with [`hew_oauth_token_free`].
 ///
 /// # Safety
 ///
 /// - `client_ptr` must be a valid pointer returned by [`hew_oauth_new`].
-/// - Each string pointer must address its paired length in readable bytes
-///   containing valid UTF-8; null is allowed only with a zero length.
+/// - Each string argument must be null (the empty string) or a live managed
+///   Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_exchange_code(
     client_ptr: *mut HewOauthClient,
-    token_url: *const c_char,
-    token_url_len: i64,
-    code: *const c_char,
-    code_len: i64,
-    redirect_uri: *const c_char,
-    redirect_uri_len: i64,
+    token_url: *const HewString,
+    code: *const HewString,
+    redirect_uri: *const HewString,
 ) -> *mut HewOauthToken {
     if client_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    // SAFETY: token_url addresses token_url_len readable bytes per caller contract.
-    let Some(token_url_str) = (unsafe { utf8_with_len(token_url, token_url_len) }) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: code addresses code_len readable bytes per caller contract.
-    let Some(code_str) = (unsafe { utf8_with_len(code, code_len) }) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: redirect_uri addresses redirect_uri_len readable bytes per caller contract.
-    let Some(redirect_uri_str) = (unsafe { utf8_with_len(redirect_uri, redirect_uri_len) }) else {
-        return std::ptr::null_mut();
-    };
+    // SAFETY: `token_url` is a managed handle borrowed for this call.
+    let token_url_str = unsafe { string_as_str(token_url) };
+    // SAFETY: `code` is a managed handle borrowed for this call.
+    let code_str = unsafe { string_as_str(code) };
+    // SAFETY: `redirect_uri` is a managed handle borrowed for this call.
+    let redirect_uri_str = unsafe { string_as_str(redirect_uri) };
     // SAFETY: client_ptr is a valid HewOauthClient pointer per caller contract.
     let client = unsafe { &*client_ptr };
 
@@ -410,40 +358,27 @@ pub unsafe extern "C" fn hew_oauth_exchange_code(
 /// # Safety
 ///
 /// - `client_ptr` must be a valid pointer returned by [`hew_oauth_new`].
-/// - Each string pointer must address its paired length in readable bytes
-///   containing valid UTF-8; null is allowed only with a zero length.
+/// - Each string argument must be null (the empty string) or a live managed
+///   Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_exchange_code_with_verifier(
     client_ptr: *mut HewOauthClient,
-    token_url: *const c_char,
-    token_url_len: i64,
-    code: *const c_char,
-    code_len: i64,
-    redirect_uri: *const c_char,
-    redirect_uri_len: i64,
-    code_verifier: *const c_char,
-    code_verifier_len: i64,
+    token_url: *const HewString,
+    code: *const HewString,
+    redirect_uri: *const HewString,
+    code_verifier: *const HewString,
 ) -> *mut HewOauthToken {
     if client_ptr.is_null() {
         return token_error(0, "null_client");
     }
-    // SAFETY: token_url addresses token_url_len readable bytes per caller contract.
-    let Some(token_url_str) = (unsafe { utf8_with_len(token_url, token_url_len) }) else {
-        return token_error(0, "invalid_token_url");
-    };
-    // SAFETY: code addresses code_len readable bytes per caller contract.
-    let Some(code_str) = (unsafe { utf8_with_len(code, code_len) }) else {
-        return token_error(0, "invalid_code");
-    };
-    // SAFETY: redirect_uri addresses redirect_uri_len readable bytes per caller contract.
-    let Some(redirect_uri_str) = (unsafe { utf8_with_len(redirect_uri, redirect_uri_len) }) else {
-        return token_error(0, "invalid_redirect_uri");
-    };
-    // SAFETY: code_verifier addresses code_verifier_len readable bytes per caller contract.
-    let Some(code_verifier_str) = (unsafe { utf8_with_len(code_verifier, code_verifier_len) })
-    else {
-        return token_error(0, "invalid_code_verifier");
-    };
+    // SAFETY: `token_url` is a managed handle borrowed for this call.
+    let token_url_str = unsafe { string_as_str(token_url) };
+    // SAFETY: `code` is a managed handle borrowed for this call.
+    let code_str = unsafe { string_as_str(code) };
+    // SAFETY: `redirect_uri` is a managed handle borrowed for this call.
+    let redirect_uri_str = unsafe { string_as_str(redirect_uri) };
+    // SAFETY: `code_verifier` is a managed handle borrowed for this call.
+    let code_verifier_str = unsafe { string_as_str(code_verifier) };
     if code_verifier_str.is_empty() {
         return token_error(0, "empty_code_verifier");
     }
@@ -462,27 +397,25 @@ pub unsafe extern "C" fn hew_oauth_exchange_code_with_verifier(
     post_form_token(token_url_str, &form)
 }
 
-/// Return the current generated OAuth state for callback validation as an
-/// allocation-base, NUL-terminated `libc::malloc` buffer.
-///
-/// Hew takes ownership and releases the allocation base.
+/// Return the current generated OAuth state for callback validation as a
+/// freshly allocated managed string the caller releases.
 ///
 /// # Safety
 ///
 /// `client_ptr` must be a valid pointer returned by [`hew_oauth_new`].
 #[no_mangle]
-pub unsafe extern "C" fn hew_oauth_current_state(client_ptr: *const HewOauthClient) -> *mut c_char {
+pub unsafe extern "C" fn hew_oauth_current_state(
+    client_ptr: *const HewOauthClient,
+) -> *mut HewString {
     if client_ptr.is_null() {
         return std::ptr::null_mut();
     }
     // SAFETY: client_ptr is a valid HewOauthClient pointer per caller contract.
-    str_to_malloc(&unsafe { &*client_ptr }.pending_state)
+    string_from_str(&unsafe { &*client_ptr }.pending_state)
 }
 
-/// Return the current generated PKCE code verifier for external storage as an
-/// allocation-base, NUL-terminated `libc::malloc` buffer.
-///
-/// Hew takes ownership and releases the allocation base.
+/// Return the current generated PKCE code verifier for external storage as a
+/// freshly allocated managed string the caller releases.
 ///
 /// # Safety
 ///
@@ -490,12 +423,12 @@ pub unsafe extern "C" fn hew_oauth_current_state(client_ptr: *const HewOauthClie
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_current_code_verifier(
     client_ptr: *const HewOauthClient,
-) -> *mut c_char {
+) -> *mut HewString {
     if client_ptr.is_null() {
         return std::ptr::null_mut();
     }
     // SAFETY: client_ptr is a valid HewOauthClient pointer per caller contract.
-    str_to_malloc(&unsafe { &*client_ptr }.pending_code_verifier)
+    string_from_str(&unsafe { &*client_ptr }.pending_code_verifier)
 }
 
 /// Validate a callback state against the current generated state.
@@ -504,23 +437,18 @@ pub unsafe extern "C" fn hew_oauth_current_code_verifier(
 ///
 /// # Safety
 ///
-/// `client_ptr` must be valid. `callback_state` must address
-/// `callback_state_len` readable bytes containing valid UTF-8; null is allowed
-/// only when the length is zero.
+/// `client_ptr` must be valid. `callback_state` must be null (the empty
+/// string) or a live managed Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_validate_state(
     client_ptr: *const HewOauthClient,
-    callback_state: *const c_char,
-    callback_state_len: i64,
+    callback_state: *const HewString,
 ) -> i32 {
     if client_ptr.is_null() {
         return 0;
     }
-    // SAFETY: callback_state addresses callback_state_len readable bytes per caller contract.
-    let Some(callback_state_str) = (unsafe { utf8_with_len(callback_state, callback_state_len) })
-    else {
-        return 0;
-    };
+    // SAFETY: `callback_state` is a managed handle borrowed for this call.
+    let callback_state_str = unsafe { string_as_str(callback_state) };
     // SAFETY: client_ptr is a valid HewOauthClient pointer per caller contract.
     let client = unsafe { &*client_ptr };
     i32::from(!client.pending_state.is_empty() && client.pending_state == callback_state_str)
@@ -529,35 +457,28 @@ pub unsafe extern "C" fn hew_oauth_validate_state(
 /// Refresh an access token using a refresh token.
 ///
 /// POSTs to `token_url` with `grant_type=refresh_token`. Returns a
-/// heap-allocated [`HewOauthToken`] on success, or null on error.
+/// heap-allocated [`HewOauthToken`], or null when `client_ptr` is null.
 ///
 /// The caller must free the token with [`hew_oauth_token_free`].
 ///
 /// # Safety
 ///
 /// - `client_ptr` must be a valid pointer returned by [`hew_oauth_new`].
-/// - Each string pointer must address its paired length in readable bytes
-///   containing valid UTF-8; null is allowed only with a zero length.
+/// - Each string argument must be null (the empty string) or a live managed
+///   Hew string handle.
 #[no_mangle]
 pub unsafe extern "C" fn hew_oauth_refresh(
     client_ptr: *mut HewOauthClient,
-    token_url: *const c_char,
-    token_url_len: i64,
-    refresh_token: *const c_char,
-    refresh_token_len: i64,
+    token_url: *const HewString,
+    refresh_token: *const HewString,
 ) -> *mut HewOauthToken {
     if client_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    // SAFETY: token_url addresses token_url_len readable bytes per caller contract.
-    let Some(token_url_str) = (unsafe { utf8_with_len(token_url, token_url_len) }) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: refresh_token addresses refresh_token_len readable bytes per caller contract.
-    let Some(refresh_token_str) = (unsafe { utf8_with_len(refresh_token, refresh_token_len) })
-    else {
-        return std::ptr::null_mut();
-    };
+    // SAFETY: `token_url` is a managed handle borrowed for this call.
+    let token_url_str = unsafe { string_as_str(token_url) };
+    // SAFETY: `refresh_token` is a managed handle borrowed for this call.
+    let refresh_token_str = unsafe { string_as_str(refresh_token) };
     // SAFETY: client_ptr is a valid HewOauthClient pointer per caller contract.
     let client = unsafe { &*client_ptr };
 
@@ -571,21 +492,21 @@ pub unsafe extern "C" fn hew_oauth_refresh(
     post_form_token(token_url_str, &form)
 }
 
-/// Return the access token as an allocation-base, NUL-terminated
-/// `libc::malloc` buffer.
-///
-/// Hew takes ownership and releases the allocation base.
+/// Return the access token as a freshly allocated managed string the caller
+/// releases.
 ///
 /// # Safety
 ///
 /// `token` must be a valid pointer returned by a token-producing function.
 #[no_mangle]
-pub unsafe extern "C" fn hew_oauth_token_access_token(token: *const HewOauthToken) -> *mut c_char {
+pub unsafe extern "C" fn hew_oauth_token_access_token(
+    token: *const HewOauthToken,
+) -> *mut HewString {
     if token.is_null() {
         return std::ptr::null_mut();
     }
     // SAFETY: token is a valid HewOauthToken pointer per caller contract.
-    str_to_malloc(&unsafe { &*token }.access_token)
+    string_from_str(&unsafe { &*token }.access_token)
 }
 
 /// Return 1 when the token response is successful, or 0 when it carries an error.
@@ -616,38 +537,36 @@ pub unsafe extern "C" fn hew_oauth_token_error_status(token: *const HewOauthToke
     unsafe { &*token }.error_status
 }
 
-/// Return an error diagnostic for failed token responses as an allocation-base,
-/// NUL-terminated `libc::malloc` buffer.
-///
-/// Hew takes ownership and releases the allocation base.
+/// Return an error diagnostic for failed token responses as a freshly
+/// allocated managed string the caller releases.
 ///
 /// # Safety
 ///
 /// `token` must be a valid pointer returned by a token-producing function.
 #[no_mangle]
-pub unsafe extern "C" fn hew_oauth_token_error_message(token: *const HewOauthToken) -> *mut c_char {
+pub unsafe extern "C" fn hew_oauth_token_error_message(
+    token: *const HewOauthToken,
+) -> *mut HewString {
     if token.is_null() {
         return std::ptr::null_mut();
     }
     // SAFETY: token is a valid HewOauthToken pointer per caller contract.
-    str_to_malloc(&unsafe { &*token }.error_message)
+    string_from_str(&unsafe { &*token }.error_message)
 }
 
-/// Return the token type as an allocation-base, NUL-terminated
-/// `libc::malloc` buffer (usually "Bearer").
-///
-/// Hew takes ownership and releases the allocation base.
+/// Return the token type as a freshly allocated managed string the caller
+/// releases (usually "Bearer").
 ///
 /// # Safety
 ///
 /// `token` must be a valid pointer returned by a token-producing function.
 #[no_mangle]
-pub unsafe extern "C" fn hew_oauth_token_type(token: *const HewOauthToken) -> *mut c_char {
+pub unsafe extern "C" fn hew_oauth_token_type(token: *const HewOauthToken) -> *mut HewString {
     if token.is_null() {
         return std::ptr::null_mut();
     }
     // SAFETY: token is a valid HewOauthToken pointer per caller contract.
-    str_to_malloc(&unsafe { &*token }.token_type)
+    string_from_str(&unsafe { &*token }.token_type)
 }
 
 /// Return the token expiry in seconds from issuance, or -1 if not provided.
@@ -664,38 +583,36 @@ pub unsafe extern "C" fn hew_oauth_token_expires_in(token: *const HewOauthToken)
     unsafe { &*token }.expires_in
 }
 
-/// Return the refresh token as an allocation-base, NUL-terminated
-/// `libc::malloc` buffer, or an allocated empty string if not provided.
-///
-/// Hew takes ownership and releases the allocation base.
+/// Return the refresh token as a freshly allocated managed string the caller
+/// releases, or the empty string when the endpoint provided none.
 ///
 /// # Safety
 ///
 /// `token` must be a valid pointer returned by a token-producing function.
 #[no_mangle]
-pub unsafe extern "C" fn hew_oauth_token_refresh_token(token: *const HewOauthToken) -> *mut c_char {
+pub unsafe extern "C" fn hew_oauth_token_refresh_token(
+    token: *const HewOauthToken,
+) -> *mut HewString {
     if token.is_null() {
         return std::ptr::null_mut();
     }
     // SAFETY: token is a valid HewOauthToken pointer per caller contract.
-    str_to_malloc(&unsafe { &*token }.refresh_token)
+    string_from_str(&unsafe { &*token }.refresh_token)
 }
 
-/// Return the token scope as an allocation-base, NUL-terminated
-/// `libc::malloc` buffer, or an allocated empty string if not provided.
-///
-/// Hew takes ownership and releases the allocation base.
+/// Return the token scope as a freshly allocated managed string the caller
+/// releases, or the empty string when the endpoint provided none.
 ///
 /// # Safety
 ///
 /// `token` must be a valid pointer returned by a token-producing function.
 #[no_mangle]
-pub unsafe extern "C" fn hew_oauth_token_scope(token: *const HewOauthToken) -> *mut c_char {
+pub unsafe extern "C" fn hew_oauth_token_scope(token: *const HewOauthToken) -> *mut HewString {
     if token.is_null() {
         return std::ptr::null_mut();
     }
     // SAFETY: token is a valid HewOauthToken pointer per caller contract.
-    str_to_malloc(&unsafe { &*token }.scope)
+    string_from_str(&unsafe { &*token }.scope)
 }
 
 /// Free a [`HewOauthToken`] previously returned by a token-producing function.
@@ -747,10 +664,23 @@ pub extern "C" fn hew_oauth_token_count() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::{CStr, CString};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    /// Allocate one managed string argument for a boundary call.
+    fn managed(value: &str) -> *mut HewString {
+        string_from_str(value)
+    }
+
+    /// Read and release the managed string a boundary call returned.
+    unsafe fn owned_text(value: *mut HewString) -> String {
+        // SAFETY: `value` is the owner a crate entry point just returned.
+        let text = unsafe { string_as_str(value) }.to_owned();
+        // SAFETY: the same owner, released exactly once here.
+        unsafe { string_release(value) };
+        text
+    }
 
     #[test]
     fn test_url_encode() {
@@ -807,46 +737,34 @@ mod tests {
         });
         let ptr = parse_token_response(&json).unwrap();
 
-        // SAFETY: ptr is a valid HewOauthToken we just created.
+        // SAFETY: ptr is a valid HewOauthToken we just created, and every
+        // returned managed string is read and released exactly once.
         unsafe {
-            let at = hew_oauth_token_access_token(ptr);
-            assert!(!at.is_null());
-            assert_eq!(CStr::from_ptr(at).to_str().unwrap(), "mytoken");
-            libc::free(at.cast());
-
-            let tt = hew_oauth_token_type(ptr);
-            assert!(!tt.is_null());
-            assert_eq!(CStr::from_ptr(tt).to_str().unwrap(), "Bearer");
-            libc::free(tt.cast());
-
+            assert_eq!(owned_text(hew_oauth_token_access_token(ptr)), "mytoken");
+            assert_eq!(owned_text(hew_oauth_token_type(ptr)), "Bearer");
             assert_eq!(hew_oauth_token_expires_in(ptr), 7200);
-
-            let rt = hew_oauth_token_refresh_token(ptr);
-            assert!(!rt.is_null());
-            assert_eq!(CStr::from_ptr(rt).to_str().unwrap(), "refresh_abc");
-            libc::free(rt.cast());
-
-            let sc = hew_oauth_token_scope(ptr);
-            assert!(!sc.is_null());
-            assert_eq!(CStr::from_ptr(sc).to_str().unwrap(), "read write");
-            libc::free(sc.cast());
-
+            assert_eq!(
+                owned_text(hew_oauth_token_refresh_token(ptr)),
+                "refresh_abc"
+            );
+            assert_eq!(owned_text(hew_oauth_token_scope(ptr)), "read write");
             hew_oauth_token_free(ptr);
         }
     }
 
     #[test]
     fn test_null_token_accessors() {
-        // SAFETY: passing null pointers — functions must handle them gracefully.
+        // SAFETY: passing null pointers — the accessors answer with the empty
+        // managed string and must not panic.
         unsafe {
-            assert!(hew_oauth_token_access_token(std::ptr::null()).is_null());
+            assert!(owned_text(hew_oauth_token_access_token(std::ptr::null())).is_empty());
             assert_eq!(hew_oauth_token_is_ok(std::ptr::null()), 0);
             assert_eq!(hew_oauth_token_error_status(std::ptr::null()), -1);
-            assert!(hew_oauth_token_error_message(std::ptr::null()).is_null());
-            assert!(hew_oauth_token_type(std::ptr::null()).is_null());
+            assert!(owned_text(hew_oauth_token_error_message(std::ptr::null())).is_empty());
+            assert!(owned_text(hew_oauth_token_type(std::ptr::null())).is_empty());
             assert_eq!(hew_oauth_token_expires_in(std::ptr::null()), -1);
-            assert!(hew_oauth_token_refresh_token(std::ptr::null()).is_null());
-            assert!(hew_oauth_token_scope(std::ptr::null()).is_null());
+            assert!(owned_text(hew_oauth_token_refresh_token(std::ptr::null())).is_empty());
+            assert!(owned_text(hew_oauth_token_scope(std::ptr::null())).is_empty());
             hew_oauth_token_free(std::ptr::null_mut()); // must not panic
         }
     }
@@ -862,52 +780,28 @@ mod tests {
 
     #[test]
     fn embedded_nul_client_id_is_percent_encoded_not_truncated() {
-        let client_id = b"left\0right";
-        let secret = b"secret";
-        let auth_url = b"https://example.test/authorize";
-        let redirect = b"https://client.test/callback";
-        let scope = b"openid";
-        let state = b"known";
-        // SAFETY: pointers/lengths are valid; exercises embedded-NUL handling for test fixtures.
+        let client_id = managed("left\0right");
+        let secret = managed("secret");
+        let auth_url = managed("https://example.test/authorize");
+        let redirect = managed("https://client.test/callback");
+        let scope = managed("openid");
+        let state = managed("known");
+        // SAFETY: every handle is a live managed string this test owns and
+        // releases; a managed string carries an exact length, so the embedded
+        // NUL reaches the encoder intact.
         unsafe {
-            let client = hew_oauth_new(
-                client_id.as_ptr().cast(),
-                len_i64(client_id.len()),
-                secret.as_ptr().cast(),
-                len_i64(secret.len()),
-            );
+            let client = hew_oauth_new(client_id, secret);
             assert!(!client.is_null());
-            let value = malloc_string(hew_oauth_auth_url(
-                client,
-                auth_url.as_ptr().cast(),
-                len_i64(auth_url.len()),
-                redirect.as_ptr().cast(),
-                len_i64(redirect.len()),
-                scope.as_ptr().cast(),
-                len_i64(scope.len()),
-                state.as_ptr().cast(),
-                len_i64(state.len()),
-            ));
+            let value = owned_text(hew_oauth_auth_url(client, auth_url, redirect, scope, state));
             assert!(value.contains("client_id=left%00right"));
             hew_oauth_close(client);
+            string_release(client_id);
+            string_release(secret);
+            string_release(auth_url);
+            string_release(redirect);
+            string_release(scope);
+            string_release(state);
         }
-    }
-
-    fn len_i64(n: usize) -> i64 {
-        i64::try_from(n).expect("test fixture length fits in i64")
-    }
-
-    fn cstr(s: &str) -> CString {
-        CString::new(s).unwrap()
-    }
-
-    unsafe fn malloc_string(ptr: *mut c_char) -> String {
-        assert!(!ptr.is_null());
-        // SAFETY: ptr is a valid, NUL-terminated CString pointer produced by this test module.
-        let value = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_owned();
-        // SAFETY: ptr was allocated by str_to_malloc/libc::malloc and is freed exactly once here.
-        unsafe { libc::free(ptr.cast()) };
-        value
     }
 
     fn serve_once(status: u16, body: &'static str) -> (String, thread::JoinHandle<String>) {
@@ -955,48 +849,40 @@ mod tests {
 
     #[test]
     fn test_pkce_state_generation_and_auth_url() {
-        let client_id = cstr("client ü");
-        let client_secret = cstr("secret");
-        let auth_url = cstr("https://auth.example/authorize");
-        let redirect_uri = cstr("https://app.example/callback");
-        let scope = cstr("openid profile");
-        let empty_state = cstr("");
+        let client_id = managed("client ü");
+        let client_secret = managed("secret");
+        let auth_url = managed("https://auth.example/authorize");
+        let redirect_uri = managed("https://app.example/callback");
+        let scope = managed("openid profile");
+        // The empty string is the canonical null handle; it asks for a
+        // generated state.
+        let empty_state = managed("");
 
-        // SAFETY: all pointers/lengths come from valid CString/&str fixtures in this test.
+        // SAFETY: every handle is a live managed string this test owns and
+        // releases; returned owners are read and released exactly once.
         unsafe {
-            let client = hew_oauth_new(
-                client_id.as_ptr(),
-                len_i64(client_id.as_bytes().len()),
-                client_secret.as_ptr(),
-                len_i64(client_secret.as_bytes().len()),
-            );
+            let client = hew_oauth_new(client_id, client_secret);
             assert!(!client.is_null());
 
-            let url = malloc_string(hew_oauth_auth_url(
+            let url = owned_text(hew_oauth_auth_url(
                 client,
-                auth_url.as_ptr(),
-                len_i64(auth_url.as_bytes().len()),
-                redirect_uri.as_ptr(),
-                len_i64(redirect_uri.as_bytes().len()),
-                scope.as_ptr(),
-                len_i64(scope.as_bytes().len()),
-                empty_state.as_ptr(),
-                len_i64(empty_state.as_bytes().len()),
+                auth_url,
+                redirect_uri,
+                scope,
+                empty_state,
             ));
-            let state = malloc_string(hew_oauth_current_state(client));
-            let verifier = malloc_string(hew_oauth_current_code_verifier(client));
+            let state = owned_text(hew_oauth_current_state(client));
+            let verifier = owned_text(hew_oauth_current_code_verifier(client));
             let expected_challenge = code_challenge_for_verifier(&verifier);
 
             assert_eq!(state.len(), 43);
             assert_eq!(verifier.len(), 43);
-            assert_eq!(
-                hew_oauth_validate_state(client, state.as_ptr().cast(), len_i64(state.len())),
-                1
-            );
-            assert_eq!(
-                hew_oauth_validate_state(client, b"wrong".as_ptr().cast(), 5),
-                0
-            );
+            let state_handle = managed(&state);
+            assert_eq!(hew_oauth_validate_state(client, state_handle), 1);
+            string_release(state_handle);
+            let wrong_state = managed("wrong");
+            assert_eq!(hew_oauth_validate_state(client, wrong_state), 0);
+            string_release(wrong_state);
             assert!(url.contains("response_type=code"));
             assert!(url.contains("client_id=client%20%C3%BC"));
             assert!(url.contains("redirect_uri=https%3A%2F%2Fapp.example%2Fcallback"));
@@ -1006,6 +892,12 @@ mod tests {
             assert!(url.contains("code_challenge_method=S256"));
 
             hew_oauth_close(client);
+            string_release(client_id);
+            string_release(client_secret);
+            string_release(auth_url);
+            string_release(redirect_uri);
+            string_release(scope);
+            string_release(empty_state);
         }
     }
 
@@ -1015,49 +907,40 @@ mod tests {
             200,
             r#"{"access_token":"access","token_type":"Bearer","expires_in":60}"#,
         );
-        let client_id = cstr("client");
-        let client_secret = cstr("secret");
-        let auth_url = cstr("https://auth.example/authorize");
-        let redirect_uri = cstr("https://app.example/callback");
-        let scope = cstr("");
-        let state = cstr("caller-state");
-        let token_url = cstr(&url);
-        let code = cstr("code 123");
+        let client_id = managed("client");
+        let client_secret = managed("secret");
+        let auth_url = managed("https://auth.example/authorize");
+        let redirect_uri = managed("https://app.example/callback");
+        let scope = managed("");
+        let state = managed("caller-state");
+        let token_url = managed(&url);
+        let code = managed("code 123");
 
-        // SAFETY: all pointers/lengths come from valid CString/&str fixtures in this test.
+        // SAFETY: every handle is a live managed string this test owns and
+        // releases; returned owners are read and released exactly once.
         unsafe {
-            let client = hew_oauth_new(
-                client_id.as_ptr(),
-                len_i64(client_id.as_bytes().len()),
-                client_secret.as_ptr(),
-                len_i64(client_secret.as_bytes().len()),
-            );
-            let auth_url_ptr = hew_oauth_auth_url(
+            let client = hew_oauth_new(client_id, client_secret);
+            string_release(hew_oauth_auth_url(
                 client,
-                auth_url.as_ptr(),
-                len_i64(auth_url.as_bytes().len()),
-                redirect_uri.as_ptr(),
-                len_i64(redirect_uri.as_bytes().len()),
-                scope.as_ptr(),
-                len_i64(scope.as_bytes().len()),
-                state.as_ptr(),
-                len_i64(state.as_bytes().len()),
-            );
-            libc::free(auth_url_ptr.cast());
-            let verifier = malloc_string(hew_oauth_current_code_verifier(client));
+                auth_url,
+                redirect_uri,
+                scope,
+                state,
+            ));
+            let verifier = owned_text(hew_oauth_current_code_verifier(client));
 
-            let token = hew_oauth_exchange_code(
-                client,
-                token_url.as_ptr(),
-                len_i64(token_url.as_bytes().len()),
-                code.as_ptr(),
-                len_i64(code.as_bytes().len()),
-                redirect_uri.as_ptr(),
-                len_i64(redirect_uri.as_bytes().len()),
-            );
+            let token = hew_oauth_exchange_code(client, token_url, code, redirect_uri);
             assert_eq!(hew_oauth_token_is_ok(token), 1);
             hew_oauth_token_free(token);
             hew_oauth_close(client);
+            string_release(client_id);
+            string_release(client_secret);
+            string_release(auth_url);
+            string_release(redirect_uri);
+            string_release(scope);
+            string_release(state);
+            string_release(token_url);
+            string_release(code);
 
             let form = handle.join().unwrap();
             assert!(form.contains("grant_type=authorization_code"));
@@ -1075,33 +958,29 @@ mod tests {
             400,
             r#"{"error":"invalid_client","error_description":"bad credentials"}"#,
         );
-        let client_id = cstr("client");
-        let client_secret = cstr("secret");
-        let token_url = cstr(&url);
-        let scope = cstr("read ü");
+        let client_id = managed("client");
+        let client_secret = managed("secret");
+        let token_url = managed(&url);
+        let scope = managed("read ü");
 
-        // SAFETY: all pointers/lengths come from valid CString/&str fixtures in this test.
+        // SAFETY: every handle is a live managed string this test owns and
+        // releases; returned owners are read and released exactly once.
         unsafe {
-            let client = hew_oauth_new(
-                client_id.as_ptr(),
-                len_i64(client_id.as_bytes().len()),
-                client_secret.as_ptr(),
-                len_i64(client_secret.as_bytes().len()),
-            );
-            let token = hew_oauth_client_credentials(
-                client,
-                token_url.as_ptr(),
-                len_i64(token_url.as_bytes().len()),
-                scope.as_ptr(),
-                len_i64(scope.as_bytes().len()),
-            );
+            let client = hew_oauth_new(client_id, client_secret);
+            let token = hew_oauth_client_credentials(client, token_url, scope);
             assert!(!token.is_null());
             assert_eq!(hew_oauth_token_is_ok(token), 0);
             assert_eq!(hew_oauth_token_error_status(token), 400);
-            let err = malloc_string(hew_oauth_token_error_message(token));
-            assert_eq!(err, "invalid_client: bad credentials");
+            assert_eq!(
+                owned_text(hew_oauth_token_error_message(token)),
+                "invalid_client: bad credentials"
+            );
             hew_oauth_token_free(token);
             hew_oauth_close(client);
+            string_release(client_id);
+            string_release(client_secret);
+            string_release(token_url);
+            string_release(scope);
 
             let form = handle.join().unwrap();
             assert!(form.contains("grant_type=client_credentials"));
@@ -1112,7 +991,7 @@ mod tests {
         // SAFETY: token was returned by parse_token_body above and is freed exactly once here.
         unsafe {
             assert_eq!(hew_oauth_token_is_ok(token), 0);
-            assert!(malloc_string(hew_oauth_token_error_message(token)).starts_with("invalid_json"));
+            assert!(owned_text(hew_oauth_token_error_message(token)).starts_with("invalid_json"));
             hew_oauth_token_free(token);
         }
     }
@@ -1123,31 +1002,27 @@ mod tests {
             200,
             r#"{"access_token":"new-access","token_type":"Bearer","refresh_token":"next"}"#,
         );
-        let client_id = cstr("client");
-        let client_secret = cstr("secret");
-        let token_url = cstr(&url);
-        let refresh_token = cstr("refresh token");
+        let client_id = managed("client");
+        let client_secret = managed("secret");
+        let token_url = managed(&url);
+        let refresh_token = managed("refresh token");
 
-        // SAFETY: all pointers/lengths come from valid CString/&str fixtures in this test.
+        // SAFETY: every handle is a live managed string this test owns and
+        // releases; returned owners are read and released exactly once.
         unsafe {
-            let client = hew_oauth_new(
-                client_id.as_ptr(),
-                len_i64(client_id.as_bytes().len()),
-                client_secret.as_ptr(),
-                len_i64(client_secret.as_bytes().len()),
-            );
-            let token = hew_oauth_refresh(
-                client,
-                token_url.as_ptr(),
-                len_i64(token_url.as_bytes().len()),
-                refresh_token.as_ptr(),
-                len_i64(refresh_token.as_bytes().len()),
-            );
+            let client = hew_oauth_new(client_id, client_secret);
+            let token = hew_oauth_refresh(client, token_url, refresh_token);
             assert_eq!(hew_oauth_token_is_ok(token), 1);
-            let access = malloc_string(hew_oauth_token_access_token(token));
-            assert_eq!(access, "new-access");
+            assert_eq!(
+                owned_text(hew_oauth_token_access_token(token)),
+                "new-access"
+            );
             hew_oauth_token_free(token);
             hew_oauth_close(client);
+            string_release(client_id);
+            string_release(client_secret);
+            string_release(token_url);
+            string_release(refresh_token);
 
             let form = handle.join().unwrap();
             assert!(form.contains("grant_type=refresh_token"));
@@ -1159,36 +1034,29 @@ mod tests {
 
     #[test]
     fn test_exchange_without_pkce_returns_error_token() {
-        let client_id = cstr("client");
-        let client_secret = cstr("secret");
-        let token_url = cstr("http://127.0.0.1:9");
-        let code = cstr("code");
-        let redirect_uri = cstr("https://app.example/callback");
+        let client_id = managed("client");
+        let client_secret = managed("secret");
+        let token_url = managed("http://127.0.0.1:9");
+        let code = managed("code");
+        let redirect_uri = managed("https://app.example/callback");
 
-        // SAFETY: all pointers/lengths come from valid CString/&str fixtures in this test.
+        // SAFETY: every handle is a live managed string this test owns and
+        // releases; returned owners are read and released exactly once.
         unsafe {
-            let client = hew_oauth_new(
-                client_id.as_ptr(),
-                len_i64(client_id.as_bytes().len()),
-                client_secret.as_ptr(),
-                len_i64(client_secret.as_bytes().len()),
-            );
-            let token = hew_oauth_exchange_code(
-                client,
-                token_url.as_ptr(),
-                len_i64(token_url.as_bytes().len()),
-                code.as_ptr(),
-                len_i64(code.as_bytes().len()),
-                redirect_uri.as_ptr(),
-                len_i64(redirect_uri.as_bytes().len()),
-            );
+            let client = hew_oauth_new(client_id, client_secret);
+            let token = hew_oauth_exchange_code(client, token_url, code, redirect_uri);
             assert_eq!(hew_oauth_token_is_ok(token), 0);
             assert_eq!(
-                malloc_string(hew_oauth_token_error_message(token)),
+                owned_text(hew_oauth_token_error_message(token)),
                 "missing_code_verifier: call auth_url before exchange_code or use exchange_code_with_verifier"
             );
             hew_oauth_token_free(token);
             hew_oauth_close(client);
+            string_release(client_id);
+            string_release(client_secret);
+            string_release(token_url);
+            string_release(code);
+            string_release(redirect_uri);
         }
     }
 }

@@ -17,9 +17,11 @@
 //! Registry guards are released before a connection mutex is acquired, so no
 //! registry lock spans database I/O.
 
+#[cfg(test)]
+use hew_cabi::string::string_release;
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::os::raw::c_char;
 use std::slice;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -111,21 +113,6 @@ unsafe fn params_input<'a>(value: *const BytesTriple) -> Option<&'a str> {
     }
 }
 
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
-
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ErrorKind {
@@ -166,31 +153,8 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
     });
 }
 
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64) -> Result<&'a str, &'static str> {
-    let len = usize::try_from(len).map_err(|_| "negative or oversized string length")?;
-    if value.is_null() {
-        return if len == 0 {
-            Ok("")
-        } else {
-            Err("null string pointer with non-zero length")
-        };
-    }
-    let bytes = unsafe { slice::from_raw_parts(value.cast::<u8>(), len) };
-    std::str::from_utf8(bytes).map_err(|_| "string input was not valid UTF-8")
-}
-
-unsafe fn input<'a>(value: *const c_char, len: i64, label: &str) -> Option<&'a str> {
-    match unsafe { utf8_with_len(value, len) } {
-        Ok(value) => Some(value),
-        Err(error) => {
-            set_error(ErrorKind::InvalidInput, format!("invalid {label}: {error}"));
-            None
-        }
-    }
-}
-
-unsafe fn sql_input<'a>(value: *const c_char, len: i64) -> Option<&'a str> {
-    let value = unsafe { input(value, len, "SQL") }?;
+unsafe fn sql_input<'a>(value: *const HewString) -> Option<&'a str> {
+    let value = unsafe { string_as_str(value) };
     if value.as_bytes().contains(&0) {
         set_error(ErrorKind::InvalidInput, "SQL contains an embedded NUL byte");
         None
@@ -326,13 +290,11 @@ fn query_result(
 /// Open a `SQLite` database from an exact UTF-8 path.
 ///
 /// # Safety
-/// `path` must address exactly `path_len` readable bytes.
+/// `path` must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_sqlite_open_len(path: *const c_char, path_len: i64) -> i64 {
+pub unsafe extern "C" fn hew_sqlite_open(path: *const HewString) -> i64 {
     clear_error();
-    let Some(path) = (unsafe { input(path, path_len, "database path") }) else {
-        return 0;
-    };
+    let path = unsafe { string_as_str(path) };
     match rusqlite::Connection::open(path) {
         Ok(inner) => register(
             &CONNECTIONS,
@@ -353,15 +315,11 @@ pub unsafe extern "C" fn hew_sqlite_open_len(path: *const c_char, path_len: i64)
 /// Execute SQL against a registered connection.
 ///
 /// # Safety
-/// `sql` must address exactly `sql_len` readable bytes.
+/// `sql` must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_sqlite_execute_len(
-    handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
-) -> i64 {
+pub unsafe extern "C" fn hew_sqlite_execute(handle: i64, sql: *const HewString) -> i64 {
     clear_error();
-    let Some(sql) = (unsafe { sql_input(sql, sql_len) }) else {
+    let Some(sql) = (unsafe { sql_input(sql) }) else {
         return 0;
     };
     let Some(connection) = connection(handle) else {
@@ -389,16 +347,15 @@ pub unsafe extern "C" fn hew_sqlite_execute_len(
 /// Execute parameterized SQL against a registered connection.
 ///
 /// # Safety
-/// Both strings must address exactly their supplied byte lengths.
+/// The SQL string must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_sqlite_execute_params_len(
+pub unsafe extern "C" fn hew_sqlite_execute_params(
     handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
+    sql: *const HewString,
     params: *const BytesTriple,
 ) -> i64 {
     clear_error();
-    let Some(sql) = (unsafe { sql_input(sql, sql_len) }) else {
+    let Some(sql) = (unsafe { sql_input(sql) }) else {
         return 0;
     };
     let Some(params) = (unsafe { params_input(params) }) else {
@@ -433,12 +390,11 @@ pub unsafe extern "C" fn hew_sqlite_execute_params_len(
 
 unsafe fn query_impl(
     handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
+    sql: *const HewString,
     params: Option<*const BytesTriple>,
 ) -> i64 {
     clear_error();
-    let Some(sql) = (unsafe { sql_input(sql, sql_len) }) else {
+    let Some(sql) = (unsafe { sql_input(sql) }) else {
         return 0;
     };
     let parameter_values = if let Some(params) = params {
@@ -472,28 +428,23 @@ unsafe fn query_impl(
 /// Query SQL and return an owned result handle.
 ///
 /// # Safety
-/// `sql` must address exactly `sql_len` readable bytes.
+/// `sql` must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_sqlite_query_len(
-    handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
-) -> i64 {
-    unsafe { query_impl(handle, sql, sql_len, None) }
+pub unsafe extern "C" fn hew_sqlite_query(handle: i64, sql: *const HewString) -> i64 {
+    unsafe { query_impl(handle, sql, None) }
 }
 
 /// Query parameterized SQL and return an owned result handle.
 ///
 /// # Safety
-/// Both strings must address exactly their supplied byte lengths.
+/// The SQL string must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_sqlite_query_params_len(
+pub unsafe extern "C" fn hew_sqlite_query_params(
     handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
+    sql: *const HewString,
     params: *const BytesTriple,
 ) -> i64 {
-    unsafe { query_impl(handle, sql, sql_len, Some(params)) }
+    unsafe { query_impl(handle, sql, Some(params)) }
 }
 
 #[no_mangle]
@@ -625,8 +576,8 @@ pub extern "C" fn hew_sqlite_last_error_kind() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn hew_sqlite_last_error() -> *mut c_char {
-    LAST_ERROR.with(|state| malloc_c_string(&state.borrow().message))
+pub extern "C" fn hew_sqlite_last_error() -> *mut HewString {
+    LAST_ERROR.with(|state| string_from_str(&state.borrow().message))
 }
 
 #[cfg(test)]
@@ -636,32 +587,25 @@ mod tests {
     static CONNECTION_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn open_memory() -> i64 {
-        let path = ":memory:";
-        let handle = unsafe {
-            hew_sqlite_open_len(path.as_ptr().cast(), i64::try_from(path.len()).unwrap())
-        };
+        let path = string_from_str(":memory:");
+        let handle = unsafe { hew_sqlite_open(path) };
+        unsafe { string_release(path) };
         assert!(handle > 0);
         handle
     }
 
     fn execute(handle: i64, sql: &str) -> i64 {
-        unsafe {
-            hew_sqlite_execute_len(
-                handle,
-                sql.as_ptr().cast(),
-                i64::try_from(sql.len()).expect("test input length fits in i64"),
-            )
-        }
+        let sql = string_from_str(sql);
+        let result = unsafe { hew_sqlite_execute(handle, sql) };
+        unsafe { string_release(sql) };
+        result
     }
 
     fn query(handle: i64, sql: &str) -> i64 {
-        unsafe {
-            hew_sqlite_query_len(
-                handle,
-                sql.as_ptr().cast(),
-                i64::try_from(sql.len()).expect("test input length fits in i64"),
-            )
-        }
+        let sql = string_from_str(sql);
+        let result = unsafe { hew_sqlite_query(handle, sql) };
+        unsafe { string_release(sql) };
+        result
     }
 
     unsafe fn bytes_value(value: BytesTriple) -> Vec<u8> {
@@ -674,29 +618,32 @@ mod tests {
     }
 
     #[test]
-    fn pointer_length_input_preserves_embedded_nul() {
-        let value = b"left\0right";
-        let parsed = unsafe {
-            utf8_with_len(
-                value.as_ptr().cast(),
-                i64::try_from(value.len()).expect("test input length fits in i64"),
-            )
-        }
-        .unwrap();
-        assert_eq!(parsed.as_bytes(), value);
+    fn embedded_nul_sql_is_rejected_before_driver_dispatch() {
+        let value = string_from_str("SELECT 1\0 trailing");
+        assert!(unsafe { sql_input(value) }.is_none());
+        unsafe { string_release(value) };
+        assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::InvalidInput as i32);
     }
 
     #[test]
-    fn embedded_nul_sql_is_rejected_before_driver_dispatch() {
-        let value = b"SELECT 1\0 trailing";
-        assert!(unsafe {
-            sql_input(
-                value.as_ptr().cast(),
-                i64::try_from(value.len()).expect("test input length fits in i64"),
-            )
-        }
-        .is_none());
-        assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::InvalidInput as i32);
+    fn managed_strings_preserve_empty_unicode_and_errors() {
+        let _test_guard = CONNECTION_TEST_LOCK.lock().unwrap();
+        let handle = open_memory();
+        assert_eq!(execute(handle, ""), 0);
+        assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::None as i32);
+        let result = query(handle, "SELECT 'Zoë 雪' AS value");
+        assert!(result > 0);
+        assert_eq!(
+            unsafe { bytes_value(hew_sqlite_result_cell(result, 0, 0)) },
+            "Zoë 雪".as_bytes()
+        );
+        hew_sqlite_result_free(result);
+        execute(handle, "雪");
+        assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::Query as i32);
+        let error = hew_sqlite_last_error();
+        assert!(unsafe { string_as_str(error) }.contains('雪'));
+        unsafe { string_release(error) };
+        hew_sqlite_close(handle);
     }
 
     #[test]
@@ -735,6 +682,12 @@ mod tests {
         let handle = open_memory();
         assert_eq!(execute(handle, "NOT SQL"), 0);
         assert_eq!(hew_sqlite_last_error_kind(), ErrorKind::Query as i32);
+        let message = hew_sqlite_last_error();
+        assert!(unsafe { string_as_str(message) }.contains("SQLite execute failed"));
+        unsafe { string_release(message) };
+        let unicode = string_from_str("é🙂");
+        assert_eq!(unsafe { string_as_str(unicode) }, "é🙂");
+        unsafe { string_release(unicode) };
         hew_sqlite_close(handle);
     }
 

@@ -18,6 +18,8 @@
 //! }
 //! ```
 
+import std.math;
+
 // ── Types ──────────────────────────────────────────────────────────
 #[wire]
 pub type LinearFit {
@@ -35,13 +37,13 @@ pub type Histogram {
 #[wire]
 pub enum StatsError {
     /// The dataset contains too few observations for the operation.
-    InsufficientData(i64);
+    InsufficientData(i64),
     /// Two paired datasets have different lengths.
-    LengthMismatch(i64, i64);
+    LengthMismatch(i64, i64),
     /// A percentile, smoothing factor, window, or bin count was invalid.
-    InvalidParameter(string);
+    InvalidParameter(string),
     /// The requested relationship is undefined for constant data.
-    ZeroVariance(string);
+    ZeroVariance(string),
 }
 
 /// Return the diagnostic carried by a `StatsError`.
@@ -70,11 +72,11 @@ pub fn error_message(error: StatsError) -> string {
 /// println(run.count());     // 3
 /// ```
 pub type Running {
-    n: i64;
-    mean_val: f64;
-    m2: f64;
-    min_val: f64;
-    max_val: f64;
+    n: i64,
+    mean_val: f64,
+    m2: f64,
+    min_val: f64,
+    max_val: f64,
 }
 
 // ── Descriptive Statistics ───────────────────────────────────────────
@@ -167,12 +169,12 @@ pub fn variance_sample(data: Vec<f64>) -> Result<f64, StatsError> {
 
 /// Compute the population standard deviation.
 pub fn std_dev(data: Vec<f64>) -> Result<f64, StatsError> {
-    Ok(sqrt(variance(data)?))
+    Ok(math.sqrt(variance(data)?))
 }
 
 /// Compute the sample standard deviation.
 pub fn std_dev_sample(data: Vec<f64>) -> Result<f64, StatsError> {
-    Ok(sqrt(variance_sample(data)?))
+    Ok(math.sqrt(variance_sample(data)?))
 }
 
 /// Compute the median (middle value) of a dataset.
@@ -247,7 +249,7 @@ pub fn correlation(x: Vec<f64>, y: Vec<f64>) -> Result<f64, StatsError> {
         sxx = sxx + dx * dx;
         syy = syy + dy * dy;
     }
-    let denom = sqrt(sxx * syy);
+    let denom = math.sqrt(sxx * syy);
     if denom == 0.0 {
         return Err(StatsError.ZeroVariance("correlation is undefined for constant data"));
     }
@@ -323,7 +325,7 @@ pub fn simple_moving_avg(data: Vec<f64>, window: i64) -> Result<Vec<f64>, StatsE
     if window <= 0 || window > n {
         return Err(StatsError.InvalidParameter("moving-average window must fit the dataset"));
     }
-    let result: Vec<f64> = Vec.new();
+    var result: Vec<f64> = Vec.new();
     // Compute first window sum
     var window_sum = 0.0;
     for i in 0 .. window {
@@ -347,7 +349,7 @@ pub fn exponential_moving_avg(data: Vec<f64>, alpha: f64) -> Result<Vec<f64>, St
     if alpha < 0.0 || alpha > 1.0 {
         return Err(StatsError.InvalidParameter("alpha must be between 0 and 1"));
     }
-    let result: Vec<f64> = Vec.new();
+    var result: Vec<f64> = Vec.new();
     var ema = data[0];
     result.push(ema);
     for i in 1 .. n {
@@ -372,8 +374,8 @@ pub fn histogram(data: Vec<f64>, num_bins: i64) -> Result<Histogram, StatsError>
     }
     let lo = min_val(data)?;
     let hi = max_val(data)?;
-    let edges: Vec<f64> = Vec.new();
-    let counts: Vec<i64> = Vec.new();
+    var edges: Vec<f64> = Vec.new();
+    var counts: Vec<i64> = Vec.new();
     var bin_width = 1.0;
     if hi != lo {
         bin_width = (hi - lo) / num_bins as f64;
@@ -467,7 +469,7 @@ impl RunningMethods for Running {
         }
     }
     fn std_dev(self) -> Result<f64, StatsError> {
-        Ok(sqrt(self.variance()?))
+        Ok(math.sqrt(self.variance()?))
     }
     fn min(self) -> Result<f64, StatsError> {
         if self.n == 0 {
@@ -507,14 +509,14 @@ fn sort_f64(data: Vec<f64>) -> Vec<f64> {
 
 // ── Tests ───────────────────────────────────────────────────────────
 fn v2(a: f64, b: f64) -> Vec<f64> {
-    let values: Vec<f64> = Vec.new();
+    var values: Vec<f64> = Vec.new();
     values.push(a);
     values.push(b);
     values
 }
 
 fn v3(a: f64, b: f64, c: f64) -> Vec<f64> {
-    let values: Vec<f64> = Vec.new();
+    var values: Vec<f64> = Vec.new();
     values.push(a);
     values.push(b);
     values.push(c);
@@ -522,7 +524,7 @@ fn v3(a: f64, b: f64, c: f64) -> Vec<f64> {
 }
 
 fn v5(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
-    let values: Vec<f64> = Vec.new();
+    var values: Vec<f64> = Vec.new();
     values.push(a);
     values.push(b);
     values.push(c);

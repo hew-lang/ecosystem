@@ -90,10 +90,12 @@ Response methods accept final status codes from 200 through 599; informational
 responses are rejected because this one-response API cannot send the required
 later final response.
 
-Response bodies cross the native ABI with an explicit byte length, so embedded
-NUL bytes are transmitted without truncation. HTTP header values containing NUL
-are rejected, as are request bodies containing NUL because the current
-native-to-Hew string return boundary cannot represent them losslessly.
+Strings cross the native ABI as managed Hew string values carrying an exact
+byte length, so embedded NUL bytes survive in both directions: a request body
+containing NUL is delivered whole, and a response body containing NUL is
+transmitted without truncation. HTTP header values containing NUL are still
+rejected, incoming and outgoing, because NUL is not a valid HTTP field value
+character.
 
 `await server.url_decode(text)` decodes percent escapes as UTF-8 and converts
 `+` to a space. Malformed escapes and decoded bytes that are not UTF-8 return

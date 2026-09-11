@@ -1,12 +1,14 @@
 //! Actor-owned PostgreSQL client with typed query results.
 
+import std.encoding.utf8;
+
 #[wire]
 pub enum PostgresError {
-    Connect(string);
-    InvalidInput(string);
-    Query(string);
-    Closed(string);
-    Internal(string);
+    Connect(string),
+    InvalidInput(string),
+    Query(string),
+    Closed(string),
+    Internal(string),
 }
 
 pub fn error_message(error: PostgresError) -> string {
@@ -21,8 +23,8 @@ pub fn error_message(error: PostgresError) -> string {
 
 #[wire]
 pub enum CellValue {
-    Null;
-    Text(bytes);
+    Null,
+    Text(bytes),
 }
 
 #[wire]
@@ -69,7 +71,7 @@ fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: 
 
 #[resource]
 type NativeResult {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativeResult {
@@ -103,14 +105,14 @@ impl NativeResult {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_pg_result_free(self.handle)
         };
     }
 }
 
-fn collect_result(result: NativeResult) -> Result<QueryResult, PostgresError> {
+fn collect_result(consume result: NativeResult) -> Result<QueryResult, PostgresError> {
     let row_count = result.row_count();
     let column_count = result.column_count();
     if row_count < 0 || column_count < 0 {
@@ -118,14 +120,14 @@ fn collect_result(result: NativeResult) -> Result<QueryResult, PostgresError> {
         result.close();
         return Err(error);
     }
-    let columns: Vec<string> = Vec.new();
+    var columns: Vec<string> = Vec.new();
     for column in 0 .. column_count {
         let value = result.column(column);
-        columns.push(value.to_string());
+        columns.push(utf8.decode_lossy(value));
     }
-    let rows: Vec<Row> = Vec.new();
+    var rows: Vec<Row> = Vec.new();
     for row in 0 .. row_count {
-        let values: Vec<CellValue> = Vec.new();
+        var values: Vec<CellValue> = Vec.new();
         for column in 0 .. column_count {
             match result.cell_kind(row, column) {
                 0 => values.push(.Null),
@@ -148,14 +150,14 @@ fn collect_result(result: NativeResult) -> Result<QueryResult, PostgresError> {
 
 /// An actor that owns and serializes one PostgreSQL connection.
 pub actor Conn {
-    var handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(connstr: string) {
         handle = unsafe {
-            hew_pg_connect_len(connstr, connstr.len())
+            hew_pg_connect(connstr)
         };
         if handle == 0 {
             connect_error_kind = unsafe {
@@ -170,7 +172,7 @@ pub actor Conn {
     receive fn execute(sql: string) -> Result<i64, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
-            hew_pg_execute_len(connection, sql, sql.len())
+            hew_pg_execute(connection, sql)
         };
         if unsafe {
             hew_pg_last_error_kind()
@@ -184,7 +186,7 @@ pub actor Conn {
     receive fn execute_params(sql: string, params: bytes) -> Result<i64, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
-            hew_pg_execute_params_len(connection, sql, sql.len(), params)
+            hew_pg_execute_params(connection, sql, params)
         };
         if unsafe {
             hew_pg_last_error_kind()
@@ -198,7 +200,7 @@ pub actor Conn {
     receive fn query(sql: string) -> Result<QueryResult, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_pg_query_len(connection, sql, sql.len())
+            hew_pg_query(connection, sql)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -209,7 +211,7 @@ pub actor Conn {
     receive fn query_params(sql: string, params: bytes) -> Result<QueryResult, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_pg_query_params_len(connection, sql, sql.len(), params)
+            hew_pg_query_params(connection, sql, params)
         } };
         if result.handle == 0 {
             return Err(native_error());
@@ -239,11 +241,11 @@ pub actor Conn {
 }
 
 extern "C" {
-    fn hew_pg_connect_len(connstr: string, connstr_len: i64) -> i64;
-    fn hew_pg_execute_len(connection: i64, sql: string, sql_len: i64) -> i64;
-    fn hew_pg_execute_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
-    fn hew_pg_query_len(connection: i64, sql: string, sql_len: i64) -> i64;
-    fn hew_pg_query_params_len(connection: i64, sql: string, sql_len: i64, params: bytes) -> i64;
+    fn hew_pg_connect(connstr: string) -> i64;
+    fn hew_pg_execute(connection: i64, sql: string) -> i64;
+    fn hew_pg_execute_params(connection: i64, sql: string, params: bytes) -> i64;
+    fn hew_pg_query(connection: i64, sql: string) -> i64;
+    fn hew_pg_query_params(connection: i64, sql: string, params: bytes) -> i64;
     fn hew_pg_result_rows(result: i64) -> i64;
     fn hew_pg_result_cols(result: i64) -> i64;
     fn hew_pg_result_column(result: i64, index: i64) -> bytes;

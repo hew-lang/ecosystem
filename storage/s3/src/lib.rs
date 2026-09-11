@@ -1,14 +1,16 @@
 //! Native S3-compatible object storage support.
 //!
-//! Text crosses the ABI as pointer/length pairs, payloads use Hew's `bytes`
+//! Text crosses the ABI as managed Hew strings, payloads use Hew's `bytes`
 //! triple, and every opaque value lives in an idempotent handle registry.
 //! Registry locks are released before any blocking HTTP operation begins.
 
+#[cfg(test)]
+use hew_cabi::string::string_release;
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use rusty_s3::S3Action as _;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read as _;
-use std::os::raw::c_char;
 use std::slice;
 use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -86,23 +88,6 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
     }
 }
 
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: `size` is non-zero and the result is checked.
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    // SAFETY: output names `size` writable bytes.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
-
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ErrorKind {
@@ -169,37 +154,8 @@ pub extern "C" fn hew_s3_last_error_status() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn hew_s3_last_error() -> *mut c_char {
-    LAST_ERROR.with(|s| malloc_c_string(&s.borrow().message))
-}
-
-unsafe fn utf8_with_len<'a>(ptr: *const c_char, len: i64, what: &str) -> Option<&'a str> {
-    let Ok(len) = usize::try_from(len) else {
-        set_error(
-            ErrorKind::InvalidInput,
-            format!("{what} length is negative"),
-        );
-        return None;
-    };
-    if ptr.is_null() {
-        if len == 0 {
-            return Some("");
-        }
-        set_error(ErrorKind::InvalidInput, format!("{what} pointer is null"));
-        return None;
-    }
-    // SAFETY: caller supplies `len` readable bytes; null was handled above.
-    let bytes = unsafe { slice::from_raw_parts(ptr.cast::<u8>(), len) };
-    match std::str::from_utf8(bytes) {
-        Ok(value) => Some(value),
-        Err(error) => {
-            set_error(
-                ErrorKind::InvalidInput,
-                format!("{what} is not UTF-8: {error}"),
-            );
-            None
-        }
-    }
+pub extern "C" fn hew_s3_last_error() -> *mut HewString {
+    LAST_ERROR.with(|s| string_from_str(&s.borrow().message))
 }
 
 unsafe fn bytes_arg<'a>(value: *const BytesTriple) -> Option<&'a [u8]> {
@@ -258,6 +214,35 @@ fn set_request_error(method: &str, bucket: &Bucket, key: &str, error: &ureq::Err
         status,
         request_error_message(method, bucket, key, error),
     );
+}
+
+/// Decode a `%XX`-percent-encoded key from a LIST response.
+///
+/// `rusty_s3::ListObjectsV2` always requests `encoding-type=url` but returns
+/// the still-encoded key text; every non-ASCII or reserved byte in an object
+/// key would otherwise reach Hew code percent-escaped.
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "hi and lo are each a single hex digit, so the combined value fits one byte"
+                )]
+                out.push(((hi << 4) | lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| value.to_owned())
 }
 
 fn response_error_message(
@@ -321,45 +306,30 @@ fn free<T>(handle: i64, cell: &'static Registry<T>) {
     }
 }
 
-macro_rules! text_arg {
-    ($ptr:expr, $len:expr, $name:literal, $fallback:expr) => {
-        match {
-            // SAFETY: callers pass a pointer/length pair originating from a Hew
-            // string argument; `utf8_with_len` validates the length and
-            // null-pointer cases internally before dereferencing.
-            unsafe { utf8_with_len($ptr, $len, $name) }
-        } {
-            Some(v) => v,
-            None => return $fallback,
-        }
-    };
-}
-
 /// Connect to an S3-compatible endpoint and register a bucket handle.
 ///
 /// # Safety
 ///
 /// `endpoint`, `region`, `bucket_name`, `access_key`, and `secret_key` must
-/// each be either null (with a length of 0) or point to at least `*_len`
-/// readable bytes, matching Hew's string FFI convention.
+/// each be a managed Hew string (or null, the canonical empty string).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_s3_connect_len(
-    endpoint: *const c_char,
-    endpoint_len: i64,
-    region: *const c_char,
-    region_len: i64,
-    bucket_name: *const c_char,
-    bucket_len: i64,
-    access_key: *const c_char,
-    access_len: i64,
-    secret_key: *const c_char,
-    secret_len: i64,
+pub unsafe extern "C" fn hew_s3_connect(
+    endpoint: *const HewString,
+    region: *const HewString,
+    bucket_name: *const HewString,
+    access_key: *const HewString,
+    secret_key: *const HewString,
 ) -> i64 {
-    let endpoint = text_arg!(endpoint, endpoint_len, "endpoint", 0);
-    let region = text_arg!(region, region_len, "region", 0);
-    let bucket_name = text_arg!(bucket_name, bucket_len, "bucket", 0);
-    let access_key = text_arg!(access_key, access_len, "access key", 0);
-    let secret_key = text_arg!(secret_key, secret_len, "secret key", 0);
+    // SAFETY: callers supply managed Hew string handles per this function's contract.
+    let endpoint = unsafe { string_as_str(endpoint) };
+    // SAFETY: see above.
+    let region = unsafe { string_as_str(region) };
+    // SAFETY: see above.
+    let bucket_name = unsafe { string_as_str(bucket_name) };
+    // SAFETY: see above.
+    let access_key = unsafe { string_as_str(access_key) };
+    // SAFETY: see above.
+    let secret_key = unsafe { string_as_str(secret_key) };
     if bucket_name.is_empty() {
         set_error(ErrorKind::InvalidInput, "bucket must not be empty");
         return 0;
@@ -406,7 +376,7 @@ pub unsafe extern "C" fn hew_s3_connect_len(
 ///
 /// # Safety
 ///
-/// `handle` must be a value previously returned by `hew_s3_connect_len`, or
+/// `handle` must be a value previously returned by `hew_s3_connect`, or
 /// 0, which is a no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_s3_close(handle: i64) {
@@ -426,19 +396,19 @@ pub extern "C" fn hew_s3_bucket_count() -> i64 {
 ///
 /// # Safety
 ///
-/// `key` and `content_type` must be valid Hew string pointer/length pairs;
-/// `body` must be null or point to a valid Hew bytes triple.
+/// `key` and `content_type` must be managed Hew strings; `body` must be null
+/// or point to a valid Hew bytes triple.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_s3_put_len(
+pub unsafe extern "C" fn hew_s3_put(
     handle: i64,
-    key: *const c_char,
-    key_len: i64,
+    key: *const HewString,
     body: *const BytesTriple,
-    content_type: *const c_char,
-    content_type_len: i64,
+    content_type: *const HewString,
 ) -> i32 {
-    let key = text_arg!(key, key_len, "key", -1);
-    let content_type = text_arg!(content_type, content_type_len, "content type", -1);
+    // SAFETY: callers supply managed Hew string handles per this function's contract.
+    let key = unsafe { string_as_str(key) };
+    // SAFETY: see above.
+    let content_type = unsafe { string_as_str(content_type) };
     // SAFETY: caller supplies a valid Hew bytes value.
     let Some(body) = (unsafe { bytes_arg(body) }) else {
         return -1;
@@ -471,10 +441,11 @@ pub unsafe extern "C" fn hew_s3_put_len(
 ///
 /// # Safety
 ///
-/// `key` must be a valid Hew string pointer/length pair.
+/// `key` must be a managed Hew string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_s3_get_len(handle: i64, key: *const c_char, key_len: i64) -> i64 {
-    let key = text_arg!(key, key_len, "key", 0);
+pub unsafe extern "C" fn hew_s3_get(handle: i64, key: *const HewString) -> i64 {
+    // SAFETY: caller supplies a managed Hew string handle per this function's contract.
+    let key = unsafe { string_as_str(key) };
     let Some(conn) = lookup(handle, &BUCKETS, "bucket") else {
         return 0;
     };
@@ -527,11 +498,11 @@ pub extern "C" fn hew_s3_get_status(handle: i64) -> i32 {
 pub extern "C" fn hew_s3_get_value(handle: i64) -> BytesTriple {
     lookup(handle, &GET_RESULTS, "get result").map_or_else(empty_bytes, |v| owned_bytes(&v.value))
 }
-/// Free a `GetResult` handle produced by `hew_s3_get_len`.
+/// Free a `GetResult` handle produced by `hew_s3_get`.
 ///
 /// # Safety
 ///
-/// `handle` must be a value returned by `hew_s3_get_len`, or 0.
+/// `handle` must be a value returned by `hew_s3_get`, or 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_s3_get_free(handle: i64) {
     free(handle, &GET_RESULTS);
@@ -541,10 +512,11 @@ pub unsafe extern "C" fn hew_s3_get_free(handle: i64) {
 ///
 /// # Safety
 ///
-/// `key` must be a valid Hew string pointer/length pair.
+/// `key` must be a managed Hew string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_s3_delete_len(handle: i64, key: *const c_char, key_len: i64) -> i32 {
-    let key = text_arg!(key, key_len, "key", -1);
+pub unsafe extern "C" fn hew_s3_delete(handle: i64, key: *const HewString) -> i32 {
+    // SAFETY: caller supplies a managed Hew string handle per this function's contract.
+    let key = unsafe { string_as_str(key) };
     let Some(conn) = lookup(handle, &BUCKETS, "bucket") else {
         return -1;
     };
@@ -568,10 +540,11 @@ pub unsafe extern "C" fn hew_s3_delete_len(handle: i64, key: *const c_char, key_
 ///
 /// # Safety
 ///
-/// `key` must be a valid Hew string pointer/length pair.
+/// `key` must be a managed Hew string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_s3_exists_len(handle: i64, key: *const c_char, key_len: i64) -> i32 {
-    let key = text_arg!(key, key_len, "key", -1);
+pub unsafe extern "C" fn hew_s3_exists(handle: i64, key: *const HewString) -> i32 {
+    // SAFETY: caller supplies a managed Hew string handle per this function's contract.
+    let key = unsafe { string_as_str(key) };
     let Some(conn) = lookup(handle, &BUCKETS, "bucket") else {
         return -1;
     };
@@ -600,14 +573,11 @@ pub unsafe extern "C" fn hew_s3_exists_len(handle: i64, key: *const c_char, key_
 ///
 /// # Safety
 ///
-/// `prefix` must be a valid Hew string pointer/length pair.
+/// `prefix` must be a managed Hew string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_s3_list_len_ffi(
-    handle: i64,
-    prefix: *const c_char,
-    prefix_len: i64,
-) -> i64 {
-    let prefix = text_arg!(prefix, prefix_len, "prefix", 0);
+pub unsafe extern "C" fn hew_s3_list(handle: i64, prefix: *const HewString) -> i64 {
+    // SAFETY: caller supplies a managed Hew string handle per this function's contract.
+    let prefix = unsafe { string_as_str(prefix) };
     let Some(conn) = lookup(handle, &BUCKETS, "bucket") else {
         return 0;
     };
@@ -654,12 +624,12 @@ pub unsafe extern "C" fn hew_s3_list_len_ffi(
                 return 0;
             }
         };
-        entries.extend(
-            response
-                .contents
-                .into_iter()
-                .map(|v| (v.key, i64::try_from(v.size).unwrap_or(i64::MAX))),
-        );
+        entries.extend(response.contents.into_iter().map(|v| {
+            (
+                percent_decode(&v.key),
+                i64::try_from(v.size).unwrap_or(i64::MAX),
+            )
+        }));
         match response.next_continuation_token {
             Some(token) if !token.is_empty() => continuation = Some(token),
             _ => break,
@@ -676,13 +646,13 @@ pub extern "C" fn hew_s3_list_count(handle: i64) -> i64 {
         .unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn hew_s3_list_key(handle: i64, index: i64) -> *mut c_char {
+pub extern "C" fn hew_s3_list_key(handle: i64, index: i64) -> *mut HewString {
     let Ok(index) = usize::try_from(index) else {
         set_error(ErrorKind::InvalidInput, "list index is negative");
         return std::ptr::null_mut();
     };
     lookup(handle, &LIST_RESULTS, "list result")
-        .and_then(|v| v.entries.get(index).map(|e| malloc_c_string(&e.0)))
+        .and_then(|v| v.entries.get(index).map(|e| string_from_str(&e.0)))
         .unwrap_or_else(|| {
             set_error(ErrorKind::InvalidInput, "list index is out of bounds");
             std::ptr::null_mut()
@@ -701,11 +671,11 @@ pub extern "C" fn hew_s3_list_size(handle: i64, index: i64) -> i64 {
             -1
         })
 }
-/// Free a `ListResult` handle produced by `hew_s3_list_len_ffi`.
+/// Free a `ListResult` handle produced by `hew_s3_list`.
 ///
 /// # Safety
 ///
-/// `handle` must be a value returned by `hew_s3_list_len_ffi`, or 0.
+/// `handle` must be a value returned by `hew_s3_list`, or 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_s3_list_free(handle: i64) {
     free(handle, &LIST_RESULTS);
@@ -715,22 +685,22 @@ pub unsafe extern "C" fn hew_s3_list_free(handle: i64) {
 ///
 /// # Safety
 ///
-/// `key` and `method` must be valid Hew string pointer/length pairs.
+/// `key` and `method` must be managed Hew strings.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_s3_presign_len(
+pub unsafe extern "C" fn hew_s3_presign(
     handle: i64,
-    key: *const c_char,
-    key_len: i64,
-    method: *const c_char,
-    method_len: i64,
+    key: *const HewString,
+    method: *const HewString,
     expires_seconds: i64,
-) -> *mut c_char {
+) -> *mut HewString {
     if expires_seconds <= 0 {
         set_error(ErrorKind::InvalidInput, "expiry must be positive");
         return std::ptr::null_mut();
     }
-    let key = text_arg!(key, key_len, "key", std::ptr::null_mut());
-    let method = text_arg!(method, method_len, "method", std::ptr::null_mut());
+    // SAFETY: callers supply managed Hew string handles per this function's contract.
+    let key = unsafe { string_as_str(key) };
+    // SAFETY: see above.
+    let method = unsafe { string_as_str(method) };
     let Some(conn) = lookup(handle, &BUCKETS, "bucket") else {
         return std::ptr::null_mut();
     };
@@ -761,13 +731,12 @@ pub unsafe extern "C" fn hew_s3_presign_len(
         }
     };
     clear_error();
-    malloc_c_string(url.as_str())
+    string_from_str(url.as_str())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
 
     static TEST_BUCKETS: Mutex<()> = Mutex::new(());
 
@@ -790,28 +759,26 @@ mod tests {
         }
     }
 
-    #[allow(
-        clippy::cast_possible_wrap,
-        reason = "test endpoint literals are far below i64::MAX in length"
-    )]
     unsafe fn connect(endpoint: &str) -> i64 {
-        // SAFETY: every argument is a valid, live Rust string slice whose
-        // length matches its byte length, satisfying hew_s3_connect_len's
-        // contract.
+        let endpoint = string_from_str(endpoint);
+        let region = string_from_str("us-east-1");
+        let bucket = string_from_str("hew-test");
+        let access_key = string_from_str("minioadmin");
+        let secret_key = string_from_str("minioadmin");
+        // SAFETY: every argument is a live managed Hew string, satisfying
+        // hew_s3_connect's contract.
+        let handle = unsafe { hew_s3_connect(endpoint, region, bucket, access_key, secret_key) };
+        // SAFETY: each handle was produced by string_from_str above and is
+        // still owned by this function; the callee never releases inbound
+        // handles.
         unsafe {
-            hew_s3_connect_len(
-                endpoint.as_ptr().cast(),
-                endpoint.len() as i64,
-                "us-east-1".as_ptr().cast(),
-                9,
-                "hew-test".as_ptr().cast(),
-                8,
-                "minioadmin".as_ptr().cast(),
-                10,
-                "minioadmin".as_ptr().cast(),
-                10,
-            )
+            string_release(endpoint);
+            string_release(region);
+            string_release(bucket);
+            string_release(access_key);
+            string_release(secret_key);
         }
+        handle
     }
 
     #[test]
@@ -837,13 +804,16 @@ mod tests {
             hew_s3_close(handle);
         }
         assert_eq!(hew_s3_bucket_count(), before);
+        let key = string_from_str("x");
         assert_eq!(
-            // SAFETY: "x" is a valid 1-byte string literal; `handle` is
-            // stale, which hew_s3_exists_len's contract handles by
-            // returning a typed error rather than dereferencing it.
-            unsafe { hew_s3_exists_len(handle, "x".as_ptr().cast(), 1) },
+            // SAFETY: `key` is a live managed Hew string; `handle` is stale,
+            // which hew_s3_exists's contract handles by returning a typed
+            // error rather than dereferencing it.
+            unsafe { hew_s3_exists(handle, key) },
             -1
         );
+        // SAFETY: `key` is owned by this function and not yet released.
+        unsafe { string_release(key) };
     }
 
     fn assert_last_request_error_is_redacted(method: &str, key: &str) {
@@ -870,6 +840,18 @@ mod tests {
     }
 
     #[test]
+    fn percent_decode_reverses_the_list_response_url_encoding() {
+        assert_eq!(percent_decode("plain-key.txt"), "plain-key.txt");
+        assert_eq!(
+            percent_decode("na%C3%AFve-%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"),
+            "naïve-日本語.txt"
+        );
+        assert_eq!(percent_decode("100%25"), "100%");
+        assert_eq!(percent_decode("trailing%"), "trailing%");
+        assert_eq!(percent_decode("bad%zzhex"), "bad%zzhex");
+    }
+
+    #[test]
     fn http_statuses_map_to_public_error_categories() {
         assert_eq!(classify_http_status(401), ErrorKind::AccessDenied);
         assert_eq!(classify_http_status(403), ErrorKind::AccessDenied);
@@ -885,8 +867,7 @@ mod tests {
     #[allow(
         clippy::cast_possible_wrap,
         clippy::cast_possible_truncation,
-        reason = "test payload and key literals are a handful of bytes, far \
-                  below u32::MAX / i64::MAX"
+        reason = "test payload literal is a handful of bytes, far below u32::MAX"
     )]
     fn signed_request_errors_never_expose_the_url() {
         let _serial = TEST_BUCKETS.lock().unwrap();
@@ -898,6 +879,8 @@ mod tests {
         let handle = unsafe { connect(&endpoint) };
         assert_ne!(handle, 0);
         let key = "private/object";
+        let key_s = string_from_str(key);
+        let content_type_s = string_from_str("image/png");
         let body_data = [1_u8, 2, 3];
         let body = BytesTriple {
             ptr: body_data.as_ptr().cast_mut(),
@@ -906,97 +889,77 @@ mod tests {
         };
 
         assert_eq!(
-            // SAFETY: `key`, `body`, and the content type are valid
-            // pointer/length pairs to live test data.
-            unsafe {
-                hew_s3_put_len(
-                    handle,
-                    key.as_ptr().cast(),
-                    key.len() as i64,
-                    &raw const body,
-                    "image/png".as_ptr().cast(),
-                    9,
-                )
-            },
+            // SAFETY: `key_s`, `body`, and `content_type_s` are live managed
+            // values satisfying hew_s3_put's contract.
+            unsafe { hew_s3_put(handle, key_s, &raw const body, content_type_s) },
             -1
         );
         assert_last_request_error_is_redacted("PUT", key);
 
         assert_eq!(
-            // SAFETY: `key` is a valid pointer/length pair to a live &str.
-            unsafe { hew_s3_get_len(handle, key.as_ptr().cast(), key.len() as i64) },
+            // SAFETY: `key_s` is a live managed Hew string.
+            unsafe { hew_s3_get(handle, key_s) },
             0
         );
         assert_last_request_error_is_redacted("GET", key);
 
         assert_eq!(
-            // SAFETY: `key` is a valid pointer/length pair to a live &str.
-            unsafe { hew_s3_delete_len(handle, key.as_ptr().cast(), key.len() as i64) },
+            // SAFETY: `key_s` is a live managed Hew string.
+            unsafe { hew_s3_delete(handle, key_s) },
             -1
         );
         assert_last_request_error_is_redacted("DELETE", key);
 
         assert_eq!(
-            // SAFETY: `key` is a valid pointer/length pair to a live &str.
-            unsafe { hew_s3_exists_len(handle, key.as_ptr().cast(), key.len() as i64) },
+            // SAFETY: `key_s` is a live managed Hew string.
+            unsafe { hew_s3_exists(handle, key_s) },
             -1
         );
         assert_last_request_error_is_redacted("HEAD", key);
 
         assert_eq!(
-            // SAFETY: `key` is a valid pointer/length pair to a live &str.
-            unsafe { hew_s3_list_len_ffi(handle, key.as_ptr().cast(), key.len() as i64) },
+            // SAFETY: `key_s` is a live managed Hew string.
+            unsafe { hew_s3_list(handle, key_s) },
             0
         );
         assert_last_request_error_is_redacted("LIST", key);
-        // SAFETY: `handle` came from connect() above.
-        unsafe { hew_s3_close(handle) };
+        // SAFETY: `key_s`, `content_type_s` and `handle` are the live values
+        // obtained above; the caller retained ownership throughout.
+        unsafe {
+            string_release(key_s);
+            string_release(content_type_s);
+            hew_s3_close(handle);
+        }
     }
 
     #[test]
-    fn presign_validates_method_and_returns_allocation_base() {
+    fn presign_validates_method_and_returns_managed_string() {
         let _serial = TEST_BUCKETS.lock().unwrap();
         // SAFETY: connect()'s contract is satisfied by the fixed test literal.
         let handle = unsafe { connect("http://127.0.0.1:9000") };
-        // SAFETY: "a b" and "GET" are valid pointer/length pairs to live
-        // string literals.
-        let ptr = unsafe {
-            hew_s3_presign_len(
-                handle,
-                "a b".as_ptr().cast(),
-                3,
-                "GET".as_ptr().cast(),
-                3,
-                60,
-            )
-        };
+        let key = string_from_str("a b");
+        let get_method = string_from_str("GET");
+        // SAFETY: `key` and `get_method` are live managed Hew strings.
+        let ptr = unsafe { hew_s3_presign(handle, key, get_method, 60) };
         assert!(!ptr.is_null());
-        // SAFETY: `ptr` is the non-null, NUL-terminated allocation
-        // `hew_s3_presign_len` just returned.
-        let value = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap();
+        // SAFETY: `ptr` is the live managed string `hew_s3_presign` just
+        // returned.
+        let value = unsafe { string_as_str(ptr) };
         assert!(value.contains("X-Amz-Signature="));
-        // SAFETY: `ptr` was allocated by `malloc_c_string` and not freed yet.
-        unsafe {
-            libc::free(ptr.cast());
-        }
+        // SAFETY: `ptr` was allocated by `string_from_str` and not released yet.
+        unsafe { string_release(ptr) };
+        let post_method = string_from_str("POST");
         assert!(
-            // SAFETY: "x" and "POST" are valid pointer/length pairs to live
-            // string literals.
-            unsafe {
-                hew_s3_presign_len(
-                    handle,
-                    "x".as_ptr().cast(),
-                    1,
-                    "POST".as_ptr().cast(),
-                    4,
-                    60,
-                )
-            }
-            .is_null()
+            // SAFETY: `key` and `post_method` are live managed Hew strings.
+            unsafe { hew_s3_presign(handle, key, post_method, 60) }.is_null()
         );
         assert_eq!(hew_s3_last_error_kind(), ErrorKind::InvalidInput as i32);
-        // SAFETY: `handle` came from connect() above.
+        // SAFETY: `key`, `get_method`, `post_method` and `handle` are the
+        // live values obtained above.
         unsafe {
+            string_release(key);
+            string_release(get_method);
+            string_release(post_method);
             hew_s3_close(handle);
         }
     }
@@ -1011,14 +974,14 @@ mod tests {
         );
         assert_eq!(hew_s3_list_count(handle), 1);
         let key = hew_s3_list_key(handle, 0);
-        // SAFETY: `key` is the non-null, NUL-terminated allocation
-        // `hew_s3_list_key` just returned.
-        assert_eq!(unsafe { CStr::from_ptr(key) }.to_str().unwrap(), "a");
-        // SAFETY: `key` was allocated by `malloc_c_string` and not freed
+        // SAFETY: `key` is the live managed string `hew_s3_list_key` just
+        // returned.
+        assert_eq!(unsafe { string_as_str(key) }, "a");
+        // SAFETY: `key` was allocated by `hew_s3_list_key` and not released
         // yet; `handle` came from `register` above and freeing it twice is
         // deliberately exercising idempotence.
         unsafe {
-            libc::free(key.cast());
+            string_release(key);
             hew_s3_list_free(handle);
             hew_s3_list_free(handle);
         }
@@ -1070,7 +1033,8 @@ mod tests {
     #[test]
     #[allow(
         clippy::cast_possible_wrap,
-        reason = "test key/content-type literals are a handful of bytes"
+        clippy::cast_possible_truncation,
+        reason = "test payload literal is a handful of bytes, far below u32::MAX"
     )]
     fn minio_round_trip_preserves_binary_and_missing() {
         let _serial = TEST_BUCKETS.lock().unwrap();
@@ -1082,24 +1046,18 @@ mod tests {
             offset: 0,
             len: 3,
         };
+        let key = string_from_str("native/value");
+        let content_type = string_from_str("application/octet-stream");
         assert_eq!(
-            // SAFETY: `key`, `body`, and the content type are valid
-            // pointer/length pairs to live test data.
-            unsafe {
-                hew_s3_put_len(
-                    handle,
-                    "native/value".as_ptr().cast(),
-                    12,
-                    &raw const body,
-                    "application/octet-stream".as_ptr().cast(),
-                    24,
-                )
-            },
+            // SAFETY: `key`, `body`, and `content_type` are live managed
+            // values satisfying hew_s3_put's contract.
+            unsafe { hew_s3_put(handle, key, &raw const body, content_type) },
             0
         );
-        // SAFETY: "native/value" is a valid pointer/length pair to a live
-        // string literal.
-        let get = unsafe { hew_s3_get_len(handle, "native/value".as_ptr().cast(), 12) };
+        // SAFETY: `content_type` is owned by this function and not needed again.
+        unsafe { string_release(content_type) };
+        // SAFETY: `key` is a live managed Hew string.
+        let get = unsafe { hew_s3_get(handle, key) };
         assert_eq!(hew_s3_get_status(get), 1);
         let value = hew_s3_get_value(get);
         assert_eq!(
@@ -1115,19 +1073,18 @@ mod tests {
             hew_s3_get_free(get);
         }
         assert_eq!(
-            // SAFETY: "native/value" is a valid pointer/length pair to a
-            // live string literal.
-            unsafe { hew_s3_delete_len(handle, "native/value".as_ptr().cast(), 12) },
+            // SAFETY: `key` is a live managed Hew string.
+            unsafe { hew_s3_delete(handle, key) },
             0
         );
-        // SAFETY: "native/value" is a valid pointer/length pair to a live
-        // string literal.
-        let missing = unsafe { hew_s3_get_len(handle, "native/value".as_ptr().cast(), 12) };
+        // SAFETY: `key` is a live managed Hew string.
+        let missing = unsafe { hew_s3_get(handle, key) };
         assert_eq!(hew_s3_get_status(missing), 0);
-        // SAFETY: `missing` and `handle` are the live handles obtained
-        // above.
+        // SAFETY: `missing`, `key` and `handle` are the live handles
+        // obtained above.
         unsafe {
             hew_s3_get_free(missing);
+            string_release(key);
             hew_s3_close(handle);
         }
     }

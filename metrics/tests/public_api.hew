@@ -2,22 +2,30 @@ import hew.metrics;
 
 extern "C" {
     fn hew_metrics_registry_count() -> i64;
-    fn hew_actor_stop(pid: LocalPid<metrics.Registry>);
+}
+
+fn registry_without_close(before: i64) -> LocalPid<metrics.Registry> {
+    let registry = spawn metrics.Registry;
+    sleep(20ms);
+    assert_eq(unsafe {
+        hew_metrics_registry_count()
+    }, before + 1);
+    registry
 }
 
 fn actor_stop_releases_relative_registry_count() {
     let before = unsafe {
         hew_metrics_registry_count()
     };
-    let registry = spawn metrics.Registry;
-    sleep(20ms);
-    assert_eq(unsafe {
+    let registry = registry_without_close(before);
+    close(registry);
+    var attempts = 0;
+    while unsafe {
         hew_metrics_registry_count()
-    }, before + 1);
-    unsafe {
-        hew_actor_stop(registry);
-    };
-    sleep(20ms);
+    } != before && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
     assert_eq(unsafe {
         hew_metrics_registry_count()
     }, before);
@@ -25,7 +33,7 @@ fn actor_stop_releases_relative_registry_count() {
 
 fn invalid_registration_returns_typed_error() {
     let registry = spawn metrics.Registry;
-    match await registry.counter("bad name", "invalid") {
+    match registry.counter("bad name", "invalid") {
         .Ok(.Err(.InvalidInput(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
@@ -34,11 +42,14 @@ fn invalid_registration_returns_typed_error() {
 
 fn counter_and_export_return_exact_values() {
     let registry = spawn metrics.Registry;
-    match await registry.counter("requests_total", "Handled requests") {
+    match registry.counter("requests_handled_by_the_server_total", "Requêtes traitées — 雪") {
         .Ok(.Ok(counter)) => {
-            let _ = await registry.counter_add(counter, 3.0);
-            match await registry.export() {
-                .Ok(.Ok(output)) => assert(output.contains("requests_total 3")),
+            let _ = registry.counter_add(counter, 3.0);
+            match registry.export() {
+                .Ok(.Ok(output)) => {
+                    assert(output.contains("requests_handled_by_the_server_total 3"));
+                    assert(output.contains("Requêtes traitées — 雪"));
+                },
                 _ => assert(false),
             }
         },
@@ -47,17 +58,35 @@ fn counter_and_export_return_exact_values() {
     let _ = registry.close();
 }
 
+fn empty_export_is_the_empty_string() {
+    let registry = spawn metrics.Registry;
+    match registry.export() {
+        .Ok(.Ok(output)) => assert(output.is_empty()),
+        _ => assert(false),
+    }
+    let _ = registry.close();
+}
+
+fn empty_label_list_returns_a_typed_error() {
+    let registry = spawn metrics.Registry;
+    match registry.counter_vec("unlabelled_requests_total", "Missing labels", "") {
+        .Ok(.Err(.InvalidInput(message))) => assert(!message.is_empty()),
+        _ => assert(false),
+    }
+    let _ = registry.close();
+}
+
 fn labeled_metric_returns_typed_error_at_series_limit() {
     let registry = spawn metrics.Registry;
-    match await registry.counter_vec("bounded_requests_total", "Bounded requests", "route") {
+    match registry.counter_vec("bounded_requests_total", "Bounded requests", "route") {
         .Ok(.Ok(counter)) => {
             for i in 0 .. 1024 {
-                match await registry.counter_vec_inc(counter, f"{i}") {
+                match registry.counter_vec_inc(counter, f"{i}") {
                     .Ok(.Ok(_)) => {},
                     _ => assert(false),
                 }
             }
-            match await registry.counter_vec_inc(counter, "overflow") {
+            match registry.counter_vec_inc(counter, "overflow") {
                 .Ok(.Err(.SeriesLimit(handle))) => assert_eq(handle, counter),
                 _ => assert(false),
             }
@@ -69,9 +98,9 @@ fn labeled_metric_returns_typed_error_at_series_limit() {
 
 fn wrong_metric_kind_returns_typed_error() {
     let registry = spawn metrics.Registry;
-    match await registry.counter("kind_counter_total", "Kind counter") {
+    match registry.counter("kind_counter_total", "Kind counter") {
         .Ok(.Ok(counter)) => {
-            match await registry.gauge_set(counter, 42.0) {
+            match registry.gauge_set(counter, 42.0) {
                 .Ok(.Err(.WrongMetricKind(handle))) => assert_eq(handle, counter),
                 _ => assert(false),
             }
@@ -85,6 +114,8 @@ fn main() {
     actor_stop_releases_relative_registry_count();
     invalid_registration_returns_typed_error();
     counter_and_export_return_exact_values();
+    empty_export_is_the_empty_string();
+    empty_label_list_returns_a_typed_error();
     labeled_metric_returns_typed_error_at_series_limit();
     wrong_metric_kind_returns_typed_error();
 }

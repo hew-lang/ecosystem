@@ -15,7 +15,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 httparse = "1"
-libc.workspace = true
+hew-cabi.workspace = true
 
 [lints]
 workspace = true

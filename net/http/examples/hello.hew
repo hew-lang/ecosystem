@@ -20,11 +20,11 @@ fn main() {
     var served = false;
     while attempts_left > 0 && !served {
         attempts_left = attempts_left - 1;
-        match await server.accept_one() {
+        match server.accept_one() {
             .Ok(result) => match result {
                 .Ok(request) => {
                     println(f"{request.method()} {request.path()}");
-                    match await server.respond_text(200, "Hello from Hew!\n") {
+                    match server.respond_text(200, "Hello from Hew!\n") {
                         .Ok(response_result) => match response_result {
                             .Ok(_) => {},
                             .Err(error) => println(http.error_message(error)),
@@ -50,5 +50,5 @@ fn main() {
     if !served {
         println("no request arrived within 30 seconds");
     }
-    server.close();
+    let _ = server.close();
 }
