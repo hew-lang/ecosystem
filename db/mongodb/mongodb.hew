@@ -122,8 +122,6 @@ impl NativeCursor {
 /// releases the native client, and the actor stop hook provides the same
 /// cleanup if the caller abandons it.
 pub actor Conn {
-    let uri: string,
-    let database: string,
     var handle: i64 = 0,
     var connect_error_kind: i32 = 0,
     var connect_error_message: string = "",

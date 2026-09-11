@@ -71,7 +71,10 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
 actor ResponderHarness {
     let responder: LocalPid<nats.Conn>,
     let subscription: Subscription,
-    init(responder: LocalPid<nats.Conn>, subscription: Subscription) {}
+    init(responder_pid: LocalPid<nats.Conn>, subscription_id: Subscription) {
+        responder = responder_pid;
+        subscription = subscription_id;
+    }
     receive fn serve() {
         match responder.next_message(subscription.clone(), 3000) {
             .Ok(.Ok(.Message(message))) => {
@@ -94,7 +97,7 @@ fn request_reply_preserves_reply_subject_and_payload() {
         _ => panic("NATS responder subscribe failed"),
     };
     let requester = connection();
-    let harness = spawn ResponderHarness(responder: responder, subscription: subscription);
+    let harness = spawn ResponderHarness(responder_pid: responder, subscription_id: subscription);
     // Fork the responder's listen-and-reply so it runs concurrently with the
     // requester's blocking `request`, which needs a live listener to answer.
     let serving = fork harness.serve();
