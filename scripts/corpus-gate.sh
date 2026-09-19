@@ -23,6 +23,8 @@ cd "$repo_root"
 
 HEW="${HEW:-hew}"
 stage="${1:-all}"
+build_dir="$(mktemp -d)"
+trap 'rm -rf "$build_dir"' EXIT
 
 # Every file is checked on its own, so `dead_code` would fire on every exported
 # function whose only callers live in a sibling example, test, or downstream
@@ -50,7 +52,10 @@ run_check() {
 run_program() {
     local seconds="$1"
     shift
-    timeout "${seconds}s" "$HEW" run --pkg-path "$repo_root" "$@"
+    # Native packages may need a cold dependency build. The deadline measures
+    # program execution, not downloading and compiling those dependencies.
+    "$HEW" build --pkg-path "$repo_root" "$@" -o "$build_dir/program"
+    timeout "${seconds}s" "$build_dir/program"
 }
 
 # Serve one request through the HTTP example. The example exits after the first
@@ -63,7 +68,9 @@ run_http_example() {
     local address="${HEW_HTTP_EXAMPLE_ADDR:-127.0.0.1:8080}"
     log="$(mktemp)"
     body="$(mktemp)"
-    run_program 60 "$repo_root/net/http/examples/hello.hew" >"$log" &
+    "$HEW" build --pkg-path "$repo_root" \
+        "$repo_root/net/http/examples/hello.hew" -o "$build_dir/http-example"
+    timeout 60s "$build_dir/http-example" >"$log" &
     pid=$!
     for _ in {1..40}; do
         if curl --silent --fail --max-time 2 \
@@ -87,7 +94,7 @@ run_hew() {
     echo "== run: net/http server suite"
     (
         cd net/http
-        timeout 30s "$HEW" run --pkg-path "$repo_root" tests/public_server.hew
+        run_program 30 tests/public_server.hew
     )
 
     echo "== run: suites and examples needing no service"
@@ -161,8 +168,7 @@ run_native() {
     for program in \
         image/magick/tests/public_api.hew \
         image/magick/examples/basic.hew; do
-        timeout 120s "$HEW" run --pkg-path "$repo_root" \
-            "${link_args[@]}" "$repo_root/$program"
+        run_program 120 "${link_args[@]}" "$repo_root/$program"
     done
 
     echo "== run: storage/s3 suites and example"
