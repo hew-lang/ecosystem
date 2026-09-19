@@ -1,0 +1,15 @@
+//! Typed parameters shared by the SQL database clients.
+//!
+//! Text is UTF-8 and may contain newlines. Bytes preserves arbitrary binary
+//! data. Null binds SQL NULL; it is distinct from an empty Text or Bytes value.
+//! SQL placeholders and database conversion rules remain driver-specific.
+
+#[wire]
+pub enum Param {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Text(string),
+    Bytes(bytes),
+}

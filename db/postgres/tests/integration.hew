@@ -1,5 +1,7 @@
 import std.testing;
 
+import hew.db.sql.{Param};
+
 import hew.db.postgres;
 
 import hew.db.postgres.{PostgresError, CellValue};
@@ -74,7 +76,7 @@ fn query_snapshot_preserves_values_null_and_empty() {
         .Ok(result) => expect_count(result, 0),
         .Err(_) => testing.assert_true(false),
     }
-    match db.execute_params("INSERT INTO hew_sql_beta VALUES ($1::bigint, $2::text)", "1\nvalue".to_bytes()) {
+    match db.execute_params("INSERT INTO hew_sql_beta VALUES ($1::bigint, $2::text)", [Param.Int(1), Param.Text("value")]) {
         .Ok(result) => expect_count(result, 1),
         .Err(_) => panic("actor stopped during parameter insert"),
     }
@@ -101,7 +103,7 @@ fn query_snapshot_preserves_values_null_and_empty() {
         },
         _ => testing.assert_true(false),
     }
-    match db.query_params("SELECT value FROM hew_sql_beta WHERE id = $1::bigint", "1".to_bytes()) {
+    match db.query_params("SELECT value FROM hew_sql_beta WHERE id = $1::bigint", [Param.Int(1)]) {
         .Ok(.Ok(query)) => {
             testing.assert_eq(query.rows.len(), 1);
             match query.rows[0].values[0] {
@@ -150,12 +152,12 @@ fn actual_database_failures_are_typed() {
         .Ok(result) => expect_query_error_reporting(result, unicode_text()),
         .Err(_) => testing.assert_true(false),
     }
-    match db.query_params("SELECT $1::text", nul_value()) {
+    match db.query_params("SELECT $1::text", [Param.Text("A\0B")]) {
         .Ok(result) => expect_query_error(result),
         .Err(_) => testing.assert_true(false),
     }
-    match db.query_params("SELECT $1::text", invalid_utf8()) {
-        .Ok(.Err(.InvalidInput(message))) => testing.assert_true(!message.is_empty()),
+    match db.query_params("SELECT $1::text", Vec.new()) {
+        .Ok(.Err(.Query(message))) => testing.assert_true(!message.is_empty()),
         _ => testing.assert_true(false),
     }
     let _ = db.close();
@@ -196,7 +198,49 @@ fn explicit_actor_stop_releases_connection() {
     }, previous);
 }
 
+fn typed_parameters_preserve_values() {
+    let db = connection();
+    var binary = invalid_utf8();
+    binary.push(0);
+    let parameters = [Param.Null, Param.Bool(true), Param.Int(-9223372036854775807 - 1), Param.Int(9223372036854775807), Param.Float(1.25), Param.Text("first line\nZoë 雪's \\ path"), Param.Text(""), Param.Bytes(binary), Param.Bytes(bytes.new())];
+    match db.query_params("SELECT CAST($1 AS text), $2, $3, $4, $5, $6, $7, $8, $9", parameters) {
+        .Ok(.Ok(query)) => {
+            testing.assert_eq(query.rows.len(), 1);
+            testing.assert_eq(query.columns.len(), 9);
+            match query.rows[0].values[0] {
+                .Null => {},
+                _ => panic("NULL parameter changed"),
+            }
+            let expected = ["true", "-9223372036854775808", "9223372036854775807", "1.25", "first line\nZoë 雪's \\ path", ""];
+            for index in 0 .. expected.len() {
+                match query.rows[0].values[index + 1] {
+                    .Text(value) => assert_bytes(value, expected[index].to_bytes()),
+                    _ => panic("typed parameter became NULL"),
+                }
+            }
+            var expected_binary = invalid_utf8();
+            expected_binary.push(0);
+            match query.rows[0].values[7] {
+                .Text(value) => assert_bytes(value, expected_binary),
+                _ => panic("binary parameter became NULL"),
+            }
+            match query.rows[0].values[8] {
+                .Text(value) => assert_bytes(value, bytes.new()),
+                _ => panic("empty binary parameter became NULL"),
+            }
+        },
+        .Ok(.Err(error)) => panic(postgres.error_message(error)),
+        .Err(_) => panic("SQL actor stopped during typed query"),
+    }
+    match db.query_params("SELECT 1", Vec.new()) {
+        .Ok(.Ok(query)) => testing.assert_eq(query.rows.len(), 1),
+        _ => panic("empty parameter list failed"),
+    }
+    let _ = db.close();
+}
+
 fn main() {
+    typed_parameters_preserve_values();
     query_snapshot_preserves_values_null_and_empty();
     actual_database_failures_are_typed();
     explicit_actor_stop_releases_connection();

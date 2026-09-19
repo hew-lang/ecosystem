@@ -6,6 +6,7 @@ members = [
   "db/postgres",
   "db/redis",
   "db/sqlite",
+  "db/sql",
   "image/magick",
   "metrics",
   "net/http",

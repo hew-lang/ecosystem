@@ -36,9 +36,13 @@ The checked, self-contained example lives at
 hew run --pkg-path . db/sqlite/examples/basic.hew
 ```
 
-Parameterized methods accept newline-delimited UTF-8 `bytes` values for `?`
-placeholders. Cell payloads are also `bytes`, preserving empty and embedded-NUL
-values exactly. SQL strings cross the native boundary with explicit lengths.
+Parameterized methods accept `Vec<Param>` from `hew.db.sql`. For example,
+`[Param.Int(42), Param.Text("First line\nSecond line"), Param.Null]` binds three
+values. Use `Param.Bytes(data)` for arbitrary binary data, including invalid
+UTF-8. Empty values and NULL stay distinct. See [typed SQL parameters](../sql/README.md)
+for all six variants and database-specific conversions. Cell payloads remain
+`bytes`, preserving exact values. SQL strings cross the native boundary with
+explicit lengths.
 
 ## API surface
 
@@ -49,9 +53,9 @@ call below is made with `await db.<method>(...)`.
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `execute(sql: string)` | `Result<i64, SqliteError>` | Runs a statement with no `?` placeholders; the `i64` is the affected row count. |
-| `execute_params(sql: string, params: bytes)` | `Result<i64, SqliteError>` | Same as `execute`, with newline-delimited `?` bindings. |
+| `execute_params(sql: string, params: Vec<Param>)` | `Result<i64, SqliteError>` | Same as `execute`, with typed `?` bindings. |
 | `query(sql: string)` | `Result<QueryResult, SqliteError>` | Runs a `SELECT` with no placeholders. |
-| `query_params(sql: string, params: bytes)` | `Result<QueryResult, SqliteError>` | Same as `query`, with newline-delimited `?` bindings. |
+| `query_params(sql: string, params: Vec<Param>)` | `Result<QueryResult, SqliteError>` | Same as `query`, with typed `?` bindings. |
 | `close()` | — | Releases the native connection. Called automatically on actor stop if skipped. |
 
 Public types:

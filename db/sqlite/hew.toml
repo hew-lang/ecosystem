@@ -13,3 +13,6 @@ repository = "https://github.com/hew-lang/ecosystem"
 crate = "."
 lib = "hew_hew_db_sqlite"
 kind = "staticlib"
+
+[dependencies]
+"hew.db.sql" = "0.3.0"

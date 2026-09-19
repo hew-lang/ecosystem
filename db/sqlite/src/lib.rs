@@ -96,15 +96,12 @@ unsafe fn bytes_arg<'a>(value: *const BytesTriple, label: &str) -> Option<&'a [u
     }
 }
 
-unsafe fn params_input<'a>(value: *const BytesTriple) -> Option<&'a str> {
+unsafe fn params_input(value: *const BytesTriple) -> Option<Vec<hew_ecosystem_db_sql::Param>> {
     let value = unsafe { bytes_arg(value, "parameter") }?;
-    match std::str::from_utf8(value) {
+    match hew_ecosystem_db_sql::decode(value) {
         Ok(value) => Some(value),
         Err(error) => {
-            set_error(
-                ErrorKind::InvalidInput,
-                format!("parameters are not UTF-8: {error}"),
-            );
+            set_error(ErrorKind::InvalidInput, error);
             None
         }
     }
@@ -245,12 +242,20 @@ fn result(handle: i64) -> Option<Arc<SqliteResult>> {
     registered(&RESULTS, handle, "query result")
 }
 
-fn split_params(params: &str) -> Vec<&str> {
-    if params.is_empty() {
-        Vec::new()
-    } else {
-        params.split('\n').collect()
-    }
+fn driver_params(params: Vec<hew_ecosystem_db_sql::Param>) -> Vec<rusqlite::types::Value> {
+    use hew_ecosystem_db_sql::Param;
+    use rusqlite::types::Value;
+    params
+        .into_iter()
+        .map(|param| match param {
+            Param::Null => Value::Null,
+            Param::Bool(value) => Value::Integer(i64::from(value)),
+            Param::Int(value) => Value::Integer(value),
+            Param::Float(value) => Value::Real(value),
+            Param::Text(value) => Value::Text(value),
+            Param::Bytes(value) => Value::Blob(value),
+        })
+        .collect()
 }
 
 fn query_result(
@@ -365,7 +370,7 @@ pub unsafe extern "C" fn hew_sqlite_execute_params(
         set_error(ErrorKind::Internal, "SQLite connection lock is unavailable");
         return 0;
     };
-    let values = split_params(params);
+    let values = driver_params(params);
     let params = values
         .iter()
         .map(|value| value as &dyn rusqlite::types::ToSql)
@@ -398,7 +403,7 @@ unsafe fn query_impl(
         let Some(params) = (unsafe { params_input(params) }) else {
             return 0;
         };
-        split_params(params)
+        driver_params(params)
     } else {
         Vec::new()
     };

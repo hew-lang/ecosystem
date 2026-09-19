@@ -2,6 +2,10 @@
 
 import std.encoding.utf8;
 
+import std.encoding.wire;
+
+import hew.db.sql.{Param};
+
 #[wire]
 pub enum PostgresError {
     Connect(string),
@@ -183,10 +187,10 @@ pub actor Conn {
         }
     }
 
-    receive fn execute_params(sql: string, params: bytes) -> Result<i64, PostgresError> {
+    receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
-            hew_pg_execute_params(connection, sql, params)
+            hew_pg_execute_params(connection, sql, wire.encode(params))
         };
         if unsafe {
             hew_pg_last_error_kind()
@@ -208,10 +212,10 @@ pub actor Conn {
         collect_result(result)
     }
 
-    receive fn query_params(sql: string, params: bytes) -> Result<QueryResult, PostgresError> {
+    receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, PostgresError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_pg_query_params(connection, sql, params)
+            hew_pg_query_params(connection, sql, wire.encode(params))
         } };
         if result.handle == 0 {
             return Err(native_error());
