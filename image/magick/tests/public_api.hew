@@ -177,7 +177,7 @@ fn blob_round_trip_preserves_a_real_image() {
     sleep(20ms);
 }
 
-fn image_without_close(before: i64) -> LocalPid<magick.Image> {
+fn image_without_close(before: i64) -> magick.Image {
     let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
     match image.width() {
         .Ok(.Ok(value)) => testing.assert_eq(value as i64, 10),

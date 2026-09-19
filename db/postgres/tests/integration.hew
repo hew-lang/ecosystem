@@ -60,7 +60,7 @@ fn expect_query_error_reporting<T>(result: Result<T, PostgresError>, expected: s
     }
 }
 
-fn connection() -> LocalPid<postgres.Conn> {
+fn connection() -> postgres.Conn {
     spawn postgres.Conn(connstr: "host=127.0.0.1 port=5432 user=hew password=hew dbname=hew_test")
 }
 
@@ -165,7 +165,7 @@ fn actual_database_failures_are_typed() {
     }
 }
 
-fn actor_without_close(previous: i64) -> LocalPid<postgres.Conn> {
+fn actor_without_close(previous: i64) -> postgres.Conn {
     let db = connection();
     match db.query("SELECT 1") {
         .Ok(.Ok(_)) => testing.assert_true(true),

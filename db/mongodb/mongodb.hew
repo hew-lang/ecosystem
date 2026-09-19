@@ -16,7 +16,7 @@
 //!         uri: "mongodb://127.0.0.1:27017",
 //!         database: "example",
 //!     );
-//!     match await db.insert_one("users", "{\"name\":\"Alice\"}") {
+//!     match db.insert_one("users", "{\"name\":\"Alice\"}") {
 //!         .Ok(result) => match result {
 //!             .Ok(id) => println(f"inserted {id}"),
 //!             .Err(error) => println(mongodb.error_message(error)),

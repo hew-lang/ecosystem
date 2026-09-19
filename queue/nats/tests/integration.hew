@@ -10,7 +10,7 @@ extern "C" {
     fn hew_nats_message_count() -> i64;
 }
 
-fn connection() -> LocalPid<nats.Conn> {
+fn connection() -> nats.Conn {
     spawn nats.Conn(options: Options { url: "nats://127.0.0.1:14222" })
 }
 
@@ -69,9 +69,9 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
 }
 
 actor ResponderHarness {
-    let responder: LocalPid<nats.Conn>,
+    let responder: nats.Conn,
     let subscription: Subscription,
-    init(responder_pid: LocalPid<nats.Conn>, subscription_id: Subscription) {
+    init(responder_pid: nats.Conn, subscription_id: Subscription) {
         responder = responder_pid;
         subscription = subscription_id;
     }

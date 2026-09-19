@@ -66,7 +66,7 @@ fn expect_query_error_reporting<T>(result: Result<T, MysqlError>, expected: stri
     }
 }
 
-fn connection() -> LocalPid<mysql.Conn> {
+fn connection() -> mysql.Conn {
     spawn mysql.Conn(url: "mysql://hew:hew@127.0.0.1:3306/hew_test")
 }
 
@@ -167,7 +167,7 @@ fn actual_database_failures_are_typed() {
     }
 }
 
-fn actor_without_close(previous: i64) -> LocalPid<mysql.Conn> {
+fn actor_without_close(previous: i64) -> mysql.Conn {
     let db = connection();
     match db.query("SELECT 1") {
         .Ok(.Ok(_)) => testing.assert_true(true),

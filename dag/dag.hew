@@ -45,7 +45,7 @@
 //!   module boundary, so an importing consumer drives routing through their own
 //!   per-node logic.
 //! - **Live actors** — to route through one live actor per node, open-code the
-//!   driver in the consumer's compilation unit (spawn a `Vec<LocalPid<...>>`,
+//!   driver in the consumer's compilation unit (spawn a `Vec<...>`,
 //!   ask each in `topo_order`, feed results forward). The library supplies the
 //!   spec loading, validation, and topological sort; the consumer supplies the
 //!   actors. See `examples/actor_pipeline.hew`. (`await` inside a closure

@@ -58,10 +58,7 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
     let Some(allocation_len) = capacity.checked_add(8) else {
         std::process::abort();
     };
-    let base = unsafe { libc::malloc(allocation_len) }.cast::<u8>();
-    if base.is_null() {
-        std::process::abort();
-    }
+    let base = hew_cabi::mem::buf_alloc(allocation_len).cast::<u8>();
     unsafe {
         std::ptr::copy_nonoverlapping(1_u32.to_ne_bytes().as_ptr(), base, 4);
         std::ptr::copy_nonoverlapping(capacity_u32.to_ne_bytes().as_ptr(), base.add(4), 4);

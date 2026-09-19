@@ -55,11 +55,8 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
     let Some(allocation_len) = capacity.checked_add(8) else {
         std::process::abort();
     };
-    // SAFETY: allocation is checked before header or payload writes.
-    let base = unsafe { libc::malloc(allocation_len) }.cast::<u8>();
-    if base.is_null() {
-        std::process::abort();
-    }
+    // The shared allocator aborts on allocation failure before any writes.
+    let base = hew_cabi::mem::buf_alloc(allocation_len).cast::<u8>();
     // SAFETY: `base` names `8 + capacity` bytes. Byte copies impose no
     // alignment requirement on the two u32 header values.
     unsafe {
@@ -729,7 +726,7 @@ mod tests {
         };
         // SAFETY: this is the unique test-side release of the refcount-1
         // allocation produced by `owned_bytes`.
-        unsafe { libc::free(value.ptr.sub(8).cast()) };
+        unsafe { hew_cabi::mem::buf_free(value.ptr.sub(8).cast()) };
         bytes
     }
 

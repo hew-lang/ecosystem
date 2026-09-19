@@ -5,7 +5,7 @@
 
 import hew.db.mongodb;
 
-fn cleanup_fixture(db: LocalPid<mongodb.Conn>, collection: string, filter: string) {
+fn cleanup_fixture(db: mongodb.Conn, collection: string, filter: string) {
     match db.delete_one(collection, filter) {
         .Ok(result) => match result {
             .Ok(_) => {},
@@ -15,7 +15,7 @@ fn cleanup_fixture(db: LocalPid<mongodb.Conn>, collection: string, filter: strin
     }
 }
 
-fn insert_fixture(db: LocalPid<mongodb.Conn>, collection: string, document: string) {
+fn insert_fixture(db: mongodb.Conn, collection: string, document: string) {
     match db.insert_one(collection, document) {
         .Ok(result) => match result {
             .Ok(id) => assert(!id.is_empty()),
@@ -25,7 +25,7 @@ fn insert_fixture(db: LocalPid<mongodb.Conn>, collection: string, document: stri
     }
 }
 
-fn insert_one_valid_document_returns_nonempty_id(db: LocalPid<mongodb.Conn>) {
+fn insert_one_valid_document_returns_nonempty_id(db: mongodb.Conn) {
     let collection = "beta_insert";
     let filter = "{\"test_key\":\"insert\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -39,7 +39,7 @@ fn insert_one_valid_document_returns_nonempty_id(db: LocalPid<mongodb.Conn>) {
     cleanup_fixture(db, collection, filter);
 }
 
-fn find_one_existing_document_returns_found_value(db: LocalPid<mongodb.Conn>) {
+fn find_one_existing_document_returns_found_value(db: mongodb.Conn) {
     let collection = "beta_find_one";
     let filter = "{\"test_key\":\"find-one\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -58,7 +58,7 @@ fn find_one_existing_document_returns_found_value(db: LocalPid<mongodb.Conn>) {
     cleanup_fixture(db, collection, filter);
 }
 
-fn insert_and_find_preserve_unicode_document_values(db: LocalPid<mongodb.Conn>) {
+fn insert_and_find_preserve_unicode_document_values(db: mongodb.Conn) {
     let collection = "beta_unicode";
     let filter = "{\"test_key\":\"unicode\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -74,7 +74,7 @@ fn insert_and_find_preserve_unicode_document_values(db: LocalPid<mongodb.Conn>) 
     cleanup_fixture(db, collection, filter);
 }
 
-fn find_one_absent_document_returns_missing_value(db: LocalPid<mongodb.Conn>) {
+fn find_one_absent_document_returns_missing_value(db: mongodb.Conn) {
     let collection = "beta_missing";
     let filter = "{\"test_key\":\"absent\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -87,7 +87,7 @@ fn find_one_absent_document_returns_missing_value(db: LocalPid<mongodb.Conn>) {
     }
 }
 
-fn find_matching_documents_returns_exact_query_contents(db: LocalPid<mongodb.Conn>) {
+fn find_matching_documents_returns_exact_query_contents(db: mongodb.Conn) {
     let collection = "beta_find";
     let filter = "{\"test_key\":\"find\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -105,7 +105,7 @@ fn find_matching_documents_returns_exact_query_contents(db: LocalPid<mongodb.Con
     cleanup_fixture(db, collection, filter);
 }
 
-fn repeated_find_returns_fresh_results_after_cursor_cleanup(db: LocalPid<mongodb.Conn>) {
+fn repeated_find_returns_fresh_results_after_cursor_cleanup(db: mongodb.Conn) {
     let collection = "beta_cursor_cleanup";
     let filter = "{\"test_key\":\"cursor-cleanup\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -130,7 +130,7 @@ fn repeated_find_returns_fresh_results_after_cursor_cleanup(db: LocalPid<mongodb
     cleanup_fixture(db, collection, filter);
 }
 
-fn update_one_matching_document_returns_modified_count(db: LocalPid<mongodb.Conn>) {
+fn update_one_matching_document_returns_modified_count(db: mongodb.Conn) {
     let collection = "beta_update";
     let filter = "{\"test_key\":\"update\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -152,7 +152,7 @@ fn update_one_matching_document_returns_modified_count(db: LocalPid<mongodb.Conn
     cleanup_fixture(db, collection, filter);
 }
 
-fn delete_one_matching_document_returns_deleted_count(db: LocalPid<mongodb.Conn>) {
+fn delete_one_matching_document_returns_deleted_count(db: mongodb.Conn) {
     let collection = "beta_delete";
     let filter = "{\"test_key\":\"delete\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -173,7 +173,7 @@ fn delete_one_matching_document_returns_deleted_count(db: LocalPid<mongodb.Conn>
     }
 }
 
-fn count_matching_documents_returns_exact_count(db: LocalPid<mongodb.Conn>) {
+fn count_matching_documents_returns_exact_count(db: mongodb.Conn) {
     let collection = "beta_count";
     let filter = "{\"test_key\":\"count\"}";
     cleanup_fixture(db, collection, filter.clone());
@@ -195,7 +195,7 @@ fn count_matching_documents_returns_exact_count(db: LocalPid<mongodb.Conn>) {
     }
 }
 
-fn insert_one_invalid_document_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
+fn insert_one_invalid_document_returns_invalid_json(db: mongodb.Conn) {
     match db.insert_one("beta_invalid", "not json") {
         .Ok(result) => match result {
             .Err(.InvalidJson(message)) => assert(message.contains("invalid document JSON")),
@@ -205,7 +205,7 @@ fn insert_one_invalid_document_returns_invalid_json(db: LocalPid<mongodb.Conn>) 
     }
 }
 
-fn find_one_non_object_filter_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
+fn find_one_non_object_filter_returns_invalid_json(db: mongodb.Conn) {
     match db.find_one("beta_invalid", "[]") {
         .Ok(result) => match result {
             .Err(.InvalidJson(message)) => assert(message.contains("filter must be a JSON object")),
@@ -215,7 +215,7 @@ fn find_one_non_object_filter_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
     }
 }
 
-fn find_invalid_filter_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
+fn find_invalid_filter_returns_invalid_json(db: mongodb.Conn) {
     match db.find("beta_invalid", "not json") {
         .Ok(result) => match result {
             .Err(.InvalidJson(_)) => {},
@@ -225,7 +225,7 @@ fn find_invalid_filter_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
     }
 }
 
-fn update_one_non_object_update_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
+fn update_one_non_object_update_returns_invalid_json(db: mongodb.Conn) {
     match db.update_one("beta_invalid", "{}", "[]") {
         .Ok(result) => match result {
             .Err(.InvalidJson(message)) => assert(message.contains("update must be a JSON object")),
@@ -235,7 +235,7 @@ fn update_one_non_object_update_returns_invalid_json(db: LocalPid<mongodb.Conn>)
     }
 }
 
-fn delete_one_invalid_filter_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
+fn delete_one_invalid_filter_returns_invalid_json(db: mongodb.Conn) {
     match db.delete_one("beta_invalid", "not json") {
         .Ok(result) => match result {
             .Err(.InvalidJson(_)) => {},
@@ -245,7 +245,7 @@ fn delete_one_invalid_filter_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
     }
 }
 
-fn count_invalid_filter_returns_invalid_json(db: LocalPid<mongodb.Conn>) {
+fn count_invalid_filter_returns_invalid_json(db: mongodb.Conn) {
     match db.count("beta_invalid", "not json") {
         .Ok(result) => match result {
             .Err(.InvalidJson(_)) => {},

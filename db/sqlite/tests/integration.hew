@@ -55,7 +55,7 @@ fn expect_query_error<T>(result: Result<T, SqliteError>) {
     }
 }
 
-fn database() -> LocalPid<sqlite.Db> {
+fn database() -> sqlite.Db {
     spawn sqlite.Db(path: ":memory:")
 }
 
@@ -147,7 +147,7 @@ fn open_failure_is_typed() {
     let _ = db.close();
 }
 
-fn actor_without_close(previous: i64) -> LocalPid<sqlite.Db> {
+fn actor_without_close(previous: i64) -> sqlite.Db {
     let db = database();
     match db.query("SELECT 1") {
         .Ok(.Ok(_)) => testing.assert_true(true),

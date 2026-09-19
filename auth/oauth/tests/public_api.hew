@@ -29,7 +29,7 @@ fn failed_token_exchange_releases_relative_token_count() {
     sleep(20ms);
 }
 
-fn client_without_close(before: i64) -> LocalPid<oauth.Client> {
+fn client_without_close(before: i64) -> oauth.Client {
     let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
     sleep(20ms);
     assert_eq(unsafe {

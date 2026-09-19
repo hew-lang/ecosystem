@@ -14,11 +14,11 @@
 //!
 //! fn main() {
 //!     let server = spawn http.Server(addr: "127.0.0.1:8080");
-//!     match await server.accept_one() {
+//!     match server.accept_one() {
 //!         .Ok(result) => match result {
 //!             .Ok(request) => {
 //!                 println(f"{request.method()} {request.path()}");
-//!                 match await server.respond_text(200, "Hello from Hew!") {
+//!                 match server.respond_text(200, "Hello from Hew!") {
 //!                     .Ok(response_result) => match response_result {
 //!                         .Ok(_) => {},
 //!                         .Err(error) => println(http.error_message(error)),

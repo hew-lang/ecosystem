@@ -60,13 +60,14 @@ run_program() {
 run_http_example() {
     echo "== run: net/http/examples/hello.hew (with a real request)"
     local log body pid
+    local address="${HEW_HTTP_EXAMPLE_ADDR:-127.0.0.1:8080}"
     log="$(mktemp)"
     body="$(mktemp)"
     run_program 60 "$repo_root/net/http/examples/hello.hew" >"$log" &
     pid=$!
     for _ in {1..40}; do
         if curl --silent --fail --max-time 2 \
-            http://127.0.0.1:8080/hello >"$body"; then
+            "http://$address/hello" >"$body"; then
             break
         fi
         sleep 1

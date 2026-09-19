@@ -21,7 +21,7 @@
 //!         client_secret: "secret123",
 //!     );
 //!
-//!     let token = match await client.client_credentials(
+//!     let token = match client.client_credentials(
 //!         token_url: "https://auth.example.com/token",
 //!         oauth_scope: "read write",
 //!     ) {
@@ -37,7 +37,7 @@
 //!
 //!     // Authorization code: generate a PKCE-protected redirect URL for user login.
 //!     // Passing empty state makes the client generate a CSPRNG state.
-//!     let url = match await client.auth_url(
+//!     let url = match client.auth_url(
 //!         auth_url: "https://auth.example.com/authorize",
 //!         redirect_uri: "https://myapp.com/callback",
 //!         oauth_scope: "openid profile",
@@ -50,7 +50,7 @@
 //!         .Err(_) => panic("OAuth actor stopped"),
 //!     };
 //!     println(url);
-//!     let expected_state = match await client.current_state() {
+//!     let expected_state = match client.current_state() {
 //!         .Ok(result) => match result {
 //!             .Ok(value) => value,
 //!             .Err(error) => panic(oauth.error_message(error)),
@@ -61,7 +61,7 @@
 //!     let _ = expected_state;
 //!
 //!     // Exchange authorization code for token; sends the stored PKCE verifier.
-//!     let token2 = match await client.exchange_code(
+//!     let token2 = match client.exchange_code(
 //!         token_url: "https://auth.example.com/token",
 //!         code: "auth-code-from-redirect",
 //!         redirect_uri: "https://myapp.com/callback",

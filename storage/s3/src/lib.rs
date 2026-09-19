@@ -49,7 +49,7 @@ fn empty_bytes() -> BytesTriple {
 
 #[allow(
     clippy::cast_ptr_alignment,
-    reason = "malloc's allocation is at least 8-byte aligned on every supported \
+    reason = "buf_alloc's allocation is at least 8-byte aligned on every supported \
               target, well above BytesHeader's 4-byte (u32) alignment"
 )]
 fn owned_bytes(value: &[u8]) -> BytesTriple {
@@ -67,11 +67,8 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
         std::process::abort()
     };
     // SAFETY: the allocation is checked before writing its header and payload.
-    let base = unsafe { libc::malloc(allocation_len) }.cast::<u8>();
-    if base.is_null() {
-        std::process::abort();
-    }
-    // SAFETY: `base` is malloc-aligned and names one header plus `capacity`
+    let base = hew_cabi::mem::buf_alloc(allocation_len).cast::<u8>();
+    // SAFETY: `base` is buf_alloc-aligned and names one header plus `capacity`
     // writable payload bytes. This mirrors hew-runtime's pinned bytes layout.
     unsafe {
         base.cast::<BytesHeader>().write(BytesHeader {
@@ -742,7 +739,7 @@ mod tests {
 
     #[allow(
         clippy::cast_ptr_alignment,
-        reason = "malloc's allocation is at least 8-byte aligned on every supported \
+        reason = "buf_alloc's allocation is at least 8-byte aligned on every supported \
                   target, well above BytesHeader's 4-byte (u32) alignment"
     )]
     unsafe fn release_bytes_like_hew(value: BytesTriple) {
@@ -754,8 +751,8 @@ mod tests {
         // SAFETY: `header` points to the initialized Hew bytes header.
         if unsafe { (*header).refcount.fetch_sub(1, Ordering::Release) } == 1 {
             std::sync::atomic::fence(Ordering::Acquire);
-            // SAFETY: the final owner releases the malloc allocation base.
-            unsafe { libc::free(header.cast()) };
+            // SAFETY: the final owner releases the Hew allocation base.
+            unsafe { hew_cabi::mem::buf_free(header.cast()) };
         }
     }
 
@@ -991,7 +988,7 @@ mod tests {
     #[test]
     #[allow(
         clippy::cast_ptr_alignment,
-        reason = "malloc's allocation is at least 8-byte aligned on every supported \
+        reason = "buf_alloc's allocation is at least 8-byte aligned on every supported \
                   target, well above BytesHeader's 4-byte (u32) alignment"
     )]
     fn non_empty_get_value_survives_hew_release_oracle() {

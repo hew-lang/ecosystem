@@ -87,12 +87,12 @@ fn assert_bytes_result(result: Result<bytes, redis.RedisError>, expected: bytes)
     }
 }
 
-fn client_actor() -> LocalPid<redis.Conn> {
+fn client_actor() -> redis.Conn {
     spawn redis.Conn(options: Options { url: "redis://127.0.0.1:6379/" })
 }
 
 actor DelayedPublisher {
-    let client: LocalPid<redis.Conn>,
+    let client: redis.Conn,
 
     receive fn publish(channel: string, message: bytes) {
         sleep(50ms);
@@ -339,7 +339,7 @@ fn explicit_close_makes_later_work_fail_typed() {
     }
 }
 
-fn create_actor_without_explicit_close(previous_count: i64) -> LocalPid<redis.Conn> {
+fn create_actor_without_explicit_close(previous_count: i64) -> redis.Conn {
     let client = client_actor();
     match client.set("hew:redis:beta:abandoned", binary("released")) {
         .Ok(result) => assert_i64(result, 0),

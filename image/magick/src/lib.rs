@@ -64,21 +64,16 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
     let Some(allocation_len) = capacity.checked_add(BYTES_HEADER_SIZE) else {
         std::process::abort()
     };
-    // SAFETY: the allocation is checked before writing its header and payload.
-    let base = unsafe { libc::malloc(allocation_len) }.cast::<u8>();
-    if base.is_null() {
-        std::process::abort();
-    }
-    // SAFETY: malloc provides the header alignment and the allocation contains
+    // The shared allocator aborts on allocation failure before any writes.
+    let base = hew_cabi::mem::buf_alloc(allocation_len).cast::<u8>();
+    // SAFETY: buf_alloc provides the header alignment and the allocation contains
     // the complete header and payload. Hew owns and releases the returned bytes.
     unsafe {
-        // `malloc` returns memory aligned for any fundamental type
-        // (`max_align_t`, at least 8 bytes on every supported target), which
-        // exceeds `BytesHeader`'s 4-byte alignment requirement, so this cast
-        // never produces a misaligned pointer in practice.
+        // The shared allocator's 16-byte alignment exceeds BytesHeader's
+        // four-byte alignment requirement.
         #[allow(
             clippy::cast_ptr_alignment,
-            reason = "malloc's alignment guarantee covers BytesHeader; see comment above"
+            reason = "buf_alloc's alignment guarantee covers BytesHeader; see comment above"
         )]
         base.cast::<BytesHeader>().write(BytesHeader {
             refcount: AtomicU32::new(1),
@@ -728,11 +723,11 @@ mod tests {
         }
         #[allow(
             clippy::cast_ptr_alignment,
-            reason = "malloc's alignment guarantee covers BytesHeader; see SAFETY comment below"
+            reason = "buf_alloc's alignment guarantee covers BytesHeader; see SAFETY comment below"
         )]
         // SAFETY: test callers pass live values returned by `owned_bytes`.
         // The cast never misaligns: `owned_bytes` derives `value.ptr` from a
-        // `malloc`ed base (aligned to `max_align_t`, >= 8 bytes on every
+        // `buf_alloc` base (aligned to 16 bytes on every
         // supported target) offset by exactly `BYTES_HEADER_SIZE`, so
         // subtracting that offset recovers the original, still-aligned base.
         let header = unsafe { value.ptr.sub(BYTES_HEADER_SIZE).cast::<BytesHeader>() };
@@ -740,7 +735,7 @@ mod tests {
         if unsafe { (*header).refcount.fetch_sub(1, Ordering::Release) } == 1 {
             std::sync::atomic::fence(Ordering::Acquire);
             // SAFETY: the final owner releases the allocation base.
-            unsafe { libc::free(header.cast()) };
+            unsafe { hew_cabi::mem::buf_free(header.cast()) };
         }
     }
 

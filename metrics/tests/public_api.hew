@@ -4,7 +4,7 @@ extern "C" {
     fn hew_metrics_registry_count() -> i64;
 }
 
-fn registry_without_close(before: i64) -> LocalPid<metrics.Registry> {
+fn registry_without_close(before: i64) -> metrics.Registry {
     let registry = spawn metrics.Registry;
     sleep(20ms);
     assert_eq(unsafe {

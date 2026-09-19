@@ -49,12 +49,8 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
     let Some(allocation_len) = capacity.checked_add(8) else {
         std::process::abort();
     };
-    // SAFETY: `malloc` accepts any allocation size and the result is checked
-    // before it is written or returned.
-    let base = unsafe { libc::malloc(allocation_len) }.cast::<u8>();
-    if base.is_null() {
-        std::process::abort();
-    }
+    // The shared allocator aborts on allocation failure before any writes.
+    let base = hew_cabi::mem::buf_alloc(allocation_len).cast::<u8>();
     // SAFETY: `base` names an allocation of `8 + capacity` bytes. Header
     // writes use byte copies, so they do not impose an alignment requirement.
     unsafe {
@@ -1191,9 +1187,9 @@ mod tests {
             unsafe { bytes_arg(&raw const value, "value") },
             Some(expected.as_slice())
         );
-        // SAFETY: `owned_bytes` allocated this block with `malloc`; subtracting
+        // SAFETY: `owned_bytes` allocated this block with `buf_alloc`; subtracting
         // its fixed header yields the original allocation address.
-        unsafe { libc::free(value.ptr.sub(8).cast()) };
+        unsafe { hew_cabi::mem::buf_free(value.ptr.sub(8).cast()) };
     }
 
     #[test]

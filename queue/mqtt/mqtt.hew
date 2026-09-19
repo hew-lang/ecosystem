@@ -15,9 +15,9 @@
 //!         host: "127.0.0.1", port: 11883,
 //!         client_id: "hew-example", keepalive_seconds: 30,
 //!     });
-//!     let _ = await client.subscribe("hew/example", mqtt.QoS.AtLeastOnce);
-//!     let _ = await client.publish("hew/example", "hello", mqtt.QoS.AtLeastOnce, false);
-//!     match await client.next_message(1000) {
+//!     let _ = client.subscribe("hew/example", mqtt.QoS.AtLeastOnce);
+//!     let _ = client.publish("hew/example", "hello", mqtt.QoS.AtLeastOnce, false);
+//!     match client.next_message(1000) {
 //!         .Ok(result) => match result {
 //!             .Ok(.Message(message)) => println(message.payload),
 //!             .Ok(.Missing) => println("no message arrived"),

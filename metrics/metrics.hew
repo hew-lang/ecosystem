@@ -18,47 +18,47 @@
 //! fn main() {
 //!     let reg = spawn metrics.Registry;
 //!
-//!     match await reg.counter("http_requests_total", "Total HTTP requests") {
+//!     match reg.counter("http_requests_total", "Total HTTP requests") {
 //!         .Ok(result) => match result {
 //!             .Ok(reqs) => {
-//!                 let _ = await reg.counter_inc(reqs);
+//!                 let _ = reg.counter_inc(reqs);
 //!             },
 //!             .Err(error) => println(metrics.error_message(error)),
 //!         },
 //!         .Err(_) => println("metrics actor stopped"),
 //!     }
 //!
-//!     match await reg.gauge("memory_bytes", "Memory usage in bytes") {
+//!     match reg.gauge("memory_bytes", "Memory usage in bytes") {
 //!         .Ok(result) => match result {
 //!             .Ok(mem) => {
-//!                 let _ = await reg.gauge_set(mem, 1024.0);
+//!                 let _ = reg.gauge_set(mem, 1024.0);
 //!             },
 //!             .Err(error) => println(metrics.error_message(error)),
 //!         },
 //!         .Err(_) => println("metrics actor stopped"),
 //!     }
 //!
-//!     match await reg.histogram("request_latency_seconds", "Request latency") {
+//!     match reg.histogram("request_latency_seconds", "Request latency") {
 //!         .Ok(result) => match result {
 //!             .Ok(latency) => {
-//!                 let _ = await reg.histogram_observe(latency, 0.042);
+//!                 let _ = reg.histogram_observe(latency, 0.042);
 //!             },
 //!             .Err(error) => println(metrics.error_message(error)),
 //!         },
 //!         .Err(_) => println("metrics actor stopped"),
 //!     }
 //!
-//!     match await reg.counter_vec("http_requests_by_status_total", "HTTP requests", "method,status") {
+//!     match reg.counter_vec("http_requests_by_status_total", "HTTP requests", "method,status") {
 //!         .Ok(result) => match result {
 //!             .Ok(labeled) => {
-//!                 let _ = await reg.counter_vec_inc(labeled, "GET,200");
+//!                 let _ = reg.counter_vec_inc(labeled, "GET,200");
 //!             },
 //!             .Err(error) => println(metrics.error_message(error)),
 //!         },
 //!         .Err(_) => println("metrics actor stopped"),
 //!     }
 //!
-//!     match await reg.export() {
+//!     match reg.export() {
 //!         .Ok(result) => match result {
 //!             .Ok(output) => println(output),
 //!             .Err(error) => println(metrics.error_message(error)),

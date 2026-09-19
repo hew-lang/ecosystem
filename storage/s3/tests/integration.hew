@@ -13,7 +13,7 @@ extern "C" {
     fn hew_s3_bucket_count() -> i64;
 }
 
-fn store() -> LocalPid<s3.Bucket> {
+fn store() -> s3.Bucket {
     spawn s3.Bucket(options: Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" })
 }
 
