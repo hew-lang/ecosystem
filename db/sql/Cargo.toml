@@ -1,0 +1,16 @@
+[package]
+name = "hew-ecosystem-db-sql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared typed SQL parameter decoding for Hew database clients"
+readme = "README.md"
+keywords = ["database", "sql"]
+categories = ["database"]
+
+[dependencies]
+ciborium = "0.2"
+
+[lints]
+workspace = true

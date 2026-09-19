@@ -31,6 +31,10 @@ the ecosystem checkout:
 hew run --pkg-path . db/mysql/examples/basic.hew
 ```
 
-Parameterized methods accept newline-delimited UTF-8 `bytes` values for `?`
-placeholders. Cell payloads are also `bytes`, preserving empty and embedded-NUL
-values exactly. SQL strings cross the native boundary with explicit lengths.
+Parameterized methods accept `Vec<Param>` from `hew.db.sql`. For example,
+`[Param.Int(42), Param.Text("First line\nSecond line"), Param.Null]` binds three
+values. Use `Param.Bytes(data)` for arbitrary binary data, including invalid
+UTF-8. Empty values and NULL stay distinct. See [typed SQL parameters](../sql/README.md)
+for all six variants and database-specific conversions. Cell payloads remain
+`bytes`, preserving exact values. SQL strings cross the native boundary with
+explicit lengths.

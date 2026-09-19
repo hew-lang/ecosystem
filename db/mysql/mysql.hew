@@ -5,6 +5,10 @@
 
 import std.encoding.utf8;
 
+import std.encoding.wire;
+
+import hew.db.sql.{Param};
+
 #[wire]
 pub enum MysqlError {
     Connect(string),
@@ -189,10 +193,10 @@ pub actor Conn {
     }
 
     /// Execute SQL with newline-delimited text parameters.
-    receive fn execute_params(sql: string, params: bytes) -> Result<i64, MysqlError> {
+    receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, MysqlError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
-            hew_mysql_execute_params(connection, sql, params)
+            hew_mysql_execute_params(connection, sql, wire.encode(params))
         };
         if unsafe {
             hew_mysql_last_error_kind()
@@ -216,10 +220,10 @@ pub actor Conn {
     }
 
     /// Query SQL with newline-delimited text parameters.
-    receive fn query_params(sql: string, params: bytes) -> Result<QueryResult, MysqlError> {
+    receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, MysqlError> {
         let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_mysql_query_params(connection, sql, params)
+            hew_mysql_query_params(connection, sql, wire.encode(params))
         } };
         if result.handle == 0 {
             return Err(native_error());

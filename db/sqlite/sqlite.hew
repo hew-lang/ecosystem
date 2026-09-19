@@ -2,6 +2,10 @@
 
 import std.encoding.utf8;
 
+import std.encoding.wire;
+
+import hew.db.sql.{Param};
+
 #[wire]
 pub enum SqliteError {
     Open(string),
@@ -183,10 +187,10 @@ pub actor Db {
         }
     }
 
-    receive fn execute_params(sql: string, params: bytes) -> Result<i64, SqliteError> {
+    receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, SqliteError> {
         let connection = connection_handle(closed, handle, open_error_kind, open_error_message.clone())?;
         let affected = unsafe {
-            hew_sqlite_execute_params(connection, sql, params)
+            hew_sqlite_execute_params(connection, sql, wire.encode(params))
         };
         if unsafe {
             hew_sqlite_last_error_kind()
@@ -208,10 +212,10 @@ pub actor Db {
         collect_result(result)
     }
 
-    receive fn query_params(sql: string, params: bytes) -> Result<QueryResult, SqliteError> {
+    receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, SqliteError> {
         let connection = connection_handle(closed, handle, open_error_kind, open_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_sqlite_query_params(connection, sql, params)
+            hew_sqlite_query_params(connection, sql, wire.encode(params))
         } };
         if result.handle == 0 {
             return Err(native_error());

@@ -14,7 +14,9 @@ name = "hew_hew_db_postgres"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
+hew-ecosystem-db-sql = { path = "../sql" }
 postgres = "0.19"
+bytes = "1"
 hew-cabi.workspace = true
 libc.workspace = true
 

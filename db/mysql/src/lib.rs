@@ -98,15 +98,12 @@ unsafe fn bytes_arg<'a>(value: *const BytesTriple, label: &str) -> Option<&'a [u
     }
 }
 
-unsafe fn params_input<'a>(value: *const BytesTriple) -> Option<&'a str> {
+unsafe fn params_input(value: *const BytesTriple) -> Option<Vec<hew_ecosystem_db_sql::Param>> {
     let value = unsafe { bytes_arg(value, "parameter") }?;
-    match std::str::from_utf8(value) {
+    match hew_ecosystem_db_sql::decode(value) {
         Ok(value) => Some(value),
         Err(error) => {
-            set_error(
-                ErrorKind::InvalidInput,
-                format!("parameters are not UTF-8: {error}"),
-            );
+            set_error(ErrorKind::InvalidInput, error);
             None
         }
     }
@@ -250,15 +247,20 @@ fn result(handle: i64) -> Option<Arc<MysqlResult>> {
     registered(&RESULTS, handle, "query result")
 }
 
-fn split_params(params: &str) -> Vec<mysql::Value> {
-    if params.is_empty() {
-        Vec::new()
-    } else {
-        params
-            .split('\n')
-            .map(|value| mysql::Value::Bytes(value.as_bytes().to_vec()))
-            .collect()
-    }
+fn driver_params(params: Vec<hew_ecosystem_db_sql::Param>) -> Vec<mysql::Value> {
+    use hew_ecosystem_db_sql::Param;
+    use mysql::Value;
+    params
+        .into_iter()
+        .map(|param| match param {
+            Param::Null => Value::NULL,
+            Param::Bool(value) => Value::Int(i64::from(value)),
+            Param::Int(value) => Value::Int(value),
+            Param::Float(value) => Value::Double(value),
+            Param::Text(value) => Value::Bytes(value.into_bytes()),
+            Param::Bytes(value) => Value::Bytes(value),
+        })
+        .collect()
 }
 
 fn value_to_bytes(value: mysql::Value) -> Option<Vec<u8>> {
@@ -359,7 +361,7 @@ unsafe fn execute_impl(
         let Some(params) = (unsafe { params_input(params) }) else {
             return 0;
         };
-        split_params(params)
+        driver_params(params)
     } else {
         Vec::new()
     };
@@ -427,7 +429,7 @@ unsafe fn query_impl(
         let Some(params) = (unsafe { params_input(params) }) else {
             return 0;
         };
-        split_params(params)
+        driver_params(params)
     } else {
         Vec::new()
     };

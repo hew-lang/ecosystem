@@ -14,8 +14,8 @@ import tomllib
 # together, because a count kept in a second file drifts from this one:
 # `--source-count` hands the source count to scripts/corpus-gate.sh so the gate
 # does not restate it. Adding a package moves one or both, deliberately.
-EXPECTED_MANIFESTS = 15
-EXPECTED_SOURCES = 52
+EXPECTED_MANIFESTS = 16
+EXPECTED_SOURCES = 53
 EXPECTED_VERSION = "0.3.0"
 VEC_NEW = re.compile(r"\bVec::new\b")
 QUOTED_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')

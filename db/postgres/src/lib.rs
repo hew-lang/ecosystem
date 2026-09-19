@@ -96,15 +96,12 @@ unsafe fn bytes_arg<'a>(value: *const BytesTriple, label: &str) -> Option<&'a [u
     }
 }
 
-unsafe fn params_input<'a>(value: *const BytesTriple) -> Option<&'a str> {
+unsafe fn params_input(value: *const BytesTriple) -> Option<Vec<hew_ecosystem_db_sql::Param>> {
     let value = unsafe { bytes_arg(value, "parameter") }?;
-    match std::str::from_utf8(value) {
+    match hew_ecosystem_db_sql::decode(value) {
         Ok(value) => Some(value),
         Err(error) => {
-            set_error(
-                ErrorKind::InvalidInput,
-                format!("parameters are not UTF-8: {error}"),
-            );
+            set_error(ErrorKind::InvalidInput, error);
             None
         }
     }
@@ -264,12 +261,49 @@ fn result(handle: i64) -> Option<Arc<PgResult>> {
     registered(&RESULTS, handle, "query result")
 }
 
-fn split_params(params: &str) -> Vec<&str> {
-    if params.is_empty() {
-        Vec::new()
-    } else {
-        params.split('\n').collect()
+#[derive(Debug)]
+struct PgParam(hew_ecosystem_db_sql::Param);
+
+impl PgParam {
+    fn sql_type(&self) -> postgres::types::Type {
+        use hew_ecosystem_db_sql::Param;
+        use postgres::types::Type;
+        match &self.0 {
+            Param::Null => Type::UNKNOWN,
+            Param::Bool(_) => Type::BOOL,
+            Param::Int(_) => Type::INT8,
+            Param::Float(_) => Type::FLOAT8,
+            Param::Text(_) => Type::TEXT,
+            Param::Bytes(_) => Type::BYTEA,
+        }
     }
+}
+
+impl postgres::types::ToSql for PgParam {
+    fn to_sql(
+        &self,
+        ty: &postgres::types::Type,
+        out: &mut bytes::BytesMut,
+    ) -> Result<postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        use hew_ecosystem_db_sql::Param;
+        match &self.0 {
+            Param::Null => Ok(postgres::types::IsNull::Yes),
+            Param::Bool(value) => value.to_sql_checked(ty, out),
+            Param::Int(value) => value.to_sql_checked(ty, out),
+            Param::Float(value) => value.to_sql_checked(ty, out),
+            Param::Text(value) => value.to_sql_checked(ty, out),
+            Param::Bytes(value) => value.to_sql_checked(ty, out),
+        }
+    }
+
+    fn accepts(_ty: &postgres::types::Type) -> bool {
+        true
+    }
+    postgres::types::to_sql_checked!();
+}
+
+fn driver_params(params: Vec<hew_ecosystem_db_sql::Param>) -> Vec<PgParam> {
+    params.into_iter().map(PgParam).collect()
 }
 
 fn cell_to_bytes(row: &postgres::Row, index: usize) -> Result<Option<Vec<u8>>, postgres::Error> {
@@ -306,16 +340,20 @@ fn cell_to_bytes(row: &postgres::Row, index: usize) -> Result<Option<Vec<u8>>, p
 fn query_result(
     connection: &mut PgConnection,
     sql: &str,
-    params: &[&(dyn postgres::types::ToSql + Sync)],
+    params: &[PgParam],
 ) -> Result<PgResult, postgres::Error> {
-    let parameter_types = vec![postgres::types::Type::TEXT; params.len()];
+    let parameter_types = params.iter().map(PgParam::sql_type).collect::<Vec<_>>();
+    let parameters = params
+        .iter()
+        .map(|value| value as &(dyn postgres::types::ToSql + Sync))
+        .collect::<Vec<_>>();
     let statement = connection.inner.prepare_typed(sql, &parameter_types)?;
     let columns = statement
         .columns()
         .iter()
         .map(|column| column.name().to_owned())
         .collect::<Vec<_>>();
-    let source_rows = connection.inner.query(&statement, params)?;
+    let source_rows = connection.inner.query(&statement, parameters.as_slice())?;
     let rows = source_rows
         .iter()
         .map(|row| {
@@ -365,7 +403,7 @@ unsafe fn execute_impl(
         let Some(params) = (unsafe { params_input(params) }) else {
             return 0;
         };
-        split_params(params)
+        driver_params(params)
     } else {
         Vec::new()
     };
@@ -383,7 +421,10 @@ unsafe fn execute_impl(
         );
         return 0;
     };
-    let parameter_types = vec![postgres::types::Type::TEXT; parameters.len()];
+    let parameter_types = parameter_values
+        .iter()
+        .map(PgParam::sql_type)
+        .collect::<Vec<_>>();
     let operation = connection
         .inner
         .prepare_typed(sql, &parameter_types)
@@ -444,14 +485,10 @@ unsafe fn query_impl(
         let Some(params) = (unsafe { params_input(params) }) else {
             return 0;
         };
-        split_params(params)
+        driver_params(params)
     } else {
         Vec::new()
     };
-    let parameters = parameter_values
-        .iter()
-        .map(|value| value as &(dyn postgres::types::ToSql + Sync))
-        .collect::<Vec<_>>();
     let Some(connection) = connection(handle) else {
         return 0;
     };
@@ -462,7 +499,7 @@ unsafe fn query_impl(
         );
         return 0;
     };
-    match query_result(&mut connection, sql, parameters.as_slice()) {
+    match query_result(&mut connection, sql, parameter_values.as_slice()) {
         Ok(value) => register(&RESULTS, &NEXT_RESULT, value, "query result"),
         Err(error) => {
             set_error(
