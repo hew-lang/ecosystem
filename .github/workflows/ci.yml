@@ -193,7 +193,7 @@ jobs:
             --health-interval 5s \
             --health-timeout 3s \
             --health-retries 24 \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
           wait_for_healthy ecosystem-mongodb
           wait_for_healthy ecosystem-mysql
           wait_for_healthy ecosystem-postgres
@@ -202,7 +202,7 @@ jobs:
           wait_for_healthy ecosystem-nats
           wait_for_healthy ecosystem-minio
           docker run --rm --network host --entrypoint /bin/sh \
-            minio/mc:RELEASE.2025-04-16T18-13-26Z -c \
+            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z -c \
             'mc alias set local http://127.0.0.1:9000 minioadmin minioadmin && mc mb --ignore-existing local/hew-test'
 
       # scripts/corpus-gate.sh is the single authority for what the corpus gate
