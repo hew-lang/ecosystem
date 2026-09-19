@@ -12,6 +12,7 @@
 //! Set `HEW_HTTP_EXAMPLE_ADDR` to use another local address or port.
 
 import hew.net.http;
+
 import std.os;
 
 fn main() {
