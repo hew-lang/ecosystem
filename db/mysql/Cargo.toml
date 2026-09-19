@@ -15,6 +15,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 mysql = { version = "25", default-features = false, features = ["minimal-rust", "rustls-tls"] }
+hew-cabi.workspace = true
 libc.workspace = true
 
 [features]

@@ -56,11 +56,12 @@ native MongoDB cursor is a private Hew `#[resource]`: it is always closed
 before the actor replies, including query-row and serialization failure paths.
 The actor similarly closes its client from both `close()` and its stop hook.
 
-All Hew-to-native string inputs use explicit byte lengths, and all native data
-results return as owned Hew `bytes` triples before Hew decodes their UTF-8 JSON
-or identifier text. Document values are therefore never truncated at embedded
-NUL bytes; valid JSON escapes are preserved, while invalid raw NUL in JSON is
-reported as `MongoError.InvalidJson` instead of changing the submitted value.
+All Hew-to-native string inputs cross as managed Hew strings, which carry an
+exact byte length, and all native data results return as owned Hew `bytes`
+triples before Hew decodes their UTF-8 JSON or identifier text. Document
+values are therefore never truncated at embedded NUL bytes; valid JSON escapes
+are preserved, while invalid raw NUL in JSON is reported as
+`MongoError.InvalidJson` instead of changing the submitted value.
 
 Native unit tests run without a server:
 

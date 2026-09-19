@@ -1,13 +1,13 @@
 //! Native support for `hew.queue.nats`.
 //!
-//! Handles are validated monotonic IDs, text enters through pointer/length
-//! pairs, and strings leave at their allocation base. Registry locks are
-//! released before every broker operation and bounded wait.
+//! Handles are validated monotonic IDs. Strings cross the boundary as managed
+//! Hew strings: inbound handles are borrowed for the call, and returned
+//! handles are freshly allocated owners the caller releases. Registry locks
+//! are released before every broker operation and bounded wait.
 
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::os::raw::c_char;
-use std::slice;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -54,52 +54,6 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
         state.kind = kind;
         state.message = message.into();
     });
-}
-
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: `size` includes the NUL terminator and the result is checked.
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    // SAFETY: the allocation has `size` writable bytes and cannot overlap.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
-
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64, what: &str) -> Option<&'a str> {
-    let Ok(len) = usize::try_from(len) else {
-        set_error(
-            ErrorKind::InvalidInput,
-            format!("{what} length is negative"),
-        );
-        return None;
-    };
-    if value.is_null() {
-        if len == 0 {
-            return Some("");
-        }
-        set_error(ErrorKind::InvalidInput, format!("{what} pointer is null"));
-        return None;
-    }
-    // SAFETY: required by the caller-facing FFI contract.
-    let bytes = unsafe { slice::from_raw_parts(value.cast::<u8>(), len) };
-    match std::str::from_utf8(bytes) {
-        Ok(text) => Some(text),
-        Err(error) => {
-            set_error(
-                ErrorKind::InvalidInput,
-                format!("{what} is not UTF-8: {error}"),
-            );
-            None
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -232,18 +186,16 @@ pub extern "C" fn hew_nats_last_error_kind() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn hew_nats_last_error() -> *mut c_char {
-    LAST_ERROR.with(|state| malloc_c_string(&state.borrow().message))
+pub extern "C" fn hew_nats_last_error() -> *mut HewString {
+    LAST_ERROR.with(|state| string_from_str(&state.borrow().message))
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `url` must be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_nats_connect_len(url: *const c_char, url_len: i64) -> i64 {
+pub unsafe extern "C" fn hew_nats_connect(url: *const HewString) -> i64 {
     // SAFETY: required by this function's contract.
-    let Some(url) = (unsafe { utf8_with_len(url, url_len, "NATS URL") }) else {
-        return 0;
-    };
+    let url = unsafe { string_as_str(url) };
     if url.is_empty() {
         set_error(ErrorKind::InvalidInput, "NATS URL must not be empty");
         return 0;
@@ -280,26 +232,20 @@ pub unsafe extern "C" fn hew_nats_connect_len(url: *const c_char, url_len: i64) 
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `subject` and `data` must each be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_nats_publish_len(
+pub unsafe extern "C" fn hew_nats_publish(
     handle: i64,
-    subject: *const c_char,
-    subject_len: i64,
-    data: *const c_char,
-    data_len: i64,
+    subject: *const HewString,
+    data: *const HewString,
 ) -> i32 {
     let Some(connection) = connection(handle) else {
         return -1;
     };
     // SAFETY: required by this function's contract.
-    let Some(subject) = (unsafe { utf8_with_len(subject, subject_len, "NATS subject") }) else {
-        return -1;
-    };
+    let subject = unsafe { string_as_str(subject) };
     // SAFETY: required by this function's contract.
-    let Some(data) = (unsafe { utf8_with_len(data, data_len, "NATS payload") }) else {
-        return -1;
-    };
+    let data = unsafe { string_as_str(data) };
     match connection.inner.publish(subject, data.as_bytes()) {
         Ok(()) => {
             clear_error();
@@ -316,20 +262,17 @@ pub unsafe extern "C" fn hew_nats_publish_len(
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `subject` must be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_nats_subscribe_len(
+pub unsafe extern "C" fn hew_nats_subscribe(
     connection_handle: i64,
-    subject: *const c_char,
-    subject_len: i64,
+    subject: *const HewString,
 ) -> i64 {
     let Some(connection) = connection(connection_handle) else {
         return 0;
     };
     // SAFETY: required by this function's contract.
-    let Some(subject) = (unsafe { utf8_with_len(subject, subject_len, "NATS subject") }) else {
-        return 0;
-    };
+    let subject = unsafe { string_as_str(subject) };
     let inner = match connection.inner.subscribe(subject) {
         Ok(inner) => inner,
         Err(error) => {
@@ -401,27 +344,21 @@ pub extern "C" fn hew_nats_next_result(handle: i64, timeout_ms: i64) -> i64 {
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `subject` and `data` must each be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_nats_request_len(
+pub unsafe extern "C" fn hew_nats_request(
     handle: i64,
-    subject: *const c_char,
-    subject_len: i64,
-    data: *const c_char,
-    data_len: i64,
+    subject: *const HewString,
+    data: *const HewString,
     timeout_ms: i64,
 ) -> i64 {
     let Some(connection) = connection(handle) else {
         return 0;
     };
     // SAFETY: required by this function's contract.
-    let Some(subject) = (unsafe { utf8_with_len(subject, subject_len, "NATS subject") }) else {
-        return 0;
-    };
+    let subject = unsafe { string_as_str(subject) };
     // SAFETY: required by this function's contract.
-    let Some(data) = (unsafe { utf8_with_len(data, data_len, "NATS payload") }) else {
-        return 0;
-    };
+    let data = unsafe { string_as_str(data) };
     let Ok(timeout_ms) = u64::try_from(timeout_ms) else {
         set_error(
             ErrorKind::InvalidInput,
@@ -453,28 +390,20 @@ pub unsafe extern "C" fn hew_nats_request_len(
 }
 
 /// # Safety
-/// Pointer arguments must expose their declared number of readable bytes.
+/// `reply_subject` and `data` must each be null or a live managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_nats_reply_len(
+pub unsafe extern "C" fn hew_nats_reply(
     handle: i64,
-    reply_subject: *const c_char,
-    reply_subject_len: i64,
-    data: *const c_char,
-    data_len: i64,
+    reply_subject: *const HewString,
+    data: *const HewString,
 ) -> i32 {
     let Some(connection) = connection(handle) else {
         return -1;
     };
     // SAFETY: required by this function's contract.
-    let Some(reply_subject) =
-        (unsafe { utf8_with_len(reply_subject, reply_subject_len, "NATS reply subject") })
-    else {
-        return -1;
-    };
+    let reply_subject = unsafe { string_as_str(reply_subject) };
     // SAFETY: required by this function's contract.
-    let Some(data) = (unsafe { utf8_with_len(data, data_len, "NATS reply payload") }) else {
-        return -1;
-    };
+    let data = unsafe { string_as_str(data) };
     if reply_subject.is_empty() {
         set_error(ErrorKind::InvalidInput, "NATS message has no reply subject");
         return -1;
@@ -492,26 +421,26 @@ pub unsafe extern "C" fn hew_nats_reply_len(
 }
 
 #[no_mangle]
-pub extern "C" fn hew_nats_message_subject(handle: i64) -> *mut c_char {
+pub extern "C" fn hew_nats_message_subject(handle: i64) -> *mut HewString {
     message(handle).map_or(std::ptr::null_mut(), |message| {
         clear_error();
-        malloc_c_string(&message.subject)
+        string_from_str(&message.subject)
     })
 }
 
 #[no_mangle]
-pub extern "C" fn hew_nats_message_data(handle: i64) -> *mut c_char {
+pub extern "C" fn hew_nats_message_data(handle: i64) -> *mut HewString {
     message(handle).map_or(std::ptr::null_mut(), |message| {
         clear_error();
-        malloc_c_string(String::from_utf8_lossy(&message.data).as_ref())
+        string_from_str(String::from_utf8_lossy(&message.data).as_ref())
     })
 }
 
 #[no_mangle]
-pub extern "C" fn hew_nats_message_reply(handle: i64) -> *mut c_char {
+pub extern "C" fn hew_nats_message_reply(handle: i64) -> *mut HewString {
     message(handle).map_or(std::ptr::null_mut(), |message| {
         clear_error();
-        malloc_c_string(message.reply.as_deref().unwrap_or(""))
+        string_from_str(message.reply.as_deref().unwrap_or(""))
     })
 }
 
@@ -575,10 +504,25 @@ pub extern "C" fn hew_nats_message_count() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
+    use hew_cabi::string::string_release;
+
+    /// Allocate one managed string argument for a boundary call.
+    #[cfg(feature = "integration")]
+    fn managed(value: &str) -> *mut HewString {
+        string_from_str(value)
+    }
+
+    /// Read and release the managed string a boundary call returned.
+    unsafe fn owned_text(value: *mut HewString) -> String {
+        // SAFETY: `value` is the owner a crate entry point just returned.
+        let text = unsafe { string_as_str(value) }.to_owned();
+        // SAFETY: the same owner, released exactly once here.
+        unsafe { string_release(value) };
+        text
+    }
 
     #[test]
-    fn message_strings_are_base_allocations_and_lifecycle_is_guarded() {
+    fn message_strings_round_trip_and_lifecycle_is_guarded() {
         let before = hew_nats_message_count();
         let handle = register_message(NatsMessage {
             subject: "events.created".to_owned(),
@@ -586,11 +530,8 @@ mod tests {
             data: b"payload".to_vec(),
         });
         let data = hew_nats_message_data(handle);
-        // SAFETY: accessor returns a NUL-terminated base allocation.
-        unsafe {
-            assert_eq!(CStr::from_ptr(data).to_str().unwrap(), "payload");
-            libc::free(data.cast());
-        }
+        // SAFETY: the accessor just returned this owner.
+        assert_eq!(unsafe { owned_text(data) }, "payload");
         assert_eq!(hew_nats_message_has_reply(handle), 0);
         hew_nats_message_free(handle);
         hew_nats_message_free(handle);
@@ -606,20 +547,13 @@ mod tests {
         hew_nats_close(i64::MAX);
     }
 
-    #[test]
-    fn invalid_utf8_input_is_typed() {
-        let bytes = [0xff_u8];
-        // SAFETY: the one-byte buffer is readable during the call.
-        assert!(unsafe { utf8_with_len(bytes.as_ptr().cast(), 1, "subject") }.is_none());
-        assert_eq!(hew_nats_last_error_kind(), ErrorKind::InvalidInput as i32);
-    }
-
     #[cfg(feature = "integration")]
     fn connect() -> i64 {
-        let url = "nats://127.0.0.1:14222";
-        let url_len = i64::try_from(url.len()).expect("test URL length fits in i64");
-        // SAFETY: pointer/length pair borrows a valid Rust string.
-        let handle = unsafe { hew_nats_connect_len(url.as_ptr().cast(), url_len) };
+        let url = managed("nats://127.0.0.1:14222");
+        // SAFETY: `url` is a live managed string for the call.
+        let handle = unsafe { hew_nats_connect(url) };
+        // SAFETY: this test owns the handle.
+        unsafe { string_release(url) };
         assert_ne!(handle, 0);
         handle
     }
@@ -631,34 +565,27 @@ mod tests {
         let before_subscriptions = hew_nats_subscription_count();
         let connection = connect();
         let subject = format!("hew.tests.{connection}");
-        let subject_len = i64::try_from(subject.len()).expect("test subject length fits in i64");
-        // SAFETY: pointer/length pairs borrow valid strings.
-        let subscription =
-            unsafe { hew_nats_subscribe_len(connection, subject.as_ptr().cast(), subject_len) };
+        // A payload over 16 bytes with non-ASCII characters exercises the
+        // exact managed-string round trip rather than a short ASCII stand-in.
+        let payload = "hello nats — 雪の結晶";
+        let subject_arg = managed(&subject);
+        // SAFETY: `subject_arg` is a live managed string for the call.
+        let subscription = unsafe { hew_nats_subscribe(connection, subject_arg) };
         assert_ne!(subscription, 0);
-        let payload = "hello nats";
-        let payload_len = i64::try_from(payload.len()).expect("test payload length fits in i64");
-        assert_eq!(
-            // SAFETY: pointer/length pairs borrow valid strings.
-            unsafe {
-                hew_nats_publish_len(
-                    connection,
-                    subject.as_ptr().cast(),
-                    subject_len,
-                    payload.as_ptr().cast(),
-                    payload_len,
-                )
-            },
-            0
-        );
+        let payload_arg = managed(payload);
+        // SAFETY: `subject_arg` and `payload_arg` are live managed strings.
+        let status = unsafe { hew_nats_publish(connection, subject_arg, payload_arg) };
+        assert_eq!(status, 0);
+        // SAFETY: this test owns both handles.
+        unsafe {
+            string_release(subject_arg);
+            string_release(payload_arg);
+        }
         let message = hew_nats_next_result(subscription, 3000);
         assert_ne!(message, 0);
-        let data = hew_nats_message_data(message);
-        // SAFETY: accessor returns a NUL-terminated base allocation.
-        unsafe {
-            assert_eq!(CStr::from_ptr(data).to_str().unwrap(), payload);
-            libc::free(data.cast());
-        }
+        // SAFETY: the accessor just returned this owner.
+        let received = unsafe { owned_text(hew_nats_message_data(message)) };
+        assert_eq!(received, payload);
         hew_nats_message_free(message);
         hew_nats_close(connection);
         assert_eq!(hew_nats_connection_count(), before_connections);

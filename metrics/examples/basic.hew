@@ -7,12 +7,12 @@ import hew.metrics;
 
 fn main() {
     let registry = spawn metrics.Registry;
-    match await registry.counter("requests_total", "Handled requests") {
+    match registry.counter("requests_total", "Handled requests") {
         .Ok(result) => match result {
             .Ok(counter) => {
-                let _ = await registry.counter_inc(counter);
-                let _ = await registry.counter_add(counter, 2.0);
-                match await registry.export() {
+                let _ = registry.counter_inc(counter);
+                let _ = registry.counter_add(counter, 2.0);
+                match registry.export() {
                     .Ok(export_result) => match export_result {
                         .Ok(text) => println(text),
                         .Err(error) => println(metrics.error_message(error)),

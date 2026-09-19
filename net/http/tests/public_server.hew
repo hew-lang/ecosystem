@@ -43,35 +43,35 @@ fn reports_no_pending_busy_and_closed_states() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
     let server = spawn http.Server(addr: addr.clone());
-    match await server.header("X-Test") {
+    match server.header("X-Test") {
         .Ok(result) => match result {
             .Err(.NoPending(_)) => {},
             _ => panic("expected NoPending from header"),
         },
         .Err(_) => panic("server actor stopped during header"),
     }
-    match await server.respond(200, "", "text/plain") {
+    match server.respond(200, "", "text/plain") {
         .Ok(result) => match result {
             .Err(.NoPending(_)) => {},
             _ => panic("expected NoPending from respond"),
         },
         .Err(_) => panic("server actor stopped during respond"),
     }
-    match await server.respond_text(200, "") {
+    match server.respond_text(200, "") {
         .Ok(result) => match result {
             .Err(.NoPending(_)) => {},
             _ => panic("expected NoPending from respond_text"),
         },
         .Err(_) => panic("server actor stopped during respond_text"),
     }
-    match await server.respond_html(200, "") {
+    match server.respond_html(200, "") {
         .Ok(result) => match result {
             .Err(.NoPending(_)) => {},
             _ => panic("expected NoPending from respond_html"),
         },
         .Err(_) => panic("server actor stopped during respond_html"),
     }
-    match await server.redirect("/") {
+    match server.redirect("/") {
         .Ok(result) => match result {
             .Err(.NoPending(_)) => {},
             _ => panic("expected NoPending from redirect"),
@@ -79,21 +79,21 @@ fn reports_no_pending_busy_and_closed_states() {
         .Err(_) => panic("server actor stopped during redirect"),
     }
     let client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(request) => assert_eq(request.path(), "/test"),
             .Err(_) => panic("expected accepted request"),
         },
         .Err(_) => panic("server actor stopped during accept"),
     }
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Err(.Busy(_)) => {},
             _ => panic("expected Busy with a pending request"),
         },
         .Err(_) => panic("server actor stopped during busy check"),
     }
-    match await server.respond_text(204, "") {
+    match server.respond_text(204, "") {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(_) => panic("expected final response"),
@@ -101,8 +101,8 @@ fn reports_no_pending_busy_and_closed_states() {
         .Err(_) => panic("server actor stopped during final response"),
     }
     expect_client_response(client, 1);
-    server.close();
-    match await server.accept_one() {
+    let _ = server.close();
+    match server.accept_one() {
         .Ok(result) => match result {
             .Err(.Closed(_)) => {},
             _ => panic("expected Closed after close"),
@@ -119,14 +119,14 @@ fn validation_errors_release_pending_connections() {
     let addr = test_addr(fixture);
     let server = spawn http.Server(addr: addr.clone());
     let invalid_status_client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(_) => panic("expected invalid-status request"),
         },
         .Err(_) => panic("server actor stopped during invalid-status accept"),
     }
-    match await server.respond(99, "", "text/plain") {
+    match server.respond(99, "", "text/plain") {
         .Ok(result) => match result {
             .Err(.InvalidStatus(status)) => assert_eq(status, 99),
             _ => panic("expected InvalidStatus from respond"),
@@ -135,7 +135,7 @@ fn validation_errors_release_pending_connections() {
     }
     expect_client_response(invalid_status_client, 0);
     let invalid_type_client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(.Busy(_)) => panic("invalid respond leaked its request"),
@@ -143,7 +143,7 @@ fn validation_errors_release_pending_connections() {
         },
         .Err(_) => panic("server actor stopped during invalid-type accept"),
     }
-    match await server.respond(200, "", "text/plain\r\nignored") {
+    match server.respond(200, "", "text/plain\r\nignored") {
         .Ok(result) => match result {
             .Err(.InvalidHeaderValue(name)) => assert_eq(name, "Content-Type"),
             _ => panic("expected InvalidHeaderValue from respond"),
@@ -152,7 +152,7 @@ fn validation_errors_release_pending_connections() {
     }
     expect_client_response(invalid_type_client, 0);
     let invalid_text_client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(.Busy(_)) => panic("invalid content type leaked its request"),
@@ -160,7 +160,7 @@ fn validation_errors_release_pending_connections() {
         },
         .Err(_) => panic("server actor stopped during invalid-text accept"),
     }
-    match await server.respond_text(99, "") {
+    match server.respond_text(99, "") {
         .Ok(result) => match result {
             .Err(.InvalidStatus(status)) => assert_eq(status, 99),
             _ => panic("expected InvalidStatus from respond_text"),
@@ -169,7 +169,7 @@ fn validation_errors_release_pending_connections() {
     }
     expect_client_response(invalid_text_client, 0);
     let invalid_html_client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(.Busy(_)) => panic("invalid text response leaked its request"),
@@ -177,7 +177,7 @@ fn validation_errors_release_pending_connections() {
         },
         .Err(_) => panic("server actor stopped during invalid-html accept"),
     }
-    match await server.respond_html(99, "") {
+    match server.respond_html(99, "") {
         .Ok(result) => match result {
             .Err(.InvalidStatus(status)) => assert_eq(status, 99),
             _ => panic("expected InvalidStatus from respond_html"),
@@ -186,7 +186,7 @@ fn validation_errors_release_pending_connections() {
     }
     expect_client_response(invalid_html_client, 0);
     let invalid_redirect_client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(.Busy(_)) => panic("invalid HTML response leaked its request"),
@@ -194,7 +194,7 @@ fn validation_errors_release_pending_connections() {
         },
         .Err(_) => panic("server actor stopped during invalid-redirect accept"),
     }
-    match await server.redirect("/next\r\nignored") {
+    match server.redirect("/next\r\nignored") {
         .Ok(result) => match result {
             .Err(.InvalidHeaderValue(name)) => assert_eq(name, "Location"),
             _ => panic("expected InvalidHeaderValue from redirect"),
@@ -203,7 +203,7 @@ fn validation_errors_release_pending_connections() {
     }
     expect_client_response(invalid_redirect_client, 0);
     let final_client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(request) => assert_eq(request.path(), "/test"),
             .Err(.Busy(_)) => panic("invalid redirect leaked its request"),
@@ -211,14 +211,14 @@ fn validation_errors_release_pending_connections() {
         },
         .Err(_) => panic("server actor stopped during final accept"),
     }
-    match await server.header("X-Missing") {
+    match server.header("X-Missing") {
         .Ok(result) => match result {
             .Err(.MissingHeader(name)) => assert_eq(name, "X-Missing"),
             _ => panic("expected MissingHeader"),
         },
         .Err(_) => panic("server actor stopped during header lookup"),
     }
-    match await server.respond_text(204, "") {
+    match server.respond_text(204, "") {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(_) => panic("expected final response after validation errors"),
@@ -226,7 +226,7 @@ fn validation_errors_release_pending_connections() {
         .Err(_) => panic("server actor stopped during final response"),
     }
     expect_client_response(final_client, 1);
-    server.close();
+    let _ = server.close();
     unsafe {
         hew_ecosystem_http_test_fixture_free(fixture)
     };
@@ -237,7 +237,7 @@ fn validates_targets_and_completes_expect_handshake() {
     let addr = test_addr(fixture);
     let server = spawn http.Server(addr: addr.clone());
     let invalid_target_client = test_client(fixture, 1);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Err(.Parse(_)) => {},
             _ => panic("expected Parse for invalid request target"),
@@ -246,7 +246,7 @@ fn validates_targets_and_completes_expect_handshake() {
     }
     expect_client_response(invalid_target_client, 0);
     let absolute_client = test_client(fixture, 2);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(request) => {
                 assert_eq(request.path(), "/absolute");
@@ -256,7 +256,7 @@ fn validates_targets_and_completes_expect_handshake() {
         },
         .Err(_) => panic("server actor stopped during absolute-form accept"),
     }
-    match await server.respond_text(204, "") {
+    match server.respond_text(204, "") {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(_) => panic("expected absolute-form response"),
@@ -265,14 +265,14 @@ fn validates_targets_and_completes_expect_handshake() {
     }
     expect_client_response(absolute_client, 1);
     let continue_client = test_client(fixture, 3);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(request) => assert_eq(request.body(), "body"),
             .Err(_) => panic("expected request after 100 Continue"),
         },
         .Err(_) => panic("server actor stopped during Expect accept"),
     }
-    match await server.respond_text(200, "done") {
+    match server.respond_text(200, "done") {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(_) => panic("expected final response after 100 Continue"),
@@ -281,7 +281,7 @@ fn validates_targets_and_completes_expect_handshake() {
     }
     expect_client_response(continue_client, 2);
     let unsupported_expect_client = test_client(fixture, 4);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Err(.Parse(_)) => {},
             _ => panic("expected Parse for unsupported Expect"),
@@ -289,27 +289,34 @@ fn validates_targets_and_completes_expect_handshake() {
         .Err(_) => panic("server actor stopped during unsupported Expect"),
     }
     expect_client_response(unsupported_expect_client, 0);
-    server.close();
+    let _ = server.close();
     unsafe {
         hew_ecosystem_http_test_fixture_free(fixture)
     };
 }
 
-fn handles_nul_without_silent_truncation() {
+fn carries_nul_bytes_without_truncation() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
     let server = spawn http.Server(addr: addr.clone());
     let body_nul_client = test_client(fixture, 5);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
-            .Err(.Parse(_)) => {},
-            _ => panic("expected Parse for request body containing NUL"),
+            .Ok(request) => assert_eq(request.body().len(), 3),
+            .Err(_) => panic("expected the request body carrying NUL to be accepted"),
         },
         .Err(_) => panic("server actor stopped during NUL body accept"),
     }
-    expect_client_response(body_nul_client, 0);
+    match server.respond_text(204, "") {
+        .Ok(result) => match result {
+            .Ok(_) => {},
+            .Err(_) => panic("expected a response to the request carrying NUL"),
+        },
+        .Err(_) => panic("server actor stopped during NUL body response"),
+    }
+    expect_client_response(body_nul_client, 1);
     let header_nul_client = test_client(fixture, 6);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Err(.Parse(_)) => {},
             _ => panic("expected Parse for request header containing NUL"),
@@ -318,14 +325,14 @@ fn handles_nul_without_silent_truncation() {
     }
     expect_client_response(header_nul_client, 0);
     let utf8_response_client = test_client(fixture, 0);
-    match await server.accept_one() {
+    match server.accept_one() {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(_) => panic("expected request for UTF-8 response"),
         },
         .Err(_) => panic("server actor stopped during UTF-8 response accept"),
     }
-    match await server.respond_text(200, "café") {
+    match server.respond_text(200, "café") {
         .Ok(result) => match result {
             .Ok(_) => {},
             .Err(_) => panic("expected UTF-8 response body to succeed"),
@@ -333,29 +340,105 @@ fn handles_nul_without_silent_truncation() {
         .Err(_) => panic("server actor stopped during UTF-8 response"),
     }
     expect_client_response(utf8_response_client, 3);
-    match await server.url_decode("left%00right") {
+    match server.url_decode("left%00right") {
         .Ok(result) => match result {
-            .Err(.Decode(_)) => {},
-            _ => panic("expected Decode for decoded NUL"),
+            .Ok(value) => assert_eq(value.len(), 10),
+            .Err(_) => panic("expected a decoded value carrying NUL"),
         },
         .Err(_) => panic("server actor stopped during NUL decode"),
     }
-    match await server.form_value("value=%00", "value") {
+    match server.form_value("value=%00", "value") {
         .Ok(result) => match result {
-            .Err(.Decode(_)) => {},
-            _ => panic("expected Decode for form value containing NUL"),
+            .Ok(value) => assert_eq(value.len(), 1),
+            .Err(_) => panic("expected a form value carrying NUL"),
         },
         .Err(_) => panic("server actor stopped during NUL form decode"),
     }
-    server.close();
+    let _ = server.close();
     unsafe {
         hew_ecosystem_http_test_fixture_free(fixture)
     };
+}
+
+/// Round-trip long, non-ASCII text through the native boundary in both
+/// directions, and check that a decode failure keeps its native message.
+fn round_trips_long_percent_encoded_text() {
+    let fixture = test_fixture();
+    let addr = test_addr(fixture);
+    let server = spawn http.Server(addr: addr.clone());
+    let path_client = test_client(fixture, 7);
+    var target = "";
+    match server.accept_one() {
+        .Ok(result) => match result {
+            .Ok(request) => {
+                target = request.path();
+            },
+            .Err(_) => panic("expected the percent-encoded request"),
+        },
+        .Err(_) => panic("server actor stopped during percent-encoded accept"),
+    }
+    assert_eq(target, "/caf%C3%A9-menu-%E2%9C%93-r%C3%A9sum%C3%A9");
+    match server.url_decode(target.clone()) {
+        .Ok(result) => match result {
+            .Ok(value) => assert_eq(value, "/café-menu-✓-résumé"),
+            .Err(_) => panic("expected the percent-encoded path to decode"),
+        },
+        .Err(_) => panic("server actor stopped during path decode"),
+    }
+    match server.respond_text(204, "") {
+        .Ok(result) => match result {
+            .Ok(_) => {},
+            .Err(_) => panic("expected a response to the percent-encoded request"),
+        },
+        .Err(_) => panic("server actor stopped during percent-encoded response"),
+    }
+    expect_client_response(path_client, 1);
+    match server.form_value("titre=caf%C3%A9+menu+%E2%9C%93+r%C3%A9sum%C3%A9&vide=", "titre") {
+        .Ok(result) => match result {
+            .Ok(value) => assert_eq(value, "café menu ✓ résumé"),
+            .Err(_) => panic("expected the form field to decode"),
+        },
+        .Err(_) => panic("server actor stopped during form decode"),
+    }
+    match server.form_value("titre=bonjour", "corps") {
+        .Ok(result) => match result {
+            .Err(.MissingFormField(key)) => assert_eq(key, "corps"),
+            _ => panic("expected MissingFormField for an absent key"),
+        },
+        .Err(_) => panic("server actor stopped during missing form field"),
+    }
+    match server.url_decode("bad%2") {
+        .Ok(result) => match result {
+            .Err(error) => assert_eq(http.error_message(error), "decode failed: incomplete percent escape at byte 3"),
+            .Ok(_) => panic("expected Decode for a truncated escape"),
+        },
+        .Err(_) => panic("server actor stopped during malformed decode"),
+    }
+    let _ = server.close();
+    unsafe {
+        hew_ecosystem_http_test_fixture_free(fixture)
+    };
+}
+
+/// An unusable listen address must surface the native diagnostic, which
+/// quotes the address the actor was given.
+fn reports_the_native_listen_failure() {
+    let server = spawn http.Server(addr: "hew-http-not-an-address");
+    match server.accept_one() {
+        .Ok(result) => match result {
+            .Err(.Listen(message)) => assert(message.contains("hew-http-not-an-address")),
+            _ => panic("expected Listen for an unusable address"),
+        },
+        .Err(_) => panic("server actor stopped during listen failure"),
+    }
+    let _ = server.close();
 }
 
 fn main() {
     reports_no_pending_busy_and_closed_states();
     validation_errors_release_pending_connections();
     validates_targets_and_completes_expect_handshake();
-    handles_nul_without_silent_truncation();
+    carries_nul_bytes_without_truncation();
+    round_trips_long_percent_encoded_text();
+    reports_the_native_listen_failure();
 }

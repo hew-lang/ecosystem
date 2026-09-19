@@ -17,9 +17,11 @@
 //! connection is cloned out of its registry before its mutex is acquired, so
 //! registry locks never span network I/O.
 
+#[cfg(test)]
+use hew_cabi::string::string_release;
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::os::raw::c_char;
 use std::slice;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -56,10 +58,7 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
     let Some(allocation_len) = capacity.checked_add(8) else {
         std::process::abort();
     };
-    let base = unsafe { libc::malloc(allocation_len) }.cast::<u8>();
-    if base.is_null() {
-        std::process::abort();
-    }
+    let base = hew_cabi::mem::buf_alloc(allocation_len).cast::<u8>();
     unsafe {
         std::ptr::copy_nonoverlapping(1_u32.to_ne_bytes().as_ptr(), base, 4);
         std::ptr::copy_nonoverlapping(capacity_u32.to_ne_bytes().as_ptr(), base.add(4), 4);
@@ -113,21 +112,6 @@ unsafe fn params_input<'a>(value: *const BytesTriple) -> Option<&'a str> {
     }
 }
 
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
-
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ErrorKind {
@@ -168,31 +152,8 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
     });
 }
 
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64) -> Result<&'a str, &'static str> {
-    let len = usize::try_from(len).map_err(|_| "negative or oversized string length")?;
-    if value.is_null() {
-        return if len == 0 {
-            Ok("")
-        } else {
-            Err("null string pointer with non-zero length")
-        };
-    }
-    let bytes = unsafe { slice::from_raw_parts(value.cast::<u8>(), len) };
-    std::str::from_utf8(bytes).map_err(|_| "string input was not valid UTF-8")
-}
-
-unsafe fn input<'a>(value: *const c_char, len: i64, label: &str) -> Option<&'a str> {
-    match unsafe { utf8_with_len(value, len) } {
-        Ok(value) => Some(value),
-        Err(error) => {
-            set_error(ErrorKind::InvalidInput, format!("invalid {label}: {error}"));
-            None
-        }
-    }
-}
-
-unsafe fn sql_input<'a>(value: *const c_char, len: i64) -> Option<&'a str> {
-    let value = unsafe { input(value, len, "SQL") }?;
+unsafe fn sql_input<'a>(value: *const HewString) -> Option<&'a str> {
+    let value = unsafe { string_as_str(value) };
     if value.as_bytes().contains(&0) {
         set_error(ErrorKind::InvalidInput, "SQL contains an embedded NUL byte");
         None
@@ -353,13 +314,11 @@ fn query_result_to_value<P: mysql::prelude::Protocol>(
 /// Connect using an exact UTF-8 `MySQL` URL.
 ///
 /// # Safety
-/// `url` must address exactly `url_len` readable bytes.
+/// `url` must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mysql_connect_len(url: *const c_char, url_len: i64) -> i64 {
+pub unsafe extern "C" fn hew_mysql_connect(url: *const HewString) -> i64 {
     clear_error();
-    let Some(url) = (unsafe { input(url, url_len, "connection URL") }) else {
-        return 0;
-    };
+    let url = unsafe { string_as_str(url) };
     let pool = match mysql::Pool::new(url) {
         Ok(pool) => pool,
         Err(error) => {
@@ -389,12 +348,11 @@ pub unsafe extern "C" fn hew_mysql_connect_len(url: *const c_char, url_len: i64)
 
 unsafe fn execute_impl(
     handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
+    sql: *const HewString,
     params: Option<*const BytesTriple>,
 ) -> i64 {
     clear_error();
-    let Some(sql) = (unsafe { sql_input(sql, sql_len) }) else {
+    let Some(sql) = (unsafe { sql_input(sql) }) else {
         return 0;
     };
     let parameters = if let Some(params) = params {
@@ -437,38 +395,32 @@ unsafe fn execute_impl(
 /// Execute SQL.
 ///
 /// # Safety
-/// `sql` must address exactly `sql_len` readable bytes.
+/// `sql` must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mysql_execute_len(
-    handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
-) -> i64 {
-    unsafe { execute_impl(handle, sql, sql_len, None) }
+pub unsafe extern "C" fn hew_mysql_execute(handle: i64, sql: *const HewString) -> i64 {
+    unsafe { execute_impl(handle, sql, None) }
 }
 
 /// Execute parameterized SQL.
 ///
 /// # Safety
-/// Both strings must address exactly their supplied byte lengths.
+/// The SQL string must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mysql_execute_params_len(
+pub unsafe extern "C" fn hew_mysql_execute_params(
     handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
+    sql: *const HewString,
     params: *const BytesTriple,
 ) -> i64 {
-    unsafe { execute_impl(handle, sql, sql_len, Some(params)) }
+    unsafe { execute_impl(handle, sql, Some(params)) }
 }
 
 unsafe fn query_impl(
     handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
+    sql: *const HewString,
     params: Option<*const BytesTriple>,
 ) -> i64 {
     clear_error();
-    let Some(sql) = (unsafe { sql_input(sql, sql_len) }) else {
+    let Some(sql) = (unsafe { sql_input(sql) }) else {
         return 0;
     };
     let parameters = if let Some(params) = params {
@@ -511,24 +463,23 @@ unsafe fn query_impl(
 /// Query SQL.
 ///
 /// # Safety
-/// `sql` must address exactly `sql_len` readable bytes.
+/// `sql` must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mysql_query_len(handle: i64, sql: *const c_char, sql_len: i64) -> i64 {
-    unsafe { query_impl(handle, sql, sql_len, None) }
+pub unsafe extern "C" fn hew_mysql_query(handle: i64, sql: *const HewString) -> i64 {
+    unsafe { query_impl(handle, sql, None) }
 }
 
 /// Query parameterized SQL.
 ///
 /// # Safety
-/// Both strings must address exactly their supplied byte lengths.
+/// The SQL string must be a managed Hew string.
 #[no_mangle]
-pub unsafe extern "C" fn hew_mysql_query_params_len(
+pub unsafe extern "C" fn hew_mysql_query_params(
     handle: i64,
-    sql: *const c_char,
-    sql_len: i64,
+    sql: *const HewString,
     params: *const BytesTriple,
 ) -> i64 {
-    unsafe { query_impl(handle, sql, sql_len, Some(params)) }
+    unsafe { query_impl(handle, sql, Some(params)) }
 }
 
 #[no_mangle]
@@ -657,56 +608,49 @@ pub extern "C" fn hew_mysql_last_error_kind() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn hew_mysql_last_error() -> *mut c_char {
-    LAST_ERROR.with(|state| malloc_c_string(&state.borrow().message))
+pub extern "C" fn hew_mysql_last_error() -> *mut HewString {
+    LAST_ERROR.with(|state| string_from_str(&state.borrow().message))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn pointer_length_input_preserves_embedded_nul() {
-        let value = b"left\0right";
-        let parsed = unsafe {
-            utf8_with_len(
-                value.as_ptr().cast(),
-                i64::try_from(value.len()).expect("test input length fits in i64"),
-            )
-        }
-        .unwrap();
-        assert_eq!(parsed.as_bytes(), value);
+    fn last_error_message() -> String {
+        let message = hew_mysql_last_error();
+        let text = unsafe { string_as_str(message) }.to_owned();
+        unsafe { string_release(message) };
+        text
     }
 
     #[test]
     fn embedded_nul_sql_is_rejected_before_driver_dispatch() {
-        let value = b"SELECT 1\0 trailing";
-        assert!(unsafe {
-            sql_input(
-                value.as_ptr().cast(),
-                i64::try_from(value.len()).expect("test input length fits in i64"),
-            )
-        }
-        .is_none());
+        let value = string_from_str("SELECT 1\0 trailing");
+        assert!(unsafe { sql_input(value) }.is_none());
+        unsafe { string_release(value) };
         assert_eq!(hew_mysql_last_error_kind(), ErrorKind::InvalidInput as i32);
     }
 
     #[test]
     fn invalid_handles_fail_closed_with_typed_error() {
-        let sql = "SELECT 1";
-        assert_eq!(
-            unsafe {
-                hew_mysql_execute_len(
-                    987_654,
-                    sql.as_ptr().cast(),
-                    i64::try_from(sql.len()).expect("test input length fits in i64"),
-                )
-            },
-            0
-        );
+        let sql = string_from_str("SELECT 1");
+        assert_eq!(unsafe { hew_mysql_execute(987_654, sql) }, 0);
+        unsafe { string_release(sql) };
         assert_eq!(hew_mysql_last_error_kind(), ErrorKind::Closed as i32);
+        assert!(last_error_message().contains("is closed"));
         assert_eq!(hew_mysql_result_rows(987_654), -1);
         assert_eq!(hew_mysql_last_error_kind(), ErrorKind::Closed as i32);
+    }
+
+    #[test]
+    fn managed_error_messages_carry_non_ascii_text() {
+        set_error(ErrorKind::Query, "Répertoire des requêtes traitées — 雪");
+        assert_eq!(
+            last_error_message(),
+            "Répertoire des requêtes traitées — 雪"
+        );
+        clear_error();
+        assert_eq!(last_error_message(), "");
     }
 
     #[test]
@@ -722,36 +666,27 @@ mod tests {
     fn service_round_trip_preserves_null_and_exact_values() {
         let url = std::env::var("HEW_MYSQL_URL")
             .unwrap_or_else(|_| "mysql://hew:hew@127.0.0.1:3306/hew_test".to_owned());
-        let handle = unsafe {
-            hew_mysql_connect_len(
-                url.as_ptr().cast(),
-                i64::try_from(url.len()).expect("test input length fits in i64"),
-            )
-        };
-        assert!(
-            handle > 0,
-            "{}",
-            LAST_ERROR.with(|state| state.borrow().message.clone())
-        );
-        let sql = "SELECT '' AS empty_value, NULL AS missing_value, 41 AS count_value";
-        let result = unsafe {
-            hew_mysql_query_len(
-                handle,
-                sql.as_ptr().cast(),
-                i64::try_from(sql.len()).expect("test input length fits in i64"),
-            )
-        };
-        assert!(
-            result > 0,
-            "{}",
-            LAST_ERROR.with(|state| state.borrow().message.clone())
-        );
+        let url = string_from_str(&url);
+        let handle = unsafe { hew_mysql_connect(url) };
+        unsafe { string_release(url) };
+        assert!(handle > 0, "{}", last_error_message());
+        let sql =
+            string_from_str("SELECT '' AS empty_value, NULL AS missing_value, 41 AS count_value");
+        let result = unsafe { hew_mysql_query(handle, sql) };
+        unsafe { string_release(sql) };
+        assert!(result > 0, "{}", last_error_message());
         assert_eq!(hew_mysql_result_rows(result), 1);
         assert_eq!(hew_mysql_result_cols(result), 3);
         assert_eq!(hew_mysql_result_cell_kind(result, 0, 0), 1);
         assert_eq!(hew_mysql_result_cell_kind(result, 0, 1), 0);
         assert_eq!(hew_mysql_result_cell_kind(result, 0, 2), 1);
         hew_mysql_result_free(result);
+
+        let sql = string_from_str("SELECT * FROM répertoire_des_requêtes_雪");
+        assert_eq!(unsafe { hew_mysql_query(handle, sql) }, 0);
+        unsafe { string_release(sql) };
+        assert_eq!(hew_mysql_last_error_kind(), ErrorKind::Query as i32);
+        assert!(last_error_message().contains("répertoire_des_requêtes_雪"));
         hew_mysql_close(handle);
     }
 }

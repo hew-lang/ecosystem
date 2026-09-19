@@ -8,13 +8,13 @@ import hew.image.magick;
 
 fn main() {
     let image = spawn magick.Image(source: Source.Blank(64, 48, "#3366cc"));
-    let _ = await image.thumbnail(32, 32);
-    let _ = await image.write("magick-example.png");
+    let _ = image.thumbnail(32, 32);
+    let _ = image.write("magick-example.png");
     let _ = image.close();
     // ImageMagick only tags a wand's format once it has decoded real image
     // data, so a freshly created image reports no format until reopened.
     let written = spawn magick.Image(source: Source.File("magick-example.png"));
-    match await written.format() {
+    match written.format() {
         .Ok(result) => match result {
             .Ok(value) => println(f"magick-example.png is {value}"),
             .Err(error) => println(magick.error_message(error)),

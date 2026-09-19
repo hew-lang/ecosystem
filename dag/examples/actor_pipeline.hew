@@ -21,8 +21,8 @@ import hew.dag;
 // A live graph node. `op_code`/`operand` are the same encoding the library uses,
 // so the actor reuses the library's pure operation kernel.
 actor Stage {
-    let op_code: i64;
-    let operand: i64;
+    let op_code: i64,
+    let operand: i64,
     receive fn process(x: i64) -> Result<i64, dag.DagError> {
         match dag.op_of_code(op_code) {
             .Ok(op) => Ok(dag.apply_op(op, x, operand)),
@@ -31,17 +31,11 @@ actor Stage {
     }
 }
 
-extern "C" {
-    fn hew_actor_stop(pid: LocalPid<Stage>);
-}
-
 // Stop every stage spawned for a run. The driver calls this on both successful
 // completion and every failure path after the stage vector exists.
-fn stop_stages(stages: Vec<LocalPid<Stage>>) {
-    for i in 0 .. stages.len() {
-        unsafe {
-            hew_actor_stop(stages[i]);
-        }
+fn stop_stages(stages: Vec<Stage>) {
+    for stage in stages {
+        close(stage);
     }
 }
 
@@ -71,7 +65,7 @@ fn main() {
             match dag.validate(spec) {
                 .Ok(_) => {
                     // Spawn one live actor per node.
-                    let stages: Vec<LocalPid<Stage>> = Vec.new();
+                    var stages: Vec<Stage> = Vec.new();
                     for i in 0 .. dag.node_count(spec) {
                         let ns = dag.node_at(spec, i);
                         stages.push(spawn Stage(op_code: ns.op_code, operand: ns.operand));
@@ -80,7 +74,7 @@ fn main() {
                     // live actor and feeding results forward along the edges.
                     match dag.topo_order(spec) {
                         .Ok(order) => {
-                            let outputs: Vec<i64> = Vec.new();
+                            var outputs: Vec<i64> = Vec.new();
                             for _i in 0 .. dag.node_count(spec) {
                                 outputs.push(0);
                             }
@@ -92,7 +86,7 @@ fn main() {
                                     // `node` comes from topo_order, so it is always a
                                     // valid index into the one-actor-per-node Vec.
                                     let pid = stages[node];
-                                    let r = await pid.process(input);
+                                    let r = pid.process(input);
                                     match r {
                                         .Ok(result) => match result {
                                             .Ok(v) => {

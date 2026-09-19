@@ -11,17 +11,17 @@ import hew.queue.mqtt;
 
 fn main() {
     let client = spawn mqtt.Conn(options: Options { host: "127.0.0.1", port: 11883, client_id: "hew-mqtt-example", keepalive_seconds: 30 });
-    match await client.subscribe("hew/example", mqtt.QoS.AtLeastOnce) {
+    match client.subscribe("hew/example", mqtt.QoS.AtLeastOnce) {
         .Ok(result) => match result {
             .Ok(_) => {
-                match await client.publish("hew/example", "hello from Hew", mqtt.QoS.AtLeastOnce, false) {
+                match client.publish("hew/example", "hello from Hew", mqtt.QoS.AtLeastOnce, false) {
                     .Ok(publish_result) => match publish_result {
                         .Ok(_) => {},
                         .Err(error) => println(mqtt.error_message(error)),
                     },
                     .Err(_) => println("MQTT actor stopped before replying"),
                 }
-                match await client.next_message(3000) {
+                match client.next_message(3000) {
                     .Ok(receive_result) => match receive_result {
                         .Ok(.Message(message)) => println(f"{message.topic}: {message.payload}"),
                         .Ok(.Missing) => println("no message arrived within 3 seconds"),

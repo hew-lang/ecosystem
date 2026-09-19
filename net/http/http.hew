@@ -14,11 +14,11 @@
 //!
 //! fn main() {
 //!     let server = spawn http.Server(addr: "127.0.0.1:8080");
-//!     match await server.accept_one() {
+//!     match server.accept_one() {
 //!         .Ok(result) => match result {
 //!             .Ok(request) => {
 //!                 println(f"{request.method()} {request.path()}");
-//!                 match await server.respond_text(200, "Hello from Hew!") {
+//!                 match server.respond_text(200, "Hello from Hew!") {
 //!                     .Ok(response_result) => match response_result {
 //!                         .Ok(_) => {},
 //!                         .Err(error) => println(http.error_message(error)),
@@ -37,33 +37,33 @@
 #[wire]
 pub enum HttpError {
     /// The actor could not bind its configured address.
-    Listen(string);
+    Listen(string),
     /// The listener could not accept a connection.
-    Accept(string);
+    Accept(string),
     /// The peer disconnected or timed out while sending its request.
-    Read(string);
+    Read(string),
     /// The incoming request was not supported, valid HTTP/1.1.
-    Parse(string);
+    Parse(string),
     /// A response could not be written to the peer.
-    Write(string);
+    Write(string),
     /// A request header was not present.
-    MissingHeader(string);
+    MissingHeader(string),
     /// Percent-encoded input was malformed or not UTF-8.
-    Decode(string);
+    Decode(string),
     /// A form field was not present.
-    MissingFormField(string);
+    MissingFormField(string),
     /// A response status was outside the final-response range 200 through 599.
-    InvalidStatus(i64);
+    InvalidStatus(i64),
     /// A response header value contained CR or LF.
-    InvalidHeaderValue(string);
+    InvalidHeaderValue(string),
     /// A request is already waiting for a response.
-    Busy(string);
+    Busy(string),
     /// No accepted request is waiting for a header lookup or response.
-    NoPending(string);
+    NoPending(string),
     /// The server has been closed.
-    Closed(string);
+    Closed(string),
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string),
 }
 
 /// Return the diagnostic carried by an `HttpError`.
@@ -172,16 +172,15 @@ impl RequestMethods for Request {
 /// deliberately avoids promising a generator or background loop that Hew does
 /// not provide, while keeping actor shutdown bounded when no client arrives.
 pub actor Server {
-    let addr: string;
-    var handle: i64 = 0;
-    var request_handle: i64 = 0;
-    var closed: bool = false;
+    let addr: string,
+    var handle: i64 = 0,
+    var request_handle: i64 = 0,
+    var closed: bool = false,
 
     /// Decode a percent-encoded UTF-8 string.
     receive fn url_decode(input: string) -> Result<string, HttpError> {
-        let input_len = input.len();
         let value = unsafe {
-            hew_ecosystem_http_url_decode(input, input_len)
+            hew_ecosystem_http_url_decode(input)
         };
         if unsafe {
             hew_ecosystem_http_last_status()
@@ -194,10 +193,8 @@ pub actor Server {
 
     /// Extract and decode one URL-encoded form field.
     receive fn form_value(body: string, key: string) -> Result<string, HttpError> {
-        let body_len = body.len();
-        let key_len = key.len();
         let value = unsafe {
-            hew_ecosystem_http_form_value(body, body_len, key, key_len)
+            hew_ecosystem_http_form_value(body, key)
         };
         if unsafe {
             hew_ecosystem_http_last_status()
@@ -225,9 +222,8 @@ pub actor Server {
             return Err(HttpError.Busy("respond to the current request before accepting another"));
         }
         if handle == 0 {
-            let addr_len = addr.len();
             handle = unsafe {
-                hew_ecosystem_http_listen(addr, addr_len)
+                hew_ecosystem_http_listen(addr)
             };
             if handle == 0 {
                 return Err(native_error());
@@ -256,9 +252,8 @@ pub actor Server {
         if request_handle == 0 {
             return Err(HttpError.NoPending("no request is waiting for a response"));
         }
-        let name_len = name.len();
         let value = unsafe {
-            hew_ecosystem_http_request_header(request_handle, name, name_len)
+            hew_ecosystem_http_request_header(request_handle, name)
         };
         if unsafe {
             hew_ecosystem_http_last_status()
@@ -294,10 +289,8 @@ pub actor Server {
                 return Err(error);
             },
         };
-        let body_len = body.len();
-        let checked_type_len = checked_type.len();
         let written = unsafe {
-            hew_ecosystem_http_request_respond(request_handle, checked_status, body, body_len, checked_type, checked_type_len)
+            hew_ecosystem_http_request_respond(request_handle, checked_status, body, checked_type)
         };
         unsafe {
             hew_ecosystem_http_request_free(request_handle)
@@ -326,10 +319,8 @@ pub actor Server {
             },
         };
         let content_type = "text/plain; charset=utf-8";
-        let body_len = body.len();
-        let content_type_len = content_type.len();
         let written = unsafe {
-            hew_ecosystem_http_request_respond(request_handle, checked_status, body, body_len, content_type, content_type_len)
+            hew_ecosystem_http_request_respond(request_handle, checked_status, body, content_type)
         };
         unsafe {
             hew_ecosystem_http_request_free(request_handle)
@@ -358,10 +349,8 @@ pub actor Server {
             },
         };
         let content_type = "text/html; charset=utf-8";
-        let body_len = body.len();
-        let content_type_len = content_type.len();
         let written = unsafe {
-            hew_ecosystem_http_request_respond(request_handle, checked_status, body, body_len, content_type, content_type_len)
+            hew_ecosystem_http_request_respond(request_handle, checked_status, body, content_type)
         };
         unsafe {
             hew_ecosystem_http_request_free(request_handle)
@@ -389,9 +378,8 @@ pub actor Server {
                 return Err(error);
             },
         };
-        let checked_location_len = checked_location.len();
         let written = unsafe {
-            hew_ecosystem_http_request_redirect(request_handle, checked_location, checked_location_len)
+            hew_ecosystem_http_request_redirect(request_handle, checked_location)
         };
         unsafe {
             hew_ecosystem_http_request_free(request_handle)
@@ -439,19 +427,19 @@ pub actor Server {
 }
 
 extern "C" {
-    fn hew_ecosystem_http_listen(addr: string, addr_len: i64) -> i64;
+    fn hew_ecosystem_http_listen(addr: string) -> i64;
     fn hew_ecosystem_http_server_accept(server: i64) -> i64;
     fn hew_ecosystem_http_server_close(server: i64);
     fn hew_ecosystem_http_request_method(request: i64) -> string;
     fn hew_ecosystem_http_request_path(request: i64) -> string;
     fn hew_ecosystem_http_request_query(request: i64) -> string;
-    fn hew_ecosystem_http_request_header(request: i64, name: string, name_len: i64) -> string;
+    fn hew_ecosystem_http_request_header(request: i64, name: string) -> string;
     fn hew_ecosystem_http_request_body(request: i64) -> string;
-    fn hew_ecosystem_http_request_respond(request: i64, status: i64, body: string, body_len: i64, content_type: string, content_type_len: i64) -> i64;
-    fn hew_ecosystem_http_request_redirect(request: i64, location: string, location_len: i64) -> i64;
+    fn hew_ecosystem_http_request_respond(request: i64, status: i64, body: string, content_type: string) -> i64;
+    fn hew_ecosystem_http_request_redirect(request: i64, location: string) -> i64;
     fn hew_ecosystem_http_request_free(request: i64);
-    fn hew_ecosystem_http_url_decode(input: string, input_len: i64) -> string;
-    fn hew_ecosystem_http_form_value(body: string, body_len: i64, key: string, key_len: i64) -> string;
+    fn hew_ecosystem_http_url_decode(input: string) -> string;
+    fn hew_ecosystem_http_form_value(body: string, key: string) -> string;
     fn hew_ecosystem_http_last_error() -> string;
     fn hew_ecosystem_http_last_error_kind() -> i32;
     fn hew_ecosystem_http_last_status() -> i32;

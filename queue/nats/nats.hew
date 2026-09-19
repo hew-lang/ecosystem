@@ -11,11 +11,11 @@
 //!
 //! fn main() {
 //!     let client = spawn nats.Conn(options: Options { url: "nats://127.0.0.1:14222" });
-//!     match await client.subscribe("hew.example") {
+//!     match client.subscribe("hew.example") {
 //!         .Ok(result) => match result {
 //!             .Ok(subscription) => {
-//!                 let _ = await client.publish("hew.example", "hello");
-//!                 match await client.next_message(subscription.clone(), 1000) {
+//!                 let _ = client.publish("hew.example", "hello");
+//!                 match client.next_message(subscription.clone(), 1000) {
 //!                     .Ok(receive_result) => match receive_result {
 //!                         .Ok(.Message(message)) => println(message.data),
 //!                         .Ok(.Missing) => println("no message arrived"),
@@ -36,17 +36,17 @@
 #[wire]
 pub enum NatsError {
     /// The server could not be reached or the connection was lost.
-    Connection(string);
+    Connection(string),
     /// A URL, subject, payload, reply target, or timeout was invalid.
-    InvalidInput(string);
+    InvalidInput(string),
     /// The server or client rejected an operation.
-    Operation(string);
+    Operation(string),
     /// A bounded operation failed because its deadline elapsed.
-    Timeout(string);
+    Timeout(string),
     /// The connection or subscription is already closed.
-    Closed(string);
+    Closed(string),
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string),
 }
 
 /// Return the diagnostic carried by a NATS error.
@@ -74,9 +74,9 @@ pub type Subscription {
 #[wire]
 pub enum ReplyTo {
     /// The publisher did not request a reply.
-    Missing;
+    Missing,
     /// Replies should be published to this subject.
-    Subject(string);
+    Subject(string),
 }
 
 #[wire]
@@ -89,9 +89,9 @@ pub type Delivery {
 #[wire]
 pub enum Receive {
     /// No message arrived before the deadline.
-    Missing;
+    Missing,
     /// A complete message arrived.
-    Message(Delivery);
+    Message(Delivery),
 }
 
 fn native_error_from(kind: i32, message: string) -> NatsError {
@@ -126,7 +126,7 @@ fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: stri
 
 #[resource]
 type NativeMessage {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativeMessage {
@@ -154,14 +154,14 @@ impl NativeMessage {
         }
     }
 
-    fn close(consuming self) {
+    fn close(consume self) {
         unsafe {
             hew_nats_message_free(self.handle)
         };
     }
 }
 
-fn snapshot(result: NativeMessage) -> Delivery {
+fn snapshot(consume result: NativeMessage) -> Delivery {
     let reply = result.reply();
     let reply_to = if result.has_reply() {
         ReplyTo.Subject(reply.clone())
@@ -192,14 +192,14 @@ fn receive_result(handle: i64) -> Result<Receive, NatsError> {
 
 /// An actor that owns one NATS connection and every subscription it creates.
 pub actor Conn {
-    var native_handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var native_handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(options: Options) {
         native_handle = unsafe {
-            hew_nats_connect_len(options.url, options.url.len())
+            hew_nats_connect(options.url)
         };
         if native_handle == 0 {
             connect_error_kind = unsafe {
@@ -217,7 +217,7 @@ pub actor Conn {
     receive fn publish(subject: string, data: string) -> Result<(), NatsError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let status = unsafe {
-            hew_nats_publish_len(handle, subject, subject.len(), data, data.len())
+            hew_nats_publish(handle, subject, data)
         };
         if status == 0 {
             Ok(())
@@ -230,7 +230,7 @@ pub actor Conn {
     receive fn subscribe(subject: string) -> Result<Subscription, NatsError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         let subscription = unsafe {
-            hew_nats_subscribe_len(handle, subject, subject.len())
+            hew_nats_subscribe(handle, subject)
         };
         if subscription == 0 {
             Err(native_error())
@@ -251,7 +251,7 @@ pub actor Conn {
     receive fn request(subject: string, data: string, timeout_ms: i64) -> Result<Receive, NatsError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         receive_result(unsafe {
-            hew_nats_request_len(handle, subject, subject.len(), data, data.len(), timeout_ms)
+            hew_nats_request(handle, subject, data, timeout_ms)
         })
     }
 
@@ -262,7 +262,7 @@ pub actor Conn {
             .Missing => Err(NatsError.InvalidInput("NATS message has no reply subject")),
             .Subject(subject) => {
                 let status = unsafe {
-                    hew_nats_reply_len(handle, subject, subject.len(), data, data.len())
+                    hew_nats_reply(handle, subject, data)
                 };
                 if status == 0 {
                     Ok(())
@@ -305,12 +305,12 @@ pub actor Conn {
 extern "C" {
     fn hew_nats_last_error_kind() -> i32;
     fn hew_nats_last_error() -> string;
-    fn hew_nats_connect_len(url: string, url_len: i64) -> i64;
-    fn hew_nats_publish_len(connection: i64, subject: string, subject_len: i64, data: string, data_len: i64) -> i32;
-    fn hew_nats_subscribe_len(connection: i64, subject: string, subject_len: i64) -> i64;
+    fn hew_nats_connect(url: string) -> i64;
+    fn hew_nats_publish(connection: i64, subject: string, data: string) -> i32;
+    fn hew_nats_subscribe(connection: i64, subject: string) -> i64;
     fn hew_nats_next_result(subscription: i64, timeout_ms: i64) -> i64;
-    fn hew_nats_request_len(connection: i64, subject: string, subject_len: i64, data: string, data_len: i64, timeout_ms: i64) -> i64;
-    fn hew_nats_reply_len(connection: i64, reply_subject: string, reply_subject_len: i64, data: string, data_len: i64) -> i32;
+    fn hew_nats_request(connection: i64, subject: string, data: string, timeout_ms: i64) -> i64;
+    fn hew_nats_reply(connection: i64, reply_subject: string, data: string) -> i32;
     fn hew_nats_message_subject(message: i64) -> string;
     fn hew_nats_message_data(message: i64) -> string;
     fn hew_nats_message_reply(message: i64) -> string;

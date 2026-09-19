@@ -16,6 +16,7 @@ crate-type = ["staticlib", "lib"]
 [dependencies]
 mongodb = { version = "3", default-features = false, features = ["compat-3-0-0", "rustls-tls", "sync"] }
 serde_json = "1"
+hew-cabi.workspace = true
 libc.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread"] }
 

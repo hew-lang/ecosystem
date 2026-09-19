@@ -45,7 +45,7 @@
 //!   module boundary, so an importing consumer drives routing through their own
 //!   per-node logic.
 //! - **Live actors** — to route through one live actor per node, open-code the
-//!   driver in the consumer's compilation unit (spawn a `Vec<LocalPid<...>>`,
+//!   driver in the consumer's compilation unit (spawn a `Vec<...>`,
 //!   ask each in `topo_order`, feed results forward). The library supplies the
 //!   spec loading, validation, and topological sort; the consumer supplies the
 //!   actors. See `examples/actor_pipeline.hew`. (`await` inside a closure
@@ -81,13 +81,13 @@ import std.string;
 /// closed operation; the `operand` in a `NodeSpec` parameterizes it.
 pub enum NodeOp {
     /// `x + operand`
-    Add;
+    Add,
     /// `x * operand`
-    Multiply;
+    Multiply,
     /// `x * x` (operand ignored)
-    Square;
+    Square,
     /// `x` unchanged (operand ignored) — a pass-through / fan-in merge point
-    Identity;
+    Identity,
 }
 
 // ── Spec records (structure-of-arrays, flat Copy fields) ────────────────────
@@ -95,47 +95,47 @@ pub enum NodeOp {
 /// operation is parameterized by. `op_code` is the `NodeOp` discriminant stored
 /// as an `i64` so the whole record stays Copy and Vec-storable.
 pub type NodeSpec {
-    id: i64;
-    op_code: i64;
-    operand: i64;
+    id: i64,
+    op_code: i64,
+    operand: i64,
 }
 
 /// A directed dependency edge: `dst` runs after `src` and consumes its output.
 pub type Edge {
-    src: i64;
-    dst: i64;
+    src: i64,
+    dst: i64,
 }
 
 /// A compiled DAG specification. The graph is a flat edge list (two parallel
 /// arrays would also work; an `Edge` record is itself Copy, so a single
 /// `Vec<Edge>` is clean here) plus the per-node operations.
 pub type DagSpec {
-    num_nodes: i64;
-    nodes: Vec<NodeSpec>;
-    edges: Vec<Edge>;
+    num_nodes: i64,
+    nodes: Vec<NodeSpec>,
+    edges: Vec<Edge>,
 }
 
 /// The outcome of routing an input through the graph. `outputs` is indexed by
 /// node id; `order` is the topological order the nodes ran in.
 pub type RunReport {
-    outputs: Vec<i64>;
-    order: Vec<i64>;
-    num_nodes: i64;
+    outputs: Vec<i64>,
+    order: Vec<i64>,
+    num_nodes: i64,
 }
 
 // ── Errors (fail closed) ────────────────────────────────────────────────────
 #[wire]
 pub enum DagError {
     /// No nodes at all.
-    Empty;
+    Empty,
     /// The graph has a cycle, so there is no valid topological order.
-    Cyclic;
+    Cyclic,
     /// An edge referenced a node id outside `[0, num_nodes)`.
-    UnknownNode(i64);
+    UnknownNode(i64),
     /// The spec text was malformed (e.g. a node missing its `op:operand` form).
-    Malformed(i64);
+    Malformed(i64),
     /// A programmatic node carried an operation discriminant this version does not know.
-    UnknownOperation(i64);
+    UnknownOperation(i64),
 }
 
 /// A run failure that also reports how far the run got. Wrapping the `DagError`
@@ -143,8 +143,8 @@ pub enum DagError {
 /// inspectable for the node at which routing stopped (`-1` when the spec was
 /// refused before any node ran).
 pub type RunFailure {
-    err: DagError;
-    stopped_at: i64;
+    err: DagError,
+    stopped_at: i64,
 }
 
 // ── NodeOp <-> code mapping ─────────────────────────────────────────────────
@@ -206,7 +206,7 @@ pub fn new_spec() -> DagSpec {
 }
 
 /// Add a node with the given operation and operand; returns the new node id.
-pub fn add_node(spec: DagSpec, op: NodeOp, operand: i64) -> DagSpec {
+pub fn add_node(var spec: DagSpec, op: NodeOp, operand: i64) -> DagSpec {
     let id = spec.num_nodes;
     spec.nodes.push(NodeSpec { id: id, op_code: code_of_op(op), operand: operand });
     DagSpec { num_nodes: id + 1, nodes: spec.nodes, edges: spec.edges }
@@ -218,7 +218,7 @@ fn node_in_range(spec: DagSpec, id: i64) -> bool {
 
 /// Add a dependency edge `src -> dst`, rejecting either endpoint when it does
 /// not identify a node in the spec.
-pub fn add_edge(spec: DagSpec, src: i64, dst: i64) -> Result<DagSpec, DagError> {
+pub fn add_edge(var spec: DagSpec, src: i64, dst: i64) -> Result<DagSpec, DagError> {
     if !node_in_range(spec, src) {
         return Err(DagError.UnknownNode(src));
     }
@@ -277,8 +277,8 @@ fn parse_node(token: string, id: i64) -> Result<NodeSpec, DagError> {
         return Err(DagError.Malformed(id));
     }
     let operand = match string.to_int(operand_text) {
-        .Some(value) => value,
-        .None => return Err(DagError.Malformed(id)),
+        .Ok(value) => value,
+        .Err(_) => return Err(DagError.Malformed(id)),
     };
     match code_of_name(name, id) {
         .Ok(code) => Ok(NodeSpec { id: id, op_code: code, operand: operand }),
@@ -288,7 +288,7 @@ fn parse_node(token: string, id: i64) -> Result<NodeSpec, DagError> {
 
 /// Split a section into whitespace-free non-empty tokens on a separator.
 fn nonempty_tokens(section: string, sep: string) -> Vec<StrTok> {
-    let out: Vec<StrTok> = Vec.new();
+    var out: Vec<StrTok> = Vec.new();
     let raw = section.split(sep);
     let n = raw.len();
     for i in 0 .. n {
@@ -303,7 +303,7 @@ fn nonempty_tokens(section: string, sep: string) -> Vec<StrTok> {
 /// A one-field wrapper so trimmed string tokens live in an indexable `Vec`.
 /// (A bare `Vec<string>` cannot be scalar-indexed on the current substrate.)
 pub type StrTok {
-    s: string;
+    s: string,
 }
 
 /// Load a spec from its text form (see the module docs for the grammar).
@@ -328,7 +328,7 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
     if num_nodes == 0 {
         return Err(DagError.Empty);
     }
-    let nodes: Vec<NodeSpec> = Vec.new();
+    var nodes: Vec<NodeSpec> = Vec.new();
     for i in 0 .. num_nodes {
         let tok = node_toks[i];
         match parse_node(tok.s, i) {
@@ -338,7 +338,7 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
             },
         }
     }
-    let edges: Vec<Edge> = Vec.new();
+    var edges: Vec<Edge> = Vec.new();
     let edge_toks = nonempty_tokens(edge_section, ";");
     let ne = edge_toks.len();
     for i in 0 .. ne {
@@ -356,12 +356,12 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
             .None => return Err(DagError.Malformed(i)),
         };
         let src = match string.to_int(src_text) {
-            .Some(value) => value,
-            .None => return Err(DagError.Malformed(i)),
+            .Ok(value) => value,
+            .Err(_) => return Err(DagError.Malformed(i)),
         };
         let dst = match string.to_int(dst_text) {
-            .Some(value) => value,
-            .None => return Err(DagError.Malformed(i)),
+            .Ok(value) => value,
+            .Err(_) => return Err(DagError.Malformed(i)),
         };
         if src < 0 {
             return Err(DagError.UnknownNode(src));
@@ -399,7 +399,7 @@ fn validate_edges(spec: DagSpec) -> Result<i64, DagError> {
 /// In-degree of every node from the edge list.
 fn in_degrees(spec: DagSpec) -> Result<Vec<i64>, DagError> {
     let ne = validate_edges(spec)?;
-    let deg: Vec<i64> = Vec.new();
+    var deg: Vec<i64> = Vec.new();
     for _i in 0 .. spec.num_nodes {
         deg.push(0);
     }
@@ -414,9 +414,9 @@ fn in_degrees(spec: DagSpec) -> Result<Vec<i64>, DagError> {
 /// when the graph contains a cycle. Invalid edge endpoints are rejected before
 /// indexing the in-degree vector.
 pub fn topo_order(spec: DagSpec) -> Result<Vec<i64>, DagError> {
-    let indeg = in_degrees(spec)?;
-    let order: Vec<i64> = Vec.new();
-    let queue: Vec<i64> = Vec.new();
+    var indeg = in_degrees(spec)?;
+    var order: Vec<i64> = Vec.new();
+    var queue: Vec<i64> = Vec.new();
     for s in 0 .. spec.num_nodes {
         if indeg[s] == 0 {
             queue.push(s);
@@ -513,7 +513,7 @@ pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn(i64, i64) -> i64) ->
         .Ok(order) => order,
         .Err(e) => return Err(RunFailure { err: e, stopped_at: -1 }),
     };
-    let outputs: Vec<i64> = Vec.new();
+    var outputs: Vec<i64> = Vec.new();
     for _i in 0 .. spec.num_nodes {
         outputs.push(0);
     }
@@ -552,7 +552,7 @@ pub fn run_text(text: string, initial: i64) -> Result<RunReport, RunFailure> {
                 .Ok(order) => order,
                 .Err(e) => return Err(RunFailure { err: e, stopped_at: -1 }),
             };
-            let outputs: Vec<i64> = Vec.new();
+            var outputs: Vec<i64> = Vec.new();
             for _i in 0 .. spec.num_nodes {
                 outputs.push(0);
             }
@@ -654,15 +654,15 @@ pub fn is_cyclic(e: DagError) -> bool {
 /// See WALLS.md.
 pub enum LifecycleState {
     /// No spec loaded yet.
-    Unloaded;
+    Unloaded,
     /// A spec is loaded but not yet validated; carries the node count.
-    Ready(i64);
+    Ready(i64),
     /// The spec is acyclic and routing may proceed; carries the node count.
-    Routing(i64);
+    Routing(i64),
     /// Routing finished; carries the sink output.
-    Done(i64);
+    Done(i64),
     /// The spec was refused (cyclic/empty); carries the rejecting error.
-    Refused(DagError);
+    Refused(DagError),
 }
 
 /// Drive the lifecycle for `spec`: load it, validate it, and advance to the

@@ -1,41 +1,22 @@
 //! Native Redis support for `hew.db.redis`.
 //!
-//! Every text argument is received as a pointer plus an explicit byte length.
+//! Text crosses the boundary as managed Hew strings: inbound handles are
+//! borrowed for the call and returned handles are freshly allocated owners.
 //! Native handles are registered, validated before dereference, and released
 //! idempotently so actor cancellation and explicit close cannot leak or double
 //! free them.
 
+#[cfg(test)]
+use hew_cabi::string::string_release;
+use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use redis::{Commands, ConnectionLike};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
-use std::os::raw::c_char;
 use std::slice;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
-
-/// Return a string through Hew's foreign-package ABI.
-///
-/// Package `extern "C" -> string` results are adopted by Hew and released
-/// with `libc::free`, so the returned pointer must be the allocation base.
-fn malloc_c_string(value: &str) -> *mut c_char {
-    let Some(size) = value.len().checked_add(1) else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: `size` includes the trailing NUL and is non-zero.
-    let output = unsafe { libc::malloc(size) }.cast::<u8>();
-    if output.is_null() {
-        return output.cast();
-    }
-    // SAFETY: `output` names `size` writable bytes and does not overlap the
-    // borrowed string payload.
-    unsafe {
-        std::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
-        output.add(value.len()).write(0);
-    }
-    output.cast()
-}
 
 /// Hew's C-ABI representation for an owned `bytes` value.
 #[repr(C)]
@@ -68,12 +49,8 @@ fn owned_bytes(value: &[u8]) -> BytesTriple {
     let Some(allocation_len) = capacity.checked_add(8) else {
         std::process::abort();
     };
-    // SAFETY: `malloc` accepts any allocation size and the result is checked
-    // before it is written or returned.
-    let base = unsafe { libc::malloc(allocation_len) }.cast::<u8>();
-    if base.is_null() {
-        std::process::abort();
-    }
+    // The shared allocator aborts on allocation failure before any writes.
+    let base = hew_cabi::mem::buf_alloc(allocation_len).cast::<u8>();
     // SAFETY: `base` names an allocation of `8 + capacity` bytes. Header
     // writes use byte copies, so they do not impose an alignment requirement.
     unsafe {
@@ -165,38 +142,8 @@ pub extern "C" fn hew_redis_last_error_kind() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn hew_redis_last_error() -> *mut c_char {
-    LAST_ERROR.with(|state| malloc_c_string(&state.borrow().message))
-}
-
-unsafe fn utf8_with_len<'a>(value: *const c_char, len: i64, what: &str) -> Option<&'a str> {
-    let Ok(len) = usize::try_from(len) else {
-        set_error(
-            ErrorKind::InvalidInput,
-            format!("{what} length is negative"),
-        );
-        return None;
-    };
-    if value.is_null() {
-        if len == 0 {
-            return Some("");
-        }
-        set_error(ErrorKind::InvalidInput, format!("{what} pointer is null"));
-        return None;
-    }
-    // SAFETY: the FFI caller provides `len` readable bytes at `value`; null is
-    // handled above, including the valid empty-string representation.
-    let bytes = unsafe { slice::from_raw_parts(value.cast::<u8>(), len) };
-    match std::str::from_utf8(bytes) {
-        Ok(text) => Some(text),
-        Err(error) => {
-            set_error(
-                ErrorKind::InvalidInput,
-                format!("{what} is not UTF-8: {error}"),
-            );
-            None
-        }
-    }
+pub extern "C" fn hew_redis_last_error() -> *mut HewString {
+    LAST_ERROR.with(|state| string_from_str(&state.borrow().message))
 }
 
 fn command_error(operation: &str, error: &redis::RedisError) {
@@ -353,15 +300,13 @@ fn connection(handle: i64) -> Option<Arc<Mutex<RedisConnection>>> {
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_connect_len(url: *const c_char, url_len: i64) -> i64 {
-    // SAFETY: the function contract requires `url` to expose `url_len`
-    // readable bytes for this call.
-    let Some(url) = (unsafe { utf8_with_len(url, url_len, "Redis URL") }) else {
-        return 0;
-    };
+pub unsafe extern "C" fn hew_redis_connect(url: *const HewString) -> i64 {
+    // SAFETY: the URL is a managed handle borrowed for this call.
+    let url = unsafe { string_as_str(url) };
     let client = match redis::Client::open(url) {
         Ok(client) => client,
         Err(error) => {
@@ -394,8 +339,9 @@ pub unsafe extern "C" fn hew_redis_connect_len(url: *const c_char, url_len: i64)
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_close(handle: i64) {
     free_shared(handle, &CONNECTIONS);
@@ -408,17 +354,6 @@ pub extern "C" fn hew_redis_connection_count() -> i64 {
         .ok()
         .and_then(|connections| i64::try_from(connections.len()).ok())
         .unwrap_or(-1)
-}
-
-macro_rules! text_arg {
-    ($ptr:expr, $len:expr, $name:literal) => {
-        // SAFETY: each enclosing FFI entry point requires the pointer/length
-        // pair to describe readable memory for the duration of the call.
-        match unsafe { utf8_with_len($ptr, $len, $name) } {
-            Some(value) => value,
-            None => return -1,
-        }
-    };
 }
 
 macro_rules! binary_arg {
@@ -458,17 +393,14 @@ fn int_reply(result: redis::RedisResult<i64>, operation: &str) -> i64 {
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_set_len(
-    c: i64,
-    k: *const c_char,
-    kl: i64,
-    v: *const BytesTriple,
-) -> i64 {
+pub unsafe extern "C" fn hew_redis_set(c: i64, k: *const HewString, v: *const BytesTriple) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     let v = binary_arg!(v, "value");
     match c.inner.req_command(redis::cmd("SET").arg(k).arg(v)) {
         Ok(_) => {
@@ -516,10 +448,11 @@ fn string_reply(result: redis::RedisResult<Option<Vec<u8>>>, operation: &str) ->
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_get_len(c: i64, k: *const c_char, kl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_get(c: i64, k: *const HewString) -> i64 {
     lock_connection!(
         c,
         shared_c,
@@ -532,33 +465,37 @@ pub unsafe extern "C" fn hew_redis_get_len(c: i64, k: *const c_char, kl: i64) ->
             &STRING_RESULTS,
         )
     );
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     string_reply(c.inner.get(k), "GET")
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_del_len(c: i64, k: *const c_char, kl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_del(c: i64, k: *const HewString) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     int_reply(c.inner.del(k), "DEL")
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_set_ex_len(
+pub unsafe extern "C" fn hew_redis_set_ex(
     c: i64,
-    k: *const c_char,
-    kl: i64,
+    k: *const HewString,
     v: *const BytesTriple,
     ttl: i64,
 ) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     let v = binary_arg!(v, "value");
     if ttl <= 0 {
         set_error(ErrorKind::InvalidInput, "TTL must be positive");
@@ -580,12 +517,14 @@ pub unsafe extern "C" fn hew_redis_set_ex_len(
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_expire_len(c: i64, k: *const c_char, kl: i64, ttl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_expire(c: i64, k: *const HewString, ttl: i64) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     if ttl <= 0 {
         set_error(ErrorKind::InvalidInput, "TTL must be positive");
         return -1;
@@ -597,12 +536,14 @@ pub unsafe extern "C" fn hew_redis_expire_len(c: i64, k: *const c_char, kl: i64,
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_ttl_len(c: i64, k: *const c_char, kl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_ttl(c: i64, k: *const HewString) -> i64 {
     lock_connection!(c, shared_c, c, -3);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     match redis::cmd("TTL").arg(k).query(&mut c.inner) {
         Ok(v) => {
             clear_error();
@@ -616,12 +557,14 @@ pub unsafe extern "C" fn hew_redis_ttl_len(c: i64, k: *const c_char, kl: i64) ->
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_incr_len(c: i64, k: *const c_char, kl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_incr(c: i64, k: *const HewString) -> i64 {
     lock_connection!(c, shared_c, c, 0);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     match c.inner.incr(k, 1) {
         Ok(v) => {
             clear_error();
@@ -635,26 +578,28 @@ pub unsafe extern "C" fn hew_redis_incr_len(c: i64, k: *const c_char, kl: i64) -
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_lpush_len(
+pub unsafe extern "C" fn hew_redis_lpush(
     c: i64,
-    k: *const c_char,
-    kl: i64,
+    k: *const HewString,
     v: *const BytesTriple,
 ) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     let v = binary_arg!(v, "value");
     int_reply(c.inner.lpush(k, v), "LPUSH")
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_rpop_len(c: i64, k: *const c_char, kl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_rpop(c: i64, k: *const HewString) -> i64 {
     lock_connection!(
         c,
         shared_c,
@@ -667,25 +612,27 @@ pub unsafe extern "C" fn hew_redis_rpop_len(c: i64, k: *const c_char, kl: i64) -
             &STRING_RESULTS,
         )
     );
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     string_reply(c.inner.rpop(k, None), "RPOP")
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_hset_len(
+pub unsafe extern "C" fn hew_redis_hset(
     c: i64,
-    k: *const c_char,
-    kl: i64,
-    f: *const c_char,
-    fl: i64,
+    k: *const HewString,
+    f: *const HewString,
     v: *const BytesTriple,
 ) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
-    let f = text_arg!(f, fl, "field");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
+    // SAFETY: the field is a managed handle borrowed for this call.
+    let f = unsafe { string_as_str(f) };
     let v = binary_arg!(v, "value");
     int_reply(
         redis::cmd("HSET").arg(k).arg(f).arg(v).query(&mut c.inner),
@@ -694,16 +641,11 @@ pub unsafe extern "C" fn hew_redis_hset_len(
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_hget_len(
-    c: i64,
-    k: *const c_char,
-    kl: i64,
-    f: *const c_char,
-    fl: i64,
-) -> i64 {
+pub unsafe extern "C" fn hew_redis_hget(c: i64, k: *const HewString, f: *const HewString) -> i64 {
     lock_connection!(
         c,
         shared_c,
@@ -716,25 +658,24 @@ pub unsafe extern "C" fn hew_redis_hget_len(
             &STRING_RESULTS,
         )
     );
-    let k = text_arg!(k, kl, "key");
-    let f = text_arg!(f, fl, "field");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
+    // SAFETY: the field is a managed handle borrowed for this call.
+    let f = unsafe { string_as_str(f) };
     string_reply(redis::cmd("HGET").arg(k).arg(f).query(&mut c.inner), "HGET")
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_hdel_len(
-    c: i64,
-    k: *const c_char,
-    kl: i64,
-    f: *const c_char,
-    fl: i64,
-) -> i64 {
+pub unsafe extern "C" fn hew_redis_hdel(c: i64, k: *const HewString, f: *const HewString) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
-    let f = text_arg!(f, fl, "field");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
+    // SAFETY: the field is a managed handle borrowed for this call.
+    let f = unsafe { string_as_str(f) };
     int_reply(redis::cmd("HDEL").arg(k).arg(f).query(&mut c.inner), "HDEL")
 }
 
@@ -744,12 +685,14 @@ struct HashResult {
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_hgetall_len_ffi(c: i64, k: *const c_char, kl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_hgetall(c: i64, k: *const HewString) -> i64 {
     lock_connection!(c, shared_c, c, 0);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     match redis::cmd("HGETALL")
         .arg(k)
         .query::<Vec<(String, Vec<u8>)>>(&mut c.inner)
@@ -766,8 +709,9 @@ pub unsafe extern "C" fn hew_redis_hgetall_len_ffi(c: i64, k: *const c_char, kl:
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_hgetall_count(h: i64) -> i64 {
     registered_mut::<HashResult>(h, &HASH_RESULTS, "hash result").map_or(-1, |result| {
@@ -775,21 +719,23 @@ pub unsafe extern "C" fn hew_redis_hgetall_count(h: i64) -> i64 {
     })
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_hgetall_key(h: i64, i: i64) -> *mut c_char {
+pub unsafe extern "C" fn hew_redis_hgetall_key(h: i64, i: i64) -> *mut HewString {
     let Some(result) = registered_mut::<HashResult>(h, &HASH_RESULTS, "hash result") else {
-        return malloc_c_string("");
+        return std::ptr::null_mut();
     };
     usize::try_from(i)
         .ok()
         .and_then(|index| result.entries.get(index))
-        .map_or_else(|| malloc_c_string(""), |entry| malloc_c_string(&entry.0))
+        .map_or_else(std::ptr::null_mut, |entry| string_from_str(&entry.0))
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_hgetall_value(h: i64, i: i64) -> BytesTriple {
     let Some(result) = registered_mut::<HashResult>(h, &HASH_RESULTS, "hash result") else {
@@ -801,55 +747,51 @@ pub unsafe extern "C" fn hew_redis_hgetall_value(h: i64, i: i64) -> BytesTriple 
         .map_or_else(empty_bytes, |entry| owned_bytes(&entry.1))
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_hgetall_free(h: i64) {
     free_registered::<HashResult>(h, &HASH_RESULTS);
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_sadd_len(
-    c: i64,
-    k: *const c_char,
-    kl: i64,
-    m: *const BytesTriple,
-) -> i64 {
+pub unsafe extern "C" fn hew_redis_sadd(c: i64, k: *const HewString, m: *const BytesTriple) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     let m = binary_arg!(m, "member");
     int_reply(redis::cmd("SADD").arg(k).arg(m).query(&mut c.inner), "SADD")
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_srem_len(
-    c: i64,
-    k: *const c_char,
-    kl: i64,
-    m: *const BytesTriple,
-) -> i64 {
+pub unsafe extern "C" fn hew_redis_srem(c: i64, k: *const HewString, m: *const BytesTriple) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     let m = binary_arg!(m, "member");
     int_reply(redis::cmd("SREM").arg(k).arg(m).query(&mut c.inner), "SREM")
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_sismember_len(
+pub unsafe extern "C" fn hew_redis_sismember(
     c: i64,
-    k: *const c_char,
-    kl: i64,
+    k: *const HewString,
     m: *const BytesTriple,
 ) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     let m = binary_arg!(m, "member");
     int_reply(
         redis::cmd("SISMEMBER").arg(k).arg(m).query(&mut c.inner),
@@ -862,12 +804,14 @@ struct SetResult {
     members: Vec<Vec<u8>>,
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_smembers_len_ffi(c: i64, k: *const c_char, kl: i64) -> i64 {
+pub unsafe extern "C" fn hew_redis_smembers(c: i64, k: *const HewString) -> i64 {
     lock_connection!(c, shared_c, c, 0);
-    let k = text_arg!(k, kl, "key");
+    // SAFETY: the key is a managed handle borrowed for this call.
+    let k = unsafe { string_as_str(k) };
     match redis::cmd("SMEMBERS").arg(k).query(&mut c.inner) {
         Ok(members) => {
             clear_error();
@@ -880,8 +824,9 @@ pub unsafe extern "C" fn hew_redis_smembers_len_ffi(c: i64, k: *const c_char, kl
     }
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_smembers_count(h: i64) -> i64 {
     registered_mut::<SetResult>(h, &SET_RESULTS, "set result").map_or(-1, |result| {
@@ -889,8 +834,9 @@ pub unsafe extern "C" fn hew_redis_smembers_count(h: i64) -> i64 {
     })
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_smembers_get(h: i64, i: i64) -> BytesTriple {
     let Some(result) = registered_mut::<SetResult>(h, &SET_RESULTS, "set result") else {
@@ -902,37 +848,39 @@ pub unsafe extern "C" fn hew_redis_smembers_get(h: i64, i: i64) -> BytesTriple {
         .map_or_else(empty_bytes, |value| owned_bytes(value))
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_smembers_free(h: i64) {
     free_registered::<SetResult>(h, &SET_RESULTS);
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_publish_len(
+pub unsafe extern "C" fn hew_redis_publish(
     c: i64,
-    ch: *const c_char,
-    chl: i64,
+    ch: *const HewString,
     m: *const BytesTriple,
 ) -> i64 {
     lock_connection!(c, shared_c, c, -1);
-    let ch = text_arg!(ch, chl, "channel");
+    // SAFETY: the channel is a managed handle borrowed for this call.
+    let ch = unsafe { string_as_str(ch) };
     let m = binary_arg!(m, "message");
     int_reply(c.inner.publish(ch, m), "PUBLISH")
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_subscribe_once_len(
+pub unsafe extern "C" fn hew_redis_subscribe_once(
     c: i64,
-    ch: *const c_char,
-    chl: i64,
+    ch: *const HewString,
     timeout_ms: i64,
 ) -> i64 {
     let Some(c) = connection(c) else {
@@ -944,7 +892,8 @@ pub unsafe extern "C" fn hew_redis_subscribe_once_len(
             &STRING_RESULTS,
         );
     };
-    let ch = text_arg!(ch, chl, "channel");
+    // SAFETY: the channel is a managed handle borrowed for this call.
+    let ch = unsafe { string_as_str(ch) };
     if timeout_ms <= 0 {
         set_error(ErrorKind::InvalidInput, "timeout must be positive");
         return register(
@@ -1038,15 +987,17 @@ pub unsafe extern "C" fn hew_redis_subscribe_once_len(
 }
 
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_string_status(h: i64) -> i32 {
     registered_mut::<StringResult>(h, &STRING_RESULTS, "string result").map_or(-1, |r| r.status)
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_string_value(h: i64) -> BytesTriple {
     let Some(result) = registered_mut::<StringResult>(h, &STRING_RESULTS, "string result") else {
@@ -1058,8 +1009,9 @@ pub unsafe extern "C" fn hew_redis_string_value(h: i64) -> BytesTriple {
         .map_or_else(empty_bytes, |value| owned_bytes(value))
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_string_free(h: i64) {
     free_registered::<StringResult>(h, &STRING_RESULTS);
@@ -1113,64 +1065,70 @@ fn pipeline_add_bytes(h: i64, command: &str, args: &[&[u8]]) -> i64 {
     0
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_pipeline_add0_len(h: i64, c: *const c_char, cl: i64) -> i64 {
-    let c = text_arg!(c, cl, "command");
+pub unsafe extern "C" fn hew_redis_pipeline_add0(h: i64, c: *const HewString) -> i64 {
+    // SAFETY: the command is a managed handle borrowed for this call.
+    let c = unsafe { string_as_str(c) };
     pipeline_add(h, c, &[])
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_pipeline_add1_len(
+pub unsafe extern "C" fn hew_redis_pipeline_add1(
     h: i64,
-    c: *const c_char,
-    cl: i64,
+    c: *const HewString,
     a: *const BytesTriple,
 ) -> i64 {
-    let c = text_arg!(c, cl, "command");
+    // SAFETY: the command is a managed handle borrowed for this call.
+    let c = unsafe { string_as_str(c) };
     let a = binary_arg!(a, "argument");
     pipeline_add_bytes(h, c, &[a])
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_pipeline_add2_len(
+pub unsafe extern "C" fn hew_redis_pipeline_add2(
     h: i64,
-    c: *const c_char,
-    cl: i64,
+    c: *const HewString,
     a: *const BytesTriple,
     b: *const BytesTriple,
 ) -> i64 {
-    let c = text_arg!(c, cl, "command");
+    // SAFETY: the command is a managed handle borrowed for this call.
+    let c = unsafe { string_as_str(c) };
     let a = binary_arg!(a, "argument 1");
     let b = binary_arg!(b, "argument 2");
     pipeline_add_bytes(h, c, &[a, b])
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_redis_pipeline_add3_len(
+pub unsafe extern "C" fn hew_redis_pipeline_add3(
     handle: i64,
-    command: *const c_char,
-    command_len: i64,
+    command: *const HewString,
     argument_a: *const BytesTriple,
     argument_b: *const BytesTriple,
     argument_c: *const BytesTriple,
 ) -> i64 {
-    let command = text_arg!(command, command_len, "command");
+    // SAFETY: the command is a managed handle borrowed for this call.
+    let command = unsafe { string_as_str(command) };
     let argument_a = binary_arg!(argument_a, "argument 1");
     let argument_b = binary_arg!(argument_b, "argument 2");
     let argument_c = binary_arg!(argument_c, "argument 3");
     pipeline_add_bytes(handle, command, &[argument_a, argument_b, argument_c])
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_pipeline_exec(c: i64, p: i64) -> i64 {
     let Some(c) = connection(c) else {
@@ -1199,8 +1157,9 @@ pub unsafe extern "C" fn hew_redis_pipeline_exec(c: i64, p: i64) -> i64 {
     }
 }
 /// # Safety
-/// Any pointer argument must name readable Hew ABI memory for its declared
-/// length. Handle arguments must originate from this module.
+/// Each string argument must be null (the empty string) or a live managed
+/// Hew string handle, and each bytes argument must name a valid Hew bytes
+/// triple. Handle arguments must originate from this module.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_redis_pipeline_free(h: i64) {
     free_shared(h, &PIPELINES);
@@ -1209,21 +1168,14 @@ pub unsafe extern "C" fn hew_redis_pipeline_free(h: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
 
     #[test]
-    fn length_boundary_preserves_embedded_nul() {
-        let bytes = b"a\0b";
-        // SAFETY: `bytes` remains alive and exposes exactly the supplied
-        // number of initialized bytes for this call.
-        let value = unsafe {
-            utf8_with_len(
-                bytes.as_ptr().cast(),
-                i64::try_from(bytes.len()).unwrap(),
-                "value",
-            )
-        };
-        assert_eq!(value, Some("a\0b"));
+    fn managed_string_input_preserves_embedded_nul() {
+        let value = string_from_str("a\0b");
+        // SAFETY: `value` is a live managed string owned by this test.
+        assert_eq!(unsafe { string_as_str(value) }, "a\0b");
+        // SAFETY: this is the unique release of the managed allocation.
+        unsafe { string_release(value) };
     }
 
     #[test]
@@ -1235,32 +1187,41 @@ mod tests {
             unsafe { bytes_arg(&raw const value, "value") },
             Some(expected.as_slice())
         );
-        // SAFETY: `owned_bytes` allocated this block with `malloc`; subtracting
+        // SAFETY: `owned_bytes` allocated this block with `buf_alloc`; subtracting
         // its fixed header yields the original allocation address.
-        unsafe { libc::free(value.ptr.sub(8).cast()) };
+        unsafe { hew_cabi::mem::buf_free(value.ptr.sub(8).cast()) };
     }
 
     #[test]
     fn invalid_url_reports_typed_error() {
-        let url = "not-a-redis-url";
-        // SAFETY: `url` is alive and exposes exactly the supplied byte count.
-        let handle = unsafe {
-            hew_redis_connect_len(url.as_ptr().cast(), i64::try_from(url.len()).unwrap())
-        };
+        let url = string_from_str("not-a-redis-url");
+        // SAFETY: `url` is a live managed string borrowed for this call.
+        let handle = unsafe { hew_redis_connect(url) };
+        // SAFETY: this is the unique release of the managed allocation.
+        unsafe { string_release(url) };
         assert_eq!(handle, 0);
         assert_eq!(hew_redis_last_error_kind(), ErrorKind::InvalidInput as i32);
     }
 
     #[test]
-    fn package_string_return_uses_bare_malloc_ownership() {
-        set_error(ErrorKind::Command, "allocator probe");
-        let pointer = hew_redis_last_error();
-        assert!(!pointer.is_null());
-        // SAFETY: the export returns a NUL-terminated foreign-package string.
-        let message = unsafe { CStr::from_ptr(pointer) }.to_str().unwrap();
-        assert_eq!(message, "allocator probe");
-        // SAFETY: Hew releases package string returns with libc::free.
-        unsafe { libc::free(pointer.cast()) };
+    fn package_string_return_uses_the_managed_string_abi() {
+        set_error(ErrorKind::Command, "sonde d’allocation — 雪");
+        let message = hew_redis_last_error();
+        assert!(!message.is_null());
+        // SAFETY: the export returns a freshly allocated managed string owner.
+        let text = unsafe { string_as_str(message) };
+        assert_eq!(text, "sonde d’allocation — 雪");
+        // SAFETY: Hew releases package string returns through the managed ABI.
+        unsafe { string_release(message) };
+    }
+
+    #[test]
+    fn empty_error_message_returns_the_canonical_null_string() {
+        clear_error();
+        let message = hew_redis_last_error();
+        assert!(message.is_null());
+        // SAFETY: null is the canonical empty string and reads as empty.
+        assert_eq!(unsafe { string_as_str(message) }, "");
     }
 
     #[test]
@@ -1281,16 +1242,12 @@ mod tests {
 
     #[test]
     fn closed_handle_fails_without_dereference() {
-        let key = "key";
-        // SAFETY: `key` remains alive for its supplied byte count. The invalid
-        // handle is an intentional registry-validation regression case.
-        let result = unsafe {
-            hew_redis_del_len(
-                12345,
-                key.as_ptr().cast(),
-                i64::try_from(key.len()).unwrap(),
-            )
-        };
+        let key = string_from_str("key");
+        // SAFETY: `key` is a live managed string. The invalid handle is an
+        // intentional registry-validation regression case.
+        let result = unsafe { hew_redis_del(12345, key) };
+        // SAFETY: this is the unique release of the managed allocation.
+        unsafe { string_release(key) };
         assert_eq!(result, -1);
         assert_eq!(hew_redis_last_error_kind(), ErrorKind::Closed as i32);
     }
@@ -1303,16 +1260,13 @@ mod tests {
         let worker_barrier = barrier.clone();
         let worker = std::thread::spawn(move || {
             worker_barrier.wait();
-            let command = "PING";
-            // SAFETY: `command` remains alive for its supplied byte count and
-            // `pipeline` originated from this module.
-            unsafe {
-                hew_redis_pipeline_add0_len(
-                    pipeline,
-                    command.as_ptr().cast(),
-                    i64::try_from(command.len()).unwrap(),
-                )
-            }
+            let command = string_from_str("PING");
+            // SAFETY: `command` is a live managed string and `pipeline`
+            // originated from this module.
+            let status = unsafe { hew_redis_pipeline_add0(pipeline, command) };
+            // SAFETY: this is the unique release of the managed allocation.
+            unsafe { string_release(command) };
+            status
         });
         barrier.wait();
         // SAFETY: `pipeline` originated from this module; removing the shared

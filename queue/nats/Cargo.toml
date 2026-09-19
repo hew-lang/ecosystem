@@ -16,7 +16,6 @@ crate-type = ["staticlib", "lib"]
 [dependencies]
 hew-cabi.workspace = true
 nats = "0.25"
-libc.workspace = true
 
 [features]
 integration = []

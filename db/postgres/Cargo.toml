@@ -15,6 +15,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 postgres = "0.19"
+hew-cabi.workspace = true
 libc.workspace = true
 
 [features]

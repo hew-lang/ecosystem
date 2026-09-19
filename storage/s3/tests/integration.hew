@@ -5,52 +5,105 @@
 // endpoint (e.g. MinIO on 127.0.0.1:9000).
 import std.testing;
 
+import std.encoding.utf8;
+
 import hew.storage.s3;
 
 extern "C" {
-    fn hew_actor_stop(pid: LocalPid<s3.Bucket>);
     fn hew_s3_bucket_count() -> i64;
 }
 
-fn store() -> LocalPid<s3.Bucket> {
+fn store() -> s3.Bucket {
     spawn s3.Bucket(options: Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" })
 }
 
 fn binary_round_trip_and_missing_are_distinct() {
     let client = store();
-    let body: bytes = bytes.new();
+    var body: bytes = bytes.new();
     body.push(65);
     body.push(0);
     body.push(66);
-    match await client.put("hew/integration.bin", body, "application/octet-stream") {
+    match client.put("hew/integration.bin", body, "application/octet-stream") {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
-    match await client.get("hew/integration.bin") {
+    match client.get("hew/integration.bin") {
         .Ok(.Ok(.Found(value))) => {
             testing.assert_eq(value.len(), 3);
             testing.assert_eq(value[1] as i64, 0);
         },
         _ => testing.assert_true(false),
     }
-    match await client.exists("hew/integration.bin") {
+    match client.exists("hew/integration.bin") {
         .Ok(.Ok(value)) => testing.assert_true(value),
         _ => testing.assert_true(false),
     }
-    match await client.list("hew/") {
+    match client.list("hew/") {
         .Ok(.Ok(values)) => testing.assert_true(!values.is_empty()),
         _ => testing.assert_true(false),
     }
-    match await client.presign("hew/integration.bin", "GET", 60) {
+    match client.presign("hew/integration.bin", "GET", 60) {
         .Ok(.Ok(url)) => testing.assert_true(url.contains("X-Amz-Signature")),
         _ => testing.assert_true(false),
     }
-    match await client.delete("hew/integration.bin") {
+    match client.delete("hew/integration.bin") {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
-    match await client.get("hew/integration.bin") {
+    match client.get("hew/integration.bin") {
         .Ok(.Ok(.Missing)) => {},
+        _ => testing.assert_true(false),
+    }
+    let _ = client.close();
+    sleep(20ms);
+}
+
+fn put_then_get_and_list_round_trip_unicode_key() {
+    let client = store();
+    let key = "hew/naïve-résumé-日本語-object.txt";
+    let text = "hello from the naïve résumé, 日本語 payload";
+    match client.put(key, text.to_bytes(), "text/plain; charset=utf-8") {
+        .Ok(.Ok(_)) => {},
+        _ => testing.assert_true(false),
+    }
+    match client.get(key) {
+        .Ok(.Ok(.Found(value))) => testing.assert_eq_str(utf8.decode_lossy(value), text),
+        _ => testing.assert_true(false),
+    }
+    match client.list("hew/naïve") {
+        .Ok(.Ok(values)) => {
+            var found = false;
+            for entry in values {
+                if entry.key == key {
+                    found = true;
+                }
+            }
+            testing.assert_true(found);
+        },
+        _ => testing.assert_true(false),
+    }
+    match client.delete(key) {
+        .Ok(.Ok(_)) => {},
+        _ => testing.assert_true(false),
+    }
+    let _ = client.close();
+    sleep(20ms);
+}
+
+fn get_missing_key_is_distinct_from_present() {
+    let client = store();
+    match client.get("hew/does-not-exist-at-all") {
+        .Ok(.Ok(.Missing)) => {},
+        _ => testing.assert_true(false),
+    }
+    let _ = client.close();
+    sleep(20ms);
+}
+
+fn bad_access_key_fails_typed() {
+    let client = spawn s3.Bucket(options: Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "not-the-real-key", secret_key: "not-the-real-secret" });
+    match client.get("hew/integration.bin") {
+        .Ok(.Err(error)) => testing.assert_true(!s3.error_message(error).is_empty()),
         _ => testing.assert_true(false),
     }
     let _ = client.close();
@@ -62,17 +115,21 @@ fn actor_stop_releases_relative_bucket_count() {
         hew_s3_bucket_count()
     };
     let client = store();
-    match await client.presign("actor-stop", "GET", 60) {
+    match client.presign("actor-stop", "GET", 60) {
         .Ok(.Ok(_)) => {},
         _ => testing.assert_true(false),
     }
     testing.assert_eq(unsafe {
         hew_s3_bucket_count()
     }, before + 1);
-    unsafe {
-        hew_actor_stop(client);
-    };
-    sleep(20ms);
+    close(client);
+    var attempts = 0;
+    while unsafe {
+        hew_s3_bucket_count()
+    } != before && attempts < 100 {
+        sleep(5ms);
+        attempts = attempts + 1;
+    }
     testing.assert_eq(unsafe {
         hew_s3_bucket_count()
     }, before);
@@ -80,7 +137,7 @@ fn actor_stop_releases_relative_bucket_count() {
 
 fn invalid_presign_fails_typed() {
     let client = store();
-    match await client.presign("key", "POST", 60) {
+    match client.presign("key", "POST", 60) {
         .Ok(.Err(error)) => testing.assert_true(!s3.error_message(error).is_empty()),
         _ => testing.assert_true(false),
     }
@@ -90,6 +147,9 @@ fn invalid_presign_fails_typed() {
 
 fn main() {
     binary_round_trip_and_missing_are_distinct();
+    put_then_get_and_list_round_trip_unicode_key();
+    get_missing_key_is_distinct_from_present();
+    bad_access_key_fails_typed();
     invalid_presign_fails_typed();
     actor_stop_releases_relative_bucket_count();
 }

@@ -16,7 +16,7 @@
 //!         uri: "mongodb://127.0.0.1:27017",
 //!         database: "example",
 //!     );
-//!     match await db.insert_one("users", "{\"name\":\"Alice\"}") {
+//!     match db.insert_one("users", "{\"name\":\"Alice\"}") {
 //!         .Ok(result) => match result {
 //!             .Ok(id) => println(f"inserted {id}"),
 //!             .Err(error) => println(mongodb.error_message(error)),
@@ -27,20 +27,22 @@
 //! }
 //! ```
 
+import std.encoding.utf8;
+
 #[wire]
 pub enum MongoError {
     /// The URI or database name was invalid, or the server was unavailable.
-    Connect(string);
+    Connect(string),
     /// A document, filter, or update was not a valid JSON object.
-    InvalidJson(string);
+    InvalidJson(string),
     /// MongoDB rejected or could not complete an operation.
-    Operation(string);
+    Operation(string),
     /// A BSON document could not be represented as JSON.
-    Serialize(string);
+    Serialize(string),
     /// The connection actor has been closed.
-    Closed(string);
-    /// The native layer rejected an invalid handle or UTF-8 boundary.
-    Internal(string);
+    Closed(string),
+    /// The native layer rejected an invalid handle.
+    Internal(string),
 }
 
 /// Return the diagnostic carried by a `MongoError`.
@@ -58,9 +60,9 @@ pub fn error_message(error: MongoError) -> string {
 #[wire]
 pub enum DocumentLookup {
     /// A matching document, serialized as JSON.
-    Found(string);
+    Found(string),
     /// No document matched the filter.
-    Missing;
+    Missing,
 }
 
 #[wire]
@@ -99,14 +101,14 @@ fn connection_state(closed: bool, handle: i64) -> i32 {
 
 #[resource]
 type NativeCursor {
-    handle: i64;
+    handle: i64,
 }
 
 impl NativeCursor {
-    fn close(cursor: NativeCursor) {
-        if cursor.handle != 0 {
+    fn close(consume self) {
+        if self.handle != 0 {
             unsafe {
-                hew_mongodb_cursor_free(cursor.handle)
+                hew_mongodb_cursor_free(self.handle)
             };
         }
     }
@@ -120,18 +122,14 @@ impl NativeCursor {
 /// releases the native client, and the actor stop hook provides the same
 /// cleanup if the caller abandons it.
 pub actor Conn {
-    let uri: string;
-    let database: string;
-    var handle: i64 = 0;
-    var connect_error_kind: i32 = 0;
-    var connect_error_message: string = "";
-    var closed: bool = false;
+    var handle: i64 = 0,
+    var connect_error_kind: i32 = 0,
+    var connect_error_message: string = "",
+    var closed: bool = false,
 
     init(uri: string, database: string) {
-        let uri_len = uri.len();
-        let database_len = database.len();
         handle = unsafe {
-            hew_mongodb_connect(uri, uri_len, database, database_len)
+            hew_mongodb_connect(uri, database)
         };
         if handle == 0 {
             connect_error_kind = unsafe {
@@ -148,15 +146,13 @@ pub actor Conn {
             2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
             _ => {},
         }
-        let collection_len = collection.len();
-        let document_len = document.len();
         let id_bytes = unsafe {
-            hew_mongodb_insert_one(handle, collection, collection_len, document, document_len)
+            hew_mongodb_insert_one(handle, collection, document)
         };
         if unsafe {
             hew_mongodb_last_status()
         } == 0 {
-            Ok(id_bytes.to_string())
+            Ok(utf8.decode_lossy(id_bytes))
         } else {
             Err(native_error())
         }
@@ -169,10 +165,8 @@ pub actor Conn {
             2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
             _ => {},
         }
-        let collection_len = collection.len();
-        let filter_len = filter.len();
         let document_bytes = unsafe {
-            hew_mongodb_find_one(handle, collection, collection_len, filter, filter_len)
+            hew_mongodb_find_one(handle, collection, filter)
         };
         if unsafe {
             hew_mongodb_last_status()
@@ -183,7 +177,7 @@ pub actor Conn {
         } == 0 {
             Ok(DocumentLookup.Missing)
         } else {
-            Ok(DocumentLookup.Found(document_bytes.to_string()))
+            Ok(DocumentLookup.Found(utf8.decode_lossy(document_bytes)))
         }
     }
 
@@ -197,16 +191,14 @@ pub actor Conn {
             2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
             _ => {},
         }
-        let collection_len = collection.len();
-        let filter_len = filter.len();
         let cursor_handle = unsafe {
-            hew_mongodb_find(handle, collection, collection_len, filter, filter_len)
+            hew_mongodb_find(handle, collection, filter)
         };
         if cursor_handle == 0 {
             return Err(native_error());
         }
         let cursor = NativeCursor { handle: cursor_handle };
-        let documents: Vec<string> = Vec.new();
+        var documents: Vec<string> = Vec.new();
         loop {
             let document_bytes = unsafe {
                 hew_mongodb_cursor_next(cursor.handle)
@@ -224,7 +216,7 @@ pub actor Conn {
                 cursor.close();
                 return Ok(QueryResult { documents: documents });
             }
-            documents.push(document_bytes.to_string());
+            documents.push(utf8.decode_lossy(document_bytes));
         }
     }
 
@@ -235,11 +227,8 @@ pub actor Conn {
             2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
             _ => {},
         }
-        let collection_len = collection.len();
-        let filter_len = filter.len();
-        let update_len = update.len();
         let modified = unsafe {
-            hew_mongodb_update_one(handle, collection, collection_len, filter, filter_len, update, update_len)
+            hew_mongodb_update_one(handle, collection, filter, update)
         };
         if unsafe {
             hew_mongodb_last_status()
@@ -257,10 +246,8 @@ pub actor Conn {
             2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
             _ => {},
         }
-        let collection_len = collection.len();
-        let filter_len = filter.len();
         let deleted = unsafe {
-            hew_mongodb_delete_one(handle, collection, collection_len, filter, filter_len)
+            hew_mongodb_delete_one(handle, collection, filter)
         };
         if unsafe {
             hew_mongodb_last_status()
@@ -278,10 +265,8 @@ pub actor Conn {
             2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
             _ => {},
         }
-        let collection_len = collection.len();
-        let filter_len = filter.len();
         let count = unsafe {
-            hew_mongodb_count(handle, collection, collection_len, filter, filter_len)
+            hew_mongodb_count(handle, collection, filter)
         };
         if unsafe {
             hew_mongodb_last_status()
@@ -315,14 +300,14 @@ pub actor Conn {
 }
 
 extern "C" {
-    fn hew_mongodb_connect(uri: string, uri_len: i64, database: string, database_len: i64) -> i64;
+    fn hew_mongodb_connect(uri: string, database: string) -> i64;
     fn hew_mongodb_close(conn: i64);
-    fn hew_mongodb_insert_one(conn: i64, collection: string, collection_len: i64, document: string, document_len: i64) -> bytes;
-    fn hew_mongodb_find_one(conn: i64, collection: string, collection_len: i64, filter: string, filter_len: i64) -> bytes;
-    fn hew_mongodb_find(conn: i64, collection: string, collection_len: i64, filter: string, filter_len: i64) -> i64;
-    fn hew_mongodb_update_one(conn: i64, collection: string, collection_len: i64, filter: string, filter_len: i64, update: string, update_len: i64) -> i64;
-    fn hew_mongodb_delete_one(conn: i64, collection: string, collection_len: i64, filter: string, filter_len: i64) -> i64;
-    fn hew_mongodb_count(conn: i64, collection: string, collection_len: i64, filter: string, filter_len: i64) -> i64;
+    fn hew_mongodb_insert_one(conn: i64, collection: string, document: string) -> bytes;
+    fn hew_mongodb_find_one(conn: i64, collection: string, filter: string) -> bytes;
+    fn hew_mongodb_find(conn: i64, collection: string, filter: string) -> i64;
+    fn hew_mongodb_update_one(conn: i64, collection: string, filter: string, update: string) -> i64;
+    fn hew_mongodb_delete_one(conn: i64, collection: string, filter: string) -> i64;
+    fn hew_mongodb_count(conn: i64, collection: string, filter: string) -> i64;
     fn hew_mongodb_cursor_next(cursor: i64) -> bytes;
     fn hew_mongodb_cursor_free(cursor: i64);
     fn hew_mongodb_last_error() -> string;

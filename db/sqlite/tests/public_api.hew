@@ -13,10 +13,10 @@ fn error_variants_preserve_diagnostics() {
 }
 
 fn wire_values_distinguish_null_empty_and_no_rows() {
-    let values: Vec<CellValue> = Vec.new();
+    var values: Vec<CellValue> = Vec.new();
     values.push(CellValue.Null);
     values.push(CellValue.Text(bytes.new()));
-    let rows: Vec<Row> = Vec.new();
+    var rows: Vec<Row> = Vec.new();
     rows.push(Row { values: values });
     let result = QueryResult { columns: Vec.new(), rows: rows };
     testing.assert_eq(result.rows.len(), 1);
