@@ -143,9 +143,9 @@ impl NativeMessage {
     }
 
     fn has_reply(self) -> bool {
-        unsafe {
+        (unsafe {
             hew_nats_message_has_reply(self.handle)
-        } == 1
+        }) == 1
     }
 
     fn reply(self) -> string {
