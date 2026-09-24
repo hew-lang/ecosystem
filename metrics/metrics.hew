@@ -100,29 +100,29 @@ pub fn error_message(error: MetricsError) -> string {
 
 fn live_handle(closed: bool, handle: i64) -> Result<i64, MetricsError> {
     if closed || handle == 0 {
-        Err(MetricsError.Closed("metrics registry is closed"))
+        .Err(MetricsError.Closed("metrics registry is closed"))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
 fn registered(value: i64) -> Result<i64, MetricsError> {
     if value < 0 {
-        Err(MetricsError.InvalidInput("metric registration was rejected"))
+        .Err(MetricsError.InvalidInput("metric registration was rejected"))
     } else {
-        Ok(value)
+        .Ok(value)
     }
 }
 
 fn changed(metric: i64, status: i32) -> Result<i64, MetricsError> {
     if status == 0 {
-        Ok(0)
+        .Ok(0)
     } else if status == -2 {
-        Err(MetricsError.SeriesLimit(metric))
+        .Err(MetricsError.SeriesLimit(metric))
     } else if status == -3 {
-        Err(MetricsError.WrongMetricKind(metric))
+        .Err(MetricsError.WrongMetricKind(metric))
     } else {
-        Err(MetricsError.UnknownMetric(metric))
+        .Err(MetricsError.UnknownMetric(metric))
     }
 }
 
@@ -214,7 +214,7 @@ pub actor Registry {
     receive fn counter_add(metric: i64, value: f64) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         if value < 0.0 {
-            return Err(MetricsError.InvalidInput("counter increments must be non-negative"));
+            return .Err(MetricsError.InvalidInput("counter increments must be non-negative"));
         }
         changed(metric, unsafe {
             hew_metrics_counter_add(registry, metric, value)
@@ -233,7 +233,7 @@ pub actor Registry {
     receive fn counter_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = live_handle(closed, handle)?;
         if value < 0.0 {
-            return Err(MetricsError.InvalidInput("counter increments must be non-negative"));
+            return .Err(MetricsError.InvalidInput("counter increments must be non-negative"));
         }
         changed(metric, unsafe {
             hew_metrics_counter_vec_add(registry, metric, label_values, value)
@@ -307,7 +307,7 @@ pub actor Registry {
     // Export all metrics in Prometheus text format.
     receive fn export() -> Result<string, MetricsError> {
         let registry = live_handle(closed, handle)?;
-        Ok(unsafe {
+        .Ok(unsafe {
             hew_metrics_export(registry)
         })
     }

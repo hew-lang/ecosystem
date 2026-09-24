@@ -86,19 +86,19 @@ fn native_error() -> S3Error {
 
 fn bucket_handle(closed: bool, handle: i64, kind: i32, status: i32, message: string) -> Result<i64, S3Error> {
     if closed {
-        Err(S3Error.Closed("S3 bucket is closed"))
+        .Err(S3Error.Closed("S3 bucket is closed"))
     } else if handle == 0 {
-        Err(native_error_from(kind, status, message))
+        .Err(native_error_from(kind, status, message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
 fn unit_result(status: i32) -> Result<i64, S3Error> {
     if status == 0 {
-        Ok(0)
+        .Ok(0)
     } else {
-        Err(native_error())
+        .Err(native_error())
     }
 }
 
@@ -199,20 +199,20 @@ pub actor Bucket {
             hew_s3_get(handle, key)
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         let status = result.status();
         if status == 1 {
             let value = result.value();
             result.close();
-            Ok(ObjectLookup.Found(value))
+            .Ok(ObjectLookup.Found(value))
         } else if status == 0 {
             result.close();
-            Ok(ObjectLookup.Missing)
+            .Ok(ObjectLookup.Missing)
         } else {
             let error = native_error();
             result.close();
-            Err(error)
+            .Err(error)
         }
     }
 
@@ -231,20 +231,20 @@ pub actor Bucket {
             hew_s3_list(handle, prefix)
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         let count = result.count();
         if count < 0 {
             let error = native_error();
             result.close();
-            return Err(error);
+            return .Err(error);
         }
         var entries: Vec<ObjectInfo> = Vec.new();
         for index in 0 .. count {
             entries.push(ObjectInfo { key: result.key(index), size: result.size(index) });
         }
         result.close();
-        Ok(entries)
+        .Ok(entries)
     }
 
     /// Return whether an object exists.
@@ -254,11 +254,11 @@ pub actor Bucket {
             hew_s3_exists(handle, key)
         };
         if status == 1 {
-            Ok(true)
+            .Ok(true)
         } else if status == 0 {
-            Ok(false)
+            .Ok(false)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -269,9 +269,9 @@ pub actor Bucket {
             hew_s3_presign(handle, key, method, expires_seconds)
         };
         if url.is_empty() {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(url)
+            .Ok(url)
         }
     }
 

@@ -25,8 +25,8 @@ actor Stage {
     let operand: i64,
     receive fn process(x: i64) -> Result<i64, dag.DagError> {
         match dag.op_of_code(op_code) {
-            .Ok(op) => Ok(dag.apply_op(op, x, operand)),
-            .Err(error) => Err(error),
+            .Ok(op) => .Ok(dag.apply_op(op, x, operand)),
+            .Err(error) => .Err(error),
         }
     }
 }

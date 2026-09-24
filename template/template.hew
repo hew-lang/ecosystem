@@ -147,11 +147,11 @@ fn find_marker(s: string, start: i64, marker: char, count: i64) -> Option<i64> {
             }
         }
         if matched {
-            return Some(index);
+            return .Some(index);
         }
         index = index + 1;
     }
-    None
+    .None
 }
 
 #[test]

@@ -69,11 +69,11 @@ fn native_error() -> MysqlError {
 
 fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, MysqlError> {
     if closed {
-        Err(MysqlError.Closed("MySQL connection is closed"))
+        .Err(MysqlError.Closed("MySQL connection is closed"))
     } else if handle == 0 {
-        Err(error_from_kind(error_kind, error_message))
+        .Err(error_from_kind(error_kind, error_message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
@@ -126,7 +126,7 @@ fn collect_result(consume result: NativeResult) -> Result<QueryResult, MysqlErro
     if row_count < 0 || column_count < 0 {
         let error = native_error();
         result.close();
-        return Err(error);
+        return .Err(error);
     }
     var columns: Vec<string> = Vec.new();
     for column in 0 .. column_count {
@@ -146,14 +146,14 @@ fn collect_result(consume result: NativeResult) -> Result<QueryResult, MysqlErro
                 _ => {
                     let error = native_error();
                     result.close();
-                    return Err(error);
+                    return .Err(error);
                 },
             }
         }
         rows.push(Row { values: values });
     }
     result.close();
-    Ok(QueryResult { columns: columns, rows: rows })
+    .Ok(QueryResult { columns: columns, rows: rows })
 }
 
 /// An actor that owns and serializes one MySQL connection.
@@ -186,9 +186,9 @@ pub actor Conn {
         if unsafe {
             hew_mysql_last_error_kind()
         } == 0 {
-            Ok(affected)
+            .Ok(affected)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -201,9 +201,9 @@ pub actor Conn {
         if unsafe {
             hew_mysql_last_error_kind()
         } == 0 {
-            Ok(affected)
+            .Ok(affected)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -214,7 +214,7 @@ pub actor Conn {
             hew_mysql_query(connection, sql)
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         collect_result(result)
     }
@@ -226,7 +226,7 @@ pub actor Conn {
             hew_mysql_query_params(connection, sql, wire.encode(params))
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         collect_result(result)
     }

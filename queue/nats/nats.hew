@@ -116,11 +116,11 @@ fn native_error() -> NatsError {
 
 fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, NatsError> {
     if closed {
-        Err(NatsError.Closed("NATS connection is closed"))
+        .Err(NatsError.Closed("NATS connection is closed"))
     } else if handle == 0 {
-        Err(native_error_from(error_kind, error_message))
+        .Err(native_error_from(error_kind, error_message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
@@ -181,12 +181,12 @@ fn receive_result(handle: i64) -> Result<Receive, NatsError> {
         if unsafe {
             hew_nats_last_error_kind()
         } == 0 {
-            Ok(Receive.Missing)
+            .Ok(Receive.Missing)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     } else {
-        Ok(Receive.Message(snapshot(result)))
+        .Ok(Receive.Message(snapshot(result)))
     }
 }
 
@@ -220,9 +220,9 @@ pub actor Conn {
             hew_nats_publish(handle, subject, data)
         };
         if status == 0 {
-            Ok(())
+            .Ok(())
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -233,9 +233,9 @@ pub actor Conn {
             hew_nats_subscribe(handle, subject)
         };
         if subscription == 0 {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(Subscription { handle: subscription })
+            .Ok(Subscription { handle: subscription })
         }
     }
 
@@ -259,15 +259,15 @@ pub actor Conn {
     receive fn reply(message: Delivery, data: string) -> Result<(), NatsError> {
         let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
         match message.reply_to {
-            .Missing => Err(NatsError.InvalidInput("NATS message has no reply subject")),
+            .Missing => .Err(NatsError.InvalidInput("NATS message has no reply subject")),
             .Subject(subject) => {
                 let status = unsafe {
                     hew_nats_reply(handle, subject, data)
                 };
                 if status == 0 {
-                    Ok(())
+                    .Ok(())
                 } else {
-                    Err(native_error())
+                    .Err(native_error())
                 }
             },
         }
