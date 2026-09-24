@@ -200,14 +200,14 @@ fn lookup_result(consume result: StringResource) -> Result<Lookup, RedisError> {
     if status == 1 {
         let value = result.value();
         result.close();
-        Ok(Lookup.Value(value))
+        .Ok(Lookup.Value(value))
     } else if status == 0 {
         result.close();
-        Ok(Lookup.Missing)
+        .Ok(Lookup.Missing)
     } else {
         let error = native_error();
         result.close();
-        Err(error)
+        .Err(error)
     }
 }
 
@@ -215,19 +215,19 @@ fn checked_count(value: i64) -> Result<i64, RedisError> {
     if unsafe {
         hew_redis_last_error_kind()
     } == 0 {
-        Ok(value)
+        .Ok(value)
     } else {
-        Err(native_error())
+        .Err(native_error())
     }
 }
 
 fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, RedisError> {
     if closed {
-        Err(RedisError.Closed("Redis connection is closed"))
+        .Err(RedisError.Closed("Redis connection is closed"))
     } else if handle == 0 {
-        Err(native_error_from(error_kind, error_message))
+        .Err(native_error_from(error_kind, error_message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
@@ -316,7 +316,7 @@ pub actor Conn {
         let changed = checked_count(unsafe {
             hew_redis_expire(handle, key, ttl_seconds)
         })?;
-        Ok(changed == 1)
+        .Ok(changed == 1)
     }
 
     /// Return a typed key-lifetime outcome.
@@ -328,13 +328,13 @@ pub actor Conn {
         if unsafe {
             hew_redis_last_error_kind()
         } != 0 {
-            Err(native_error())
+            .Err(native_error())
         } else if seconds == -2 {
-            Ok(KeyTtl.Missing)
+            .Ok(KeyTtl.Missing)
         } else if seconds == -1 {
-            Ok(KeyTtl.Persistent)
+            .Ok(KeyTtl.Persistent)
         } else {
-            Ok(KeyTtl.Seconds(seconds))
+            .Ok(KeyTtl.Seconds(seconds))
         }
     }
 
@@ -369,7 +369,7 @@ pub actor Conn {
         let added = checked_count(unsafe {
             hew_redis_hset(handle, key, field, value)
         })?;
-        Ok(added == 1)
+        .Ok(added == 1)
     }
 
     /// Get a hash field, preserving missing versus empty.
@@ -386,7 +386,7 @@ pub actor Conn {
         let removed = checked_count(unsafe {
             hew_redis_hdel(handle, key, field)
         })?;
-        Ok(removed == 1)
+        .Ok(removed == 1)
     }
 
     /// Return every hash field and value as wire-safe snapshots.
@@ -396,20 +396,20 @@ pub actor Conn {
             hew_redis_hgetall(handle, key)
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         let count = result.count();
         if count < 0 {
             let error = native_error();
             result.close();
-            return Err(error);
+            return .Err(error);
         }
         var entries: Vec<HashEntry> = Vec.new();
         for i in 0 .. count {
             entries.push(HashEntry { field: result.key(i), value: result.value(i) });
         }
         result.close();
-        Ok(entries)
+        .Ok(entries)
     }
 
     /// Add a set member and return whether it was newly inserted.
@@ -418,7 +418,7 @@ pub actor Conn {
         let added = checked_count(unsafe {
             hew_redis_sadd(handle, key, member)
         })?;
-        Ok(added == 1)
+        .Ok(added == 1)
     }
 
     /// Remove a set member and return whether it existed.
@@ -427,7 +427,7 @@ pub actor Conn {
         let removed = checked_count(unsafe {
             hew_redis_srem(handle, key, member)
         })?;
-        Ok(removed == 1)
+        .Ok(removed == 1)
     }
 
     /// Return every set member as a wire-safe snapshot.
@@ -437,20 +437,20 @@ pub actor Conn {
             hew_redis_smembers(handle, key)
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         let count = result.count();
         if count < 0 {
             let error = native_error();
             result.close();
-            return Err(error);
+            return .Err(error);
         }
         var members: Vec<SetMember> = Vec.new();
         for i in 0 .. count {
             members.push(SetMember { value: result.value(i) });
         }
         result.close();
-        Ok(members)
+        .Ok(members)
     }
 
     /// Test membership in a set.
@@ -459,7 +459,7 @@ pub actor Conn {
         let present = checked_count(unsafe {
             hew_redis_sismember(handle, key, member)
         })?;
-        Ok(present == 1)
+        .Ok(present == 1)
     }
 
     /// Publish a message and return the subscriber count.
@@ -480,11 +480,11 @@ pub actor Conn {
         if status == 1 {
             let value = result.value();
             result.close();
-            Ok(value)
+            .Ok(value)
         } else {
             let error = native_error();
             result.close();
-            Err(error)
+            .Err(error)
         }
     }
 
@@ -512,7 +512,7 @@ pub actor Conn {
             if status < 0 {
                 let error = native_error();
                 pipeline.close();
-                return Err(error);
+                return .Err(error);
             }
         }
         let status = unsafe {

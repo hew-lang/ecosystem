@@ -54,19 +54,19 @@ fn native_error() -> MagickError {
 
 fn image_handle(closed: bool, handle: i64, kind: i32, message: string) -> Result<i64, MagickError> {
     if closed {
-        Err(MagickError.Closed("image is closed"))
+        .Err(MagickError.Closed("image is closed"))
     } else if handle == 0 {
-        Err(native_error_from(kind, message))
+        .Err(native_error_from(kind, message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
 fn operation(status: i32) -> Result<i64, MagickError> {
     if status == 0 {
-        Ok(0)
+        .Ok(0)
     } else {
-        Err(native_error())
+        .Err(native_error())
     }
 }
 
@@ -103,7 +103,7 @@ pub actor Image {
     receive fn resize(width: i32, height: i32) -> Result<i64, MagickError> {
         let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
         if width <= 0 || height <= 0 {
-            return Err(MagickError.InvalidInput("image dimensions must be positive"));
+            return .Err(MagickError.InvalidInput("image dimensions must be positive"));
         }
         operation(unsafe {
             hew_magick_resize(handle, width, height)
@@ -114,7 +114,7 @@ pub actor Image {
     receive fn crop(width: i32, height: i32, x: i32, y: i32) -> Result<i64, MagickError> {
         let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
         if width <= 0 || height <= 0 {
-            return Err(MagickError.InvalidInput("crop dimensions must be positive"));
+            return .Err(MagickError.InvalidInput("crop dimensions must be positive"));
         }
         operation(unsafe {
             hew_magick_crop(handle, width, height, x, y)
@@ -162,9 +162,9 @@ pub actor Image {
             hew_magick_width(handle)
         };
         if value > 0 {
-            Ok(value)
+            .Ok(value)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -174,9 +174,9 @@ pub actor Image {
             hew_magick_height(handle)
         };
         if value > 0 {
-            Ok(value)
+            .Ok(value)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -186,9 +186,9 @@ pub actor Image {
             hew_magick_format(handle)
         };
         if value.is_empty() {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(value)
+            .Ok(value)
         }
     }
 
@@ -203,22 +203,22 @@ pub actor Image {
     receive fn write_blob(format: string) -> Result<bytes, MagickError> {
         let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
         if format.is_empty() {
-            return Err(MagickError.InvalidInput("image format must not be empty"));
+            return .Err(MagickError.InvalidInput("image format must not be empty"));
         }
         let value = unsafe {
             hew_magick_write_blob(handle, format)
         };
         if value.is_empty() {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(value)
+            .Ok(value)
         }
     }
 
     receive fn thumbnail(max_width: i32, max_height: i32) -> Result<i64, MagickError> {
         let handle = image_handle(closed, native_handle, init_error_kind, init_error_message)?;
         if max_width <= 0 || max_height <= 0 {
-            return Err(MagickError.InvalidInput("thumbnail bounds must be positive"));
+            return .Err(MagickError.InvalidInput("thumbnail bounds must be positive"));
         }
         let width = unsafe {
             hew_magick_width(handle)
@@ -227,7 +227,7 @@ pub actor Image {
             hew_magick_height(handle)
         };
         if width <= 0 || height <= 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         let width_scale = max_width as f64 / width as f64;
         let height_scale = max_height as f64 / height as f64;

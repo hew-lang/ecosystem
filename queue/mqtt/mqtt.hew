@@ -70,10 +70,10 @@ pub enum QoS {
 /// Parse a numeric MQTT QoS level without a fail-open default.
 pub fn qos_from_level(level: i32) -> Result<QoS, MqttError> {
     match level {
-        0 => Ok(QoS.AtMostOnce),
-        1 => Ok(QoS.AtLeastOnce),
-        2 => Ok(QoS.ExactlyOnce),
-        _ => Err(MqttError.InvalidInput("MQTT QoS must be 0, 1, or 2")),
+        0 => .Ok(QoS.AtMostOnce),
+        1 => .Ok(QoS.AtLeastOnce),
+        2 => .Ok(QoS.ExactlyOnce),
+        _ => .Err(MqttError.InvalidInput("MQTT QoS must be 0, 1, or 2")),
     }
 }
 
@@ -129,11 +129,11 @@ fn native_error() -> MqttError {
 
 fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, MqttError> {
     if closed {
-        Err(MqttError.Closed("MQTT connection is closed"))
+        .Err(MqttError.Closed("MQTT connection is closed"))
     } else if handle == 0 {
-        Err(native_error_from(error_kind, error_message))
+        .Err(native_error_from(error_kind, error_message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
@@ -197,9 +197,9 @@ pub actor Conn {
             hew_mqtt_publish(handle, topic, payload, qos_level(qos), retain_flag)
         };
         if status == 0 {
-            Ok(())
+            .Ok(())
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -210,9 +210,9 @@ pub actor Conn {
             hew_mqtt_subscribe(handle, topic_filter, qos_level(qos))
         };
         if status == 0 {
-            Ok(())
+            .Ok(())
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -226,16 +226,16 @@ pub actor Conn {
             if unsafe {
                 hew_mqtt_last_error_kind()
             } == 0 {
-                Ok(Receive.Missing)
+                .Ok(Receive.Missing)
             } else {
-                Err(native_error())
+                .Err(native_error())
             }
         } else {
             let topic = result.topic();
             let payload = result.payload();
             let message = Delivery { topic: topic.clone(), payload: payload.clone() };
             result.close();
-            Ok(Receive.Message(message))
+            .Ok(Receive.Message(message))
         }
     }
 

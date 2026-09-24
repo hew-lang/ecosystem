@@ -59,17 +59,17 @@ fn native_error() -> SqliteError {
 
 fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, SqliteError> {
     if closed {
-        Err(SqliteError.Closed("SQLite connection is closed"))
+        .Err(SqliteError.Closed("SQLite connection is closed"))
     } else if handle == 0 {
         match error_kind {
-            1 => Err(SqliteError.Open(error_message)),
-            2 => Err(SqliteError.InvalidInput(error_message)),
-            3 => Err(SqliteError.Query(error_message)),
-            4 => Err(SqliteError.Closed(error_message)),
-            _ => Err(SqliteError.Internal(error_message)),
+            1 => .Err(SqliteError.Open(error_message)),
+            2 => .Err(SqliteError.InvalidInput(error_message)),
+            3 => .Err(SqliteError.Query(error_message)),
+            4 => .Err(SqliteError.Closed(error_message)),
+            _ => .Err(SqliteError.Internal(error_message)),
         }
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
@@ -122,7 +122,7 @@ fn collect_result(consume result: NativeResult) -> Result<QueryResult, SqliteErr
     if row_count < 0 || column_count < 0 {
         let error = native_error();
         result.close();
-        return Err(error);
+        return .Err(error);
     }
     var columns: Vec<string> = Vec.new();
     for column in 0 .. column_count {
@@ -142,14 +142,14 @@ fn collect_result(consume result: NativeResult) -> Result<QueryResult, SqliteErr
                 _ => {
                     let error = native_error();
                     result.close();
-                    return Err(error);
+                    return .Err(error);
                 },
             }
         }
         rows.push(Row { values: values });
     }
     result.close();
-    Ok(QueryResult { columns: columns, rows: rows })
+    .Ok(QueryResult { columns: columns, rows: rows })
 }
 
 /// An actor that owns and serializes one SQLite connection.
@@ -181,9 +181,9 @@ pub actor Db {
         if unsafe {
             hew_sqlite_last_error_kind()
         } == 0 {
-            Ok(affected)
+            .Ok(affected)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -195,9 +195,9 @@ pub actor Db {
         if unsafe {
             hew_sqlite_last_error_kind()
         } == 0 {
-            Ok(affected)
+            .Ok(affected)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -207,7 +207,7 @@ pub actor Db {
             hew_sqlite_query(connection, sql)
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         collect_result(result)
     }
@@ -218,7 +218,7 @@ pub actor Db {
             hew_sqlite_query_params(connection, sql, wire.encode(params))
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         collect_result(result)
     }
