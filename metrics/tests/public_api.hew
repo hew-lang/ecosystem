@@ -7,9 +7,9 @@ extern "C" {
 fn registry_without_close(before: i64) -> metrics.Registry {
     let registry = spawn metrics.Registry;
     sleep(20ms);
-    assert_eq(unsafe {
+    assert(unsafe {
         hew_metrics_registry_count()
-    }, before + 1);
+    } == before + 1);
     registry
 }
 
@@ -18,7 +18,8 @@ fn actor_stop_releases_relative_registry_count() {
         hew_metrics_registry_count()
     };
     let registry = registry_without_close(before);
-    close(registry);
+    stop(registry);
+    stopped(registry);
     var attempts = 0;
     while unsafe {
         hew_metrics_registry_count()
@@ -26,9 +27,9 @@ fn actor_stop_releases_relative_registry_count() {
         sleep(5ms);
         attempts = attempts + 1;
     }
-    assert_eq(unsafe {
+    assert(unsafe {
         hew_metrics_registry_count()
-    }, before);
+    } == before);
 }
 
 fn invalid_registration_returns_typed_error() {
@@ -37,7 +38,8 @@ fn invalid_registration_returns_typed_error() {
         .Ok(.Err(.InvalidInput(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
-    let _ = registry.close();
+    stop(registry);
+    stopped(registry);
 }
 
 fn counter_and_export_return_exact_values() {
@@ -49,13 +51,14 @@ fn counter_and_export_return_exact_values() {
                 .Ok(.Ok(output)) => {
                     assert(output.contains("requests_handled_by_the_server_total 3"));
                     assert(output.contains("Requêtes traitées — 雪"));
-                },
+                }
                 _ => assert(false),
             }
-        },
+        }
         _ => assert(false),
     }
-    let _ = registry.close();
+    stop(registry);
+    stopped(registry);
 }
 
 fn empty_export_is_the_empty_string() {
@@ -64,7 +67,8 @@ fn empty_export_is_the_empty_string() {
         .Ok(.Ok(output)) => assert(output.is_empty()),
         _ => assert(false),
     }
-    let _ = registry.close();
+    stop(registry);
+    stopped(registry);
 }
 
 fn empty_label_list_returns_a_typed_error() {
@@ -73,7 +77,8 @@ fn empty_label_list_returns_a_typed_error() {
         .Ok(.Err(.InvalidInput(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
-    let _ = registry.close();
+    stop(registry);
+    stopped(registry);
 }
 
 fn labeled_metric_returns_typed_error_at_series_limit() {
@@ -82,18 +87,19 @@ fn labeled_metric_returns_typed_error_at_series_limit() {
         .Ok(.Ok(counter)) => {
             for i in 0 .. 1024 {
                 match registry.counter_vec_inc(counter, f"{i}") {
-                    .Ok(.Ok(_)) => {},
+                    .Ok(.Ok(_)) => {}
                     _ => assert(false),
                 }
             }
             match registry.counter_vec_inc(counter, "overflow") {
-                .Ok(.Err(.SeriesLimit(handle))) => assert_eq(handle, counter),
+                .Ok(.Err(.SeriesLimit(handle))) => assert(handle == counter),
                 _ => assert(false),
             }
-        },
+        }
         _ => assert(false),
     }
-    let _ = registry.close();
+    stop(registry);
+    stopped(registry);
 }
 
 fn wrong_metric_kind_returns_typed_error() {
@@ -101,13 +107,14 @@ fn wrong_metric_kind_returns_typed_error() {
     match registry.counter("kind_counter_total", "Kind counter") {
         .Ok(.Ok(counter)) => {
             match registry.gauge_set(counter, 42.0) {
-                .Ok(.Err(.WrongMetricKind(handle))) => assert_eq(handle, counter),
+                .Ok(.Err(.WrongMetricKind(handle))) => assert(handle == counter),
                 _ => assert(false),
             }
-        },
+        }
         _ => assert(false),
     }
-    let _ = registry.close();
+    stop(registry);
+    stopped(registry);
 }
 
 fn main() {

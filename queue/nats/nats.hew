@@ -10,7 +10,7 @@
 //! import hew.queue.nats;
 //!
 //! fn main() {
-//!     let client = spawn nats.Conn(options: Options { url: "nats://127.0.0.1:14222" });
+//!     let client = spawn nats.Conn(options: nats.Options { url: "nats://127.0.0.1:14222" });
 //!     match client.subscribe("hew.example") {
 //!         .Ok(result) => match result {
 //!             .Ok(subscription) => {
@@ -29,24 +29,25 @@
 //!         },
 //!         .Err(_) => println("NATS actor stopped before replying"),
 //!     }
-//!     let _ = client.close();
+//!     stop(client);
+//!     stopped(client);
 //! }
 //! ```
 
 #[wire]
 pub enum NatsError {
     /// The server could not be reached or the connection was lost.
-    Connection(string),
+    Connection(string);
     /// A URL, subject, payload, reply target, or timeout was invalid.
-    InvalidInput(string),
+    InvalidInput(string);
     /// The server or client rejected an operation.
-    Operation(string),
+    Operation(string);
     /// A bounded operation failed because its deadline elapsed.
-    Timeout(string),
+    Timeout(string);
     /// The connection or subscription is already closed.
-    Closed(string),
+    Closed(string);
     /// The native layer reported an unclassified failure.
-    Internal(string),
+    Internal(string);
 }
 
 /// Return the diagnostic carried by a NATS error.
@@ -63,35 +64,35 @@ pub fn error_message(error: NatsError) -> string {
 
 #[wire]
 pub type Options {
-    url: string @1,
+    url: string @1;
 }
 
 #[wire]
 pub type Subscription {
-    handle: i64 @1,
+    handle: i64 @1;
 }
 
 #[wire]
 pub enum ReplyTo {
     /// The publisher did not request a reply.
-    Missing,
+    Missing;
     /// Replies should be published to this subject.
-    Subject(string),
+    Subject(string);
 }
 
 #[wire]
 pub type Delivery {
-    subject: string @1,
-    data: string @2,
-    reply_to: ReplyTo @3,
+    subject: string @1;
+    data: string @2;
+    reply_to: ReplyTo @3;
 }
 
 #[wire]
 pub enum Receive {
     /// No message arrived before the deadline.
-    Missing,
+    Missing;
     /// A complete message arrived.
-    Message(Delivery),
+    Message(Delivery);
 }
 
 fn native_error_from(kind: i32, message: string) -> NatsError {
@@ -114,19 +115,17 @@ fn native_error() -> NatsError {
     }, message.clone())
 }
 
-fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, NatsError> {
-    if closed {
-        Err(NatsError.Closed("NATS connection is closed"))
-    } else if handle == 0 {
-        Err(native_error_from(error_kind, error_message))
+fn active_handle(handle: i64, error_kind: i32, error_message: string) -> Result<i64, NatsError> {
+    if handle == 0 {
+        .Err(native_error_from(error_kind, error_message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
 #[resource]
 type NativeMessage {
-    handle: i64,
+    handle: i64;
 }
 
 impl NativeMessage {
@@ -143,9 +142,9 @@ impl NativeMessage {
     }
 
     fn has_reply(self) -> bool {
-        unsafe {
+        (unsafe {
             hew_nats_message_has_reply(self.handle)
-        } == 1
+        }) == 1
     }
 
     fn reply(self) -> string {
@@ -178,24 +177,23 @@ fn snapshot(consume result: NativeMessage) -> Delivery {
 fn receive_result(handle: i64) -> Result<Receive, NatsError> {
     let result = NativeMessage { handle: handle };
     if result.handle == 0 {
-        if unsafe {
+        if (unsafe {
             hew_nats_last_error_kind()
-        } == 0 {
-            Ok(Receive.Missing)
+        }) == 0 {
+            .Ok(Receive.Missing)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     } else {
-        Ok(Receive.Message(snapshot(result)))
+        .Ok(Receive.Message(snapshot(result)))
     }
 }
 
 /// An actor that owns one NATS connection and every subscription it creates.
 pub actor Conn {
-    var native_handle: i64 = 0,
-    var connect_error_kind: i32 = 0,
-    var connect_error_message: string = "",
-    var closed: bool = false,
+    var native_handle: i64 = 0;
+    var connect_error_kind: i32 = 0;
+    var connect_error_message: string = "";
 
     init(options: Options) {
         native_handle = unsafe {
@@ -215,33 +213,33 @@ pub actor Conn {
 
     /// Publish a UTF-8 payload to a subject.
     receive fn publish(subject: string, data: string) -> Result<(), NatsError> {
-        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let status = unsafe {
             hew_nats_publish(handle, subject, data)
         };
         if status == 0 {
-            Ok(())
+            .Ok(())
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Create an actor-owned subscription.
     receive fn subscribe(subject: string) -> Result<Subscription, NatsError> {
-        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let subscription = unsafe {
             hew_nats_subscribe(handle, subject)
         };
         if subscription == 0 {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(Subscription { handle: subscription })
+            .Ok(Subscription { handle: subscription })
         }
     }
 
     /// Wait for one subscription delivery, preserving timeout as missing.
     receive fn next_message(subscription: Subscription, timeout_ms: i64) -> Result<Receive, NatsError> {
-        let _ = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let _ = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         receive_result(unsafe {
             hew_nats_next_result(subscription.handle, timeout_ms)
         })
@@ -249,7 +247,7 @@ pub actor Conn {
 
     /// Publish a request and wait for one reply, preserving timeout as missing.
     receive fn request(subject: string, data: string, timeout_ms: i64) -> Result<Receive, NatsError> {
-        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         receive_result(unsafe {
             hew_nats_request(handle, subject, data, timeout_ms)
         })
@@ -257,19 +255,19 @@ pub actor Conn {
 
     /// Reply to a message, rejecting messages without a reply subject.
     receive fn reply(message: Delivery, data: string) -> Result<(), NatsError> {
-        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         match message.reply_to {
-            .Missing => Err(NatsError.InvalidInput("NATS message has no reply subject")),
+            .Missing => .Err(NatsError.InvalidInput("NATS message has no reply subject")),
             .Subject(subject) => {
                 let status = unsafe {
                     hew_nats_reply(handle, subject, data)
                 };
                 if status == 0 {
-                    Ok(())
+                    .Ok(())
                 } else {
-                    Err(native_error())
+                    .Err(native_error())
                 }
-            },
+            }
         }
     }
 
@@ -280,17 +278,7 @@ pub actor Conn {
         };
     }
 
-    /// Close the connection and all owned subscriptions.
-    receive fn close() {
-        if native_handle != 0 {
-            unsafe {
-                hew_nats_close(native_handle)
-            };
-            native_handle = 0;
-        }
-        closed = true;
-    }
-
+    /// Release the connection and its subscriptions when the actor stops.
     #[on(stop)]
     fn release_native_handle() {
         if native_handle != 0 {

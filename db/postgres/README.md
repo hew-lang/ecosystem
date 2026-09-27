@@ -9,20 +9,22 @@ cross that boundary as UTF-8 `bytes` text snapshots, not typed columns.
 
 ```hew
 import hew.db.postgres;
+import std.encoding.utf8;
 
 fn main() {
     let db = spawn postgres.Conn(connstr: "host=127.0.0.1 user=hew password=hew dbname=hew_test");
-    match await db.query("SELECT 41::bigint AS value") {
+    match db.query("SELECT 41::bigint AS value") {
         .Ok(result) => match result {
             .Ok(query) => match query.rows[0].values[0] {
-                .Text(value) => println(value.to_string()),
+                .Text(value) => println(utf8.decode_lossy(value)),
                 .Null => println("value is NULL"),
-            },
+            }
             .Err(error) => println(postgres.error_message(error)),
-        },
+        }
         .Err(_) => println("PostgreSQL actor stopped before replying"),
     }
-    db.close();
+    stop(db);
+    stopped(db);
 }
 ```
 

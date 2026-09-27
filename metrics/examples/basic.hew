@@ -16,13 +16,14 @@ fn main() {
                     .Ok(export_result) => match export_result {
                         .Ok(text) => println(text),
                         .Err(error) => println(metrics.error_message(error)),
-                    },
+                    }
                     .Err(_) => println("metrics actor stopped before replying"),
                 }
-            },
+            }
             .Err(error) => println(metrics.error_message(error)),
-        },
+        }
         .Err(_) => println("metrics actor stopped before replying"),
     }
-    let _ = registry.close();
+    stop(registry);
+    stopped(registry);
 }

@@ -11,9 +11,10 @@ Start an S3-compatible service and create `hew-example`, then save this as
 
 ```hew
 import hew.storage.s3;
+import std.encoding.utf8;
 
 fn main() {
-    let store = spawn s3.Bucket(options: Options {
+    let store = spawn s3.Bucket(options: s3.Options {
         endpoint: "http://127.0.0.1:9000",
         region: "us-east-1",
         bucket: "hew-example",
@@ -21,24 +22,25 @@ fn main() {
         secret_key: "<SECRET_KEY>",
     });
 
-    match await store.put("hello.txt", "hello".to_bytes(), "text/plain") {
+    match store.put("hello.txt", "hello".to_bytes(), "text/plain") {
         .Ok(result) => match result {
             .Ok(_) => println("uploaded"),
             .Err(error) => println(s3.error_message(error)),
-        },
+        }
         .Err(_) => println("S3 actor stopped before replying"),
     }
 
-    match await store.get("hello.txt") {
+    match store.get("hello.txt") {
         .Ok(result) => match result {
-            .Ok(.Found(body)) => println(body.to_string()),
+            .Ok(.Found(body)) => println(utf8.decode_lossy(body)),
             .Ok(.Missing) => println("object is missing"),
             .Err(error) => println(s3.error_message(error)),
-        },
+        }
         .Err(_) => println("S3 actor stopped before replying"),
     }
 
-    let _ = store.close();
+    stop(store);
+    stopped(store);
 }
 ```
 
@@ -62,7 +64,7 @@ It prints `uploaded example/hello.txt` and then `hello`.
 `Options` fields: `endpoint`, `region`, `bucket`, `access_key`, `secret_key`
 (all `string`).
 
-Every operation below is `receive fn`, called as `await store.<name>(...)`,
+Every operation below is `receive fn`, called as `store.<name>(...)`,
 and returns `Result<T, S3Error>` inside the actor-ask `Result`:
 
 - `put(key: string, body: bytes, content_type: string) -> Result<i64, S3Error>`
@@ -78,8 +80,7 @@ and returns `Result<T, S3Error>` inside the actor-ask `Result`:
 - `exists(key: string) -> Result<bool, S3Error>`.
 - `presign(key: string, method: string, expires_seconds: i64) -> Result<string,
   S3Error>` — a signed URL for `"GET"`, `"PUT"`, `"DELETE"`, or `"HEAD"`.
-- `close()` — release the native client. Idempotent; also runs automatically
-  when the actor stops.
+- `stop(store); stopped(store);` — stop the actor and wait for native client cleanup.
 
 `s3.error_message(error: S3Error) -> string` returns the diagnostic carried by
 any `S3Error` variant (`Connection`, `InvalidInput`, `NotFound`,

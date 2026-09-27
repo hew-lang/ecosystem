@@ -17,8 +17,8 @@ fn main() {
     match dag.run_text(good, 0) {
         .Ok(report) => {
             println(f"  routed ok, sink output = {dag.sink_output(report)}"); // 6
-            assert_eq(dag.sink_output(report), 6);
-        },
+            assert(dag.sink_output(report) == 6);
+        }
         .Err(f) => println(f"  unexpected: {dag.describe(dag.error_of(f))}"),
     }
     // Now a cyclic spec: must be refused.
@@ -27,13 +27,13 @@ fn main() {
     match dag.run_text(bad, 0) {
         .Ok(_) => {
             println("  BUG: cyclic spec was accepted");
-        },
+        }
         .Err(f) => {
             let err = dag.error_of(f);
             let msg = dag.describe(err);
             println(f"  refused: {msg}");
             assert(dag.is_cyclic(err));
-        },
+        }
     }
     // The lifecycle view of the same rejection: the coordinator reaches the
     // terminal `Refused` state instead of `Routing`.
@@ -41,8 +41,8 @@ fn main() {
         .Ok(spec) => {
             let state = dag.lifecycle_for(spec);
             println(f"  lifecycle state = {dag.state_name(state)}"); // Refused
-            assert_eq(dag.state_name(state), "Refused");
-        },
+            assert(dag.state_name(state) == "Refused");
+        }
         .Err(e) => println(f"  parse error: {dag.describe(e)}"),
     }
     println("cyclic_rejected: bad input rejected fail-closed, all assertions passed");

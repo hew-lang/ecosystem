@@ -16,7 +16,7 @@ fn main() {
         .Ok(result) => match result {
             .Ok(url) => println(f"send the user to {url}"),
             .Err(error) => println(oauth.error_message(error)),
-        },
+        }
         .Err(_) => println("OAuth actor stopped before replying"),
     }
     // auth_url kept the state it generated, so the callback can be checked
@@ -28,18 +28,18 @@ fn main() {
             .Err(error) => {
                 println(oauth.error_message(error));
                 ""
-            },
-        },
+            }
+        }
         .Err(_) => {
             println("OAuth actor stopped before replying");
             ""
-        },
+        }
     };
     match client.validate_state(state) {
         .Ok(result) => match result {
             .Ok(matched) => println(f"callback state accepted: {matched}"),
             .Err(error) => println(oauth.error_message(error)),
-        },
+        }
         .Err(_) => println("OAuth actor stopped before replying"),
     }
     // A callback that carries no state is rejected as typed input error, not
@@ -48,8 +48,9 @@ fn main() {
         .Ok(result) => match result {
             .Ok(matched) => println(f"callback state accepted: {matched}"),
             .Err(error) => println(oauth.error_message(error)),
-        },
+        }
         .Err(_) => println("OAuth actor stopped before replying"),
     }
-    let _ = client.close();
+    stop(client);
+    stopped(client);
 }

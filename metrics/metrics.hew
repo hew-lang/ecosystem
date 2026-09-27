@@ -66,24 +66,25 @@
 //!         .Err(_) => println("metrics actor stopped"),
 //!     }
 //!
-//!     let _ = reg.close();
+//!     stop(reg);
+//!     stopped(reg);
 //! }
 //! ```
 
 #[wire]
 pub enum MetricsError {
     /// A metric name, help string, label set, bucket list, or value was invalid.
-    InvalidInput(string),
+    InvalidInput(string);
     /// A metric handle did not identify a registered metric.
-    UnknownMetric(i64),
+    UnknownMetric(i64);
     /// A metric handle was used with an operation for another metric kind.
-    WrongMetricKind(i64),
+    WrongMetricKind(i64);
     /// A new label tuple would exceed the metric's 1024-series limit.
-    SeriesLimit(i64),
+    SeriesLimit(i64);
     /// The registry has already been closed.
-    Closed(string),
+    Closed(string);
     /// The native registry could not complete the operation.
-    Internal(string),
+    Internal(string);
 }
 
 /// Return the diagnostic carried by a `MetricsError`.
@@ -98,31 +99,31 @@ pub fn error_message(error: MetricsError) -> string {
     }
 }
 
-fn live_handle(closed: bool, handle: i64) -> Result<i64, MetricsError> {
-    if closed || handle == 0 {
-        Err(MetricsError.Closed("metrics registry is closed"))
+fn live_handle(handle: i64) -> Result<i64, MetricsError> {
+    if handle == 0 {
+        .Err(MetricsError.Closed("metrics registry is closed"))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
 fn registered(value: i64) -> Result<i64, MetricsError> {
     if value < 0 {
-        Err(MetricsError.InvalidInput("metric registration was rejected"))
+        .Err(MetricsError.InvalidInput("metric registration was rejected"))
     } else {
-        Ok(value)
+        .Ok(value)
     }
 }
 
 fn changed(metric: i64, status: i32) -> Result<i64, MetricsError> {
     if status == 0 {
-        Ok(0)
+        .Ok(0)
     } else if status == -2 {
-        Err(MetricsError.SeriesLimit(metric))
+        .Err(MetricsError.SeriesLimit(metric))
     } else if status == -3 {
-        Err(MetricsError.WrongMetricKind(metric))
+        .Err(MetricsError.WrongMetricKind(metric))
     } else {
-        Err(MetricsError.UnknownMetric(metric))
+        .Err(MetricsError.UnknownMetric(metric))
     }
 }
 
@@ -131,8 +132,7 @@ fn changed(metric: i64, status: i32) -> Result<i64, MetricsError> {
 /// Each actor owns an independent native registry. Every fallible operation
 /// returns a typed `Result`; no handle or empty-string sentinel is public.
 pub actor Registry {
-    var handle: i64 = 0,
-    var closed: bool = false,
+    var handle: i64 = 0;
     init() {
         handle = unsafe {
             hew_metrics_new()
@@ -140,7 +140,7 @@ pub actor Registry {
     }
     /// Register a counter.
     receive fn counter(name: string, help: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_counter_new(registry, name, help)
         })
@@ -148,7 +148,7 @@ pub actor Registry {
 
     // Register a labeled counter vector. label_names is comma/newline/whitespace-delimited.
     receive fn counter_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_counter_vec_new(registry, name, help, label_names)
         })
@@ -156,7 +156,7 @@ pub actor Registry {
 
     // Register a gauge. Returns a metric handle (i64), or -1 on error.
     receive fn gauge(name: string, help: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_gauge_new(registry, name, help)
         })
@@ -164,7 +164,7 @@ pub actor Registry {
 
     // Register a labeled gauge vector. label_names is comma/newline/whitespace-delimited.
     receive fn gauge_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_gauge_vec_new(registry, name, help, label_names)
         })
@@ -172,7 +172,7 @@ pub actor Registry {
 
     // Register a histogram with default buckets. Returns a metric handle, or -1 on error.
     receive fn histogram(name: string, help: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_histogram_new(registry, name, help)
         })
@@ -180,7 +180,7 @@ pub actor Registry {
 
     // Register a histogram with custom buckets. buckets is comma/newline/whitespace-delimited f64s.
     receive fn histogram_with_buckets(name: string, help: string, buckets: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_histogram_with_buckets(registry, name, help, buckets)
         })
@@ -188,7 +188,7 @@ pub actor Registry {
 
     // Register a labeled histogram vector with default buckets.
     receive fn histogram_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_histogram_vec_new(registry, name, help, label_names)
         })
@@ -196,7 +196,7 @@ pub actor Registry {
 
     // Register a labeled histogram vector with custom buckets.
     receive fn histogram_vec_with_buckets(name: string, help: string, label_names: string, buckets: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         registered(unsafe {
             hew_metrics_histogram_vec_with_buckets(registry, name, help, label_names, buckets)
         })
@@ -204,7 +204,7 @@ pub actor Registry {
 
     // Increment a counter by 1.
     receive fn counter_inc(metric: i64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_counter_inc(registry, metric)
         })
@@ -212,9 +212,9 @@ pub actor Registry {
 
     // Add a non-negative finite value to a counter.
     receive fn counter_add(metric: i64, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         if value < 0.0 {
-            return Err(MetricsError.InvalidInput("counter increments must be non-negative"));
+            return .Err(MetricsError.InvalidInput("counter increments must be non-negative"));
         }
         changed(metric, unsafe {
             hew_metrics_counter_add(registry, metric, value)
@@ -223,7 +223,7 @@ pub actor Registry {
 
     // Increment a labeled counter by 1. label_values order must match registration label_names.
     receive fn counter_vec_inc(metric: i64, label_values: string) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_counter_vec_inc(registry, metric, label_values)
         })
@@ -231,9 +231,9 @@ pub actor Registry {
 
     // Add a non-negative finite value to a labeled counter.
     receive fn counter_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         if value < 0.0 {
-            return Err(MetricsError.InvalidInput("counter increments must be non-negative"));
+            return .Err(MetricsError.InvalidInput("counter increments must be non-negative"));
         }
         changed(metric, unsafe {
             hew_metrics_counter_vec_add(registry, metric, label_values, value)
@@ -242,7 +242,7 @@ pub actor Registry {
 
     // Set a gauge to an absolute value.
     receive fn gauge_set(metric: i64, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_gauge_set(registry, metric, value)
         })
@@ -250,7 +250,7 @@ pub actor Registry {
 
     // Add a value to a gauge.
     receive fn gauge_add(metric: i64, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_gauge_add(registry, metric, value)
         })
@@ -258,7 +258,7 @@ pub actor Registry {
 
     // Decrement a gauge by a value.
     receive fn gauge_dec(metric: i64, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_gauge_dec(registry, metric, value)
         })
@@ -266,7 +266,7 @@ pub actor Registry {
 
     // Set a labeled gauge to an absolute value.
     receive fn gauge_vec_set(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_gauge_vec_set(registry, metric, label_values, value)
         })
@@ -274,7 +274,7 @@ pub actor Registry {
 
     // Add a value to a labeled gauge.
     receive fn gauge_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_gauge_vec_add(registry, metric, label_values, value)
         })
@@ -282,7 +282,7 @@ pub actor Registry {
 
     // Decrement a labeled gauge by a value.
     receive fn gauge_vec_dec(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_gauge_vec_dec(registry, metric, label_values, value)
         })
@@ -290,7 +290,7 @@ pub actor Registry {
 
     // Record a histogram observation.
     receive fn histogram_observe(metric: i64, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_histogram_observe(registry, metric, value)
         })
@@ -298,7 +298,7 @@ pub actor Registry {
 
     // Record a labeled histogram observation.
     receive fn histogram_vec_observe(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
-        let registry = live_handle(closed, handle)?;
+        let registry = live_handle(handle)?;
         changed(metric, unsafe {
             hew_metrics_histogram_vec_observe(registry, metric, label_values, value)
         })
@@ -306,22 +306,13 @@ pub actor Registry {
 
     // Export all metrics in Prometheus text format.
     receive fn export() -> Result<string, MetricsError> {
-        let registry = live_handle(closed, handle)?;
-        Ok(unsafe {
+        let registry = live_handle(handle)?;
+        .Ok(unsafe {
             hew_metrics_export(registry)
         })
     }
 
-    // Free the registry and release all resources. Idempotent.
-    receive fn close() {
-        if handle != 0 {
-            unsafe {
-                hew_metrics_close(handle);
-            };
-            handle = 0;
-        }
-        closed = true;
-    }
+    // Release the registry when the actor stops.
     #[on(stop)]
     fn release_registry() {
         if handle != 0 {

@@ -11,11 +11,11 @@ import hew.db.sql.{Param};
 
 #[wire]
 pub enum MysqlError {
-    Connect(string),
-    InvalidInput(string),
-    Query(string),
-    Closed(string),
-    Internal(string),
+    Connect(string);
+    InvalidInput(string);
+    Query(string);
+    Closed(string);
+    Internal(string);
 }
 
 /// Return the diagnostic carried by a `MysqlError`.
@@ -31,19 +31,19 @@ pub fn error_message(error: MysqlError) -> string {
 
 #[wire]
 pub enum CellValue {
-    Null,
-    Text(bytes),
+    Null;
+    Text(bytes);
 }
 
 #[wire]
 pub type Row {
-    values: Vec<CellValue> @1,
+    values: Vec<CellValue> @1;
 }
 
 #[wire]
 pub type QueryResult {
-    columns: Vec<string> @1,
-    rows: Vec<Row> @2,
+    columns: Vec<string> @1;
+    rows: Vec<Row> @2;
 }
 
 /// Map a native `hew_mysql_last_error_kind()` code to a typed `MysqlError`.
@@ -67,19 +67,17 @@ fn native_error() -> MysqlError {
     error_from_kind(kind, message)
 }
 
-fn connection_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, MysqlError> {
-    if closed {
-        Err(MysqlError.Closed("MySQL connection is closed"))
-    } else if handle == 0 {
-        Err(error_from_kind(error_kind, error_message))
+fn connection_handle(handle: i64, error_kind: i32, error_message: string) -> Result<i64, MysqlError> {
+    if handle == 0 {
+        .Err(error_from_kind(error_kind, error_message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
 #[resource]
 type NativeResult {
-    handle: i64,
+    handle: i64;
 }
 
 impl NativeResult {
@@ -126,7 +124,7 @@ fn collect_result(consume result: NativeResult) -> Result<QueryResult, MysqlErro
     if row_count < 0 || column_count < 0 {
         let error = native_error();
         result.close();
-        return Err(error);
+        return .Err(error);
     }
     var columns: Vec<string> = Vec.new();
     for column in 0 .. column_count {
@@ -142,26 +140,25 @@ fn collect_result(consume result: NativeResult) -> Result<QueryResult, MysqlErro
                 1 => {
                     let value = result.cell(row, column);
                     values.push(CellValue.Text(value));
-                },
+                }
                 _ => {
                     let error = native_error();
                     result.close();
-                    return Err(error);
-                },
+                    return .Err(error);
+                }
             }
         }
         rows.push(Row { values: values });
     }
     result.close();
-    Ok(QueryResult { columns: columns, rows: rows })
+    .Ok(QueryResult { columns: columns, rows: rows })
 }
 
 /// An actor that owns and serializes one MySQL connection.
 pub actor Conn {
-    var handle: i64 = 0,
-    var connect_error_kind: i32 = 0,
-    var connect_error_message: string = "",
-    var closed: bool = false,
+    var handle: i64 = 0;
+    var connect_error_kind: i32 = 0;
+    var connect_error_message: string = "";
 
     init(url: string) {
         handle = unsafe {
@@ -179,69 +176,59 @@ pub actor Conn {
 
     /// Execute SQL and return the exact affected-row count.
     receive fn execute(sql: string) -> Result<i64, MysqlError> {
-        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
             hew_mysql_execute(connection, sql)
         };
         if unsafe {
             hew_mysql_last_error_kind()
         } == 0 {
-            Ok(affected)
+            .Ok(affected)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Execute SQL with newline-delimited text parameters.
     receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, MysqlError> {
-        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
             hew_mysql_execute_params(connection, sql, wire.encode(params))
         };
         if unsafe {
             hew_mysql_last_error_kind()
         } == 0 {
-            Ok(affected)
+            .Ok(affected)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Query SQL and return a wire-safe snapshot.
     receive fn query(sql: string) -> Result<QueryResult, MysqlError> {
-        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_mysql_query(connection, sql)
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         collect_result(result)
     }
 
     /// Query SQL with newline-delimited text parameters.
     receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, MysqlError> {
-        let connection = connection_handle(closed, handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_mysql_query_params(connection, sql, wire.encode(params))
         } };
         if result.handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         collect_result(result)
     }
 
-    /// Close the native connection. Repeated calls are harmless.
-    receive fn close() {
-        if handle != 0 {
-            unsafe {
-                hew_mysql_close(handle)
-            };
-            handle = 0;
-        }
-        closed = true;
-    }
-
+    /// Release the native connection when the actor stops.
     #[on(stop)]
     fn release_native_handle() {
         if handle != 0 {

@@ -41,8 +41,6 @@ import std.string;
 
 import std.encoding.utf8;
 
-import std.testing;
-
 /// HTML-escape a string so it is safe to embed in HTML content or attributes.
 ///
 /// Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
@@ -75,7 +73,7 @@ pub fn render(tmpl: string, ctx: string) -> string {
             .None => {
                 rendered.append(tmpl.slice(cursor, template_len).to_bytes());
                 return utf8.decode_lossy(rendered);
-            },
+            }
         };
         rendered.append(tmpl.slice(cursor, opening).to_bytes());
         let raw = opening + 2 < template_len && tmpl.char_at(opening + 2).unwrap_or('\0') == '{';
@@ -94,7 +92,7 @@ pub fn render(tmpl: string, ctx: string) -> string {
             .None => {
                 rendered.append(tmpl.slice(opening, template_len).to_bytes());
                 return utf8.decode_lossy(rendered);
-            },
+            }
         };
         let key = tmpl.slice(key_start, closing);
         let value = match vars.get(key) {
@@ -147,101 +145,101 @@ fn find_marker(s: string, start: i64, marker: char, count: i64) -> Option<i64> {
             }
         }
         if matched {
-            return Some(index);
+            return .Some(index);
         }
         index = index + 1;
     }
-    None
+    .None
 }
 
 #[test]
 fn plain_text_escapes_unchanged() {
-    testing.assert_eq_str(escape("hello world"), "hello world");
+    assert(escape("hello world") == "hello world");
 }
 
 #[test]
 fn html_metacharacters_escape_to_entities() {
-    testing.assert_eq_str(escape("<&>\"'"), "&lt;&amp;&gt;&quot;&#39;");
+    assert(escape("<&>\"'") == "&lt;&amp;&gt;&quot;&#39;");
 }
 
 #[test]
 fn escaped_placeholder_renders_safe_html() {
     let output = render("<p>Hello, {{name}}!</p>", "name\n<Ada & Co>");
-    testing.assert_eq_str(output, "<p>Hello, &lt;Ada &amp; Co&gt;!</p>");
+    assert(output == "<p>Hello, &lt;Ada &amp; Co&gt;!</p>");
 }
 
 #[test]
 fn raw_placeholder_renders_trusted_html() {
     let output = render("<main>{{{body}}}</main>", "body\n<strong>ready</strong>");
-    testing.assert_eq_str(output, "<main><strong>ready</strong></main>");
+    assert(output == "<main><strong>ready</strong></main>");
 }
 
 #[test]
 fn unknown_placeholder_renders_empty_text() {
     let output = render("before {{missing}} after", "");
-    testing.assert_eq_str(output, "before  after");
+    assert(output == "before  after");
 }
 
 #[test]
 fn unmatched_opening_braces_render_literally() {
     let output = render("before {{name", "name\nAda");
-    testing.assert_eq_str(output, "before {{name");
+    assert(output == "before {{name");
 }
 
 #[test]
 fn malformed_triple_marker_renders_literally() {
     let output = render("{{{x}}", "x\n<A>");
-    testing.assert_eq_str(output, "{{{x}}");
+    assert(output == "{{{x}}");
 }
 
 #[test]
 fn extra_closing_brace_after_double_marker_is_literal() {
     let output = render("{{x}}}", "x\n<A>");
-    testing.assert_eq_str(output, "&lt;A&gt;}");
+    assert(output == "&lt;A&gt;}");
 }
 
 #[test]
 fn lone_opening_marker_renders_literally() {
-    testing.assert_eq_str(render("{{", "x\n<A>"), "{{");
+    assert(render("{{", "x\n<A>") == "{{");
 }
 
 #[test]
 fn lone_closing_marker_renders_literally() {
-    testing.assert_eq_str(render("}}", "x\n<A>"), "}}");
+    assert(render("}}", "x\n<A>") == "}}");
 }
 
 #[test]
 fn adjacent_placeholders_render_in_order() {
     let output = render("{{first}}{{second}}", "first\nA\nsecond\nB");
-    testing.assert_eq_str(output, "AB");
+    assert(output == "AB");
 }
 
 #[test]
 fn duplicate_context_key_uses_last_value() {
     let output = render("{{name}}", "name\nfirst\nname\nlast");
-    testing.assert_eq_str(output, "last");
+    assert(output == "last");
 }
 
 #[test]
 fn crlf_context_preserves_carriage_returns() {
     let output = render("{{name}}\n{{name\r}}", "name\r\n<A>\r");
-    testing.assert_eq_str(output, "\n&lt;A&gt;\r");
+    assert(output == "\n&lt;A&gt;\r");
 }
 
 #[test]
 fn unicode_text_renders_without_loss() {
     let output = render("¡Hola, {{name}}! ☃\u{FE0F}", "name\n世界");
-    testing.assert_eq_str(output, "¡Hola, 世界! ☃\u{FE0F}");
+    assert(output == "¡Hola, 世界! ☃\u{FE0F}");
 }
 
 #[test]
 fn unpaired_context_key_renders_empty_value() {
     let output = render("before {{name}} after", "name");
-    testing.assert_eq_str(output, "before  after");
+    assert(output == "before  after");
 }
 
 #[test]
 fn literal_template_renders_unchanged() {
     let output = render("<h1>Hello</h1>", "");
-    testing.assert_eq_str(output, "<h1>Hello</h1>");
+    assert(output == "<h1>Hello</h1>");
 }

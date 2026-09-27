@@ -4,28 +4,30 @@
 typed `Result` values, query replies are immutable wire-safe snapshots, and SQL
 `NULL` is represented by `CellValue.Null`.
 
-Because `await` itself can fail (the actor may have stopped), every reply is
-`Result<Result<T, SqliteError>, AskError>` — match the outer `Result` for ask
+Because an actor call can fail (the actor may have stopped), every reply is
+`Result<Result<T, SqliteError>, ActorError>` — match the outer `Result` for ask
 failure, the inner for SQL failure.
 
 ```hew
 import hew.db.sqlite;
+import std.encoding.utf8;
 
 fn main() {
     let db = spawn sqlite.Db(path: ":memory:");
-    let _ = await db.execute("CREATE TABLE values_table (value TEXT)");
-    let _ = await db.execute("INSERT INTO values_table VALUES ('hello')");
-    match await db.query("SELECT value FROM values_table") {
+    let _ = db.execute("CREATE TABLE values_table (value TEXT)");
+    let _ = db.execute("INSERT INTO values_table VALUES ('hello')");
+    match db.query("SELECT value FROM values_table") {
         .Ok(result) => match result {
             .Ok(query) => match query.rows[0].values[0] {
-                CellValue.Text(value) => println(value.to_string()),
-                CellValue.Null => println("value is NULL"),
-            },
+                .Text(value) => println(utf8.decode_lossy(value)),
+                .Null => println("value is NULL"),
+            }
             .Err(error) => println(sqlite.error_message(error)),
-        },
+        }
         .Err(_) => println("SQLite actor stopped before replying"),
     }
-    let _ = db.close();
+    stop(db);
+    stopped(db);
 }
 ```
 
@@ -48,7 +50,7 @@ explicit lengths.
 
 `spawn sqlite.Db(path: string)` opens (or creates) the database file at
 `path`; pass `":memory:"` for an in-process database. `Db` is an actor — every
-call below is made with `await db.<method>(...)`.
+call below is made with `db.<method>(...)`.
 
 | Method | Returns | Notes |
 | --- | --- | --- |
@@ -56,12 +58,12 @@ call below is made with `await db.<method>(...)`.
 | `execute_params(sql: string, params: Vec<Param>)` | `Result<i64, SqliteError>` | Same as `execute`, with typed `?` bindings. |
 | `query(sql: string)` | `Result<QueryResult, SqliteError>` | Runs a `SELECT` with no placeholders. |
 | `query_params(sql: string, params: Vec<Param>)` | `Result<QueryResult, SqliteError>` | Same as `query`, with typed `?` bindings. |
-| `close()` | — | Releases the native connection. Called automatically on actor stop if skipped. |
+| `stop(db); stopped(db);` | — | Gracefully stops the actor and waits for native connection cleanup. |
 
 Public types:
 
-- `QueryResult { columns: Vec<string>, rows: Vec<Row> }`
-- `Row { values: Vec<CellValue> }`
+- `QueryResult { columns: Vec<string>; rows: Vec<Row>; }`
+- `Row { values: Vec<CellValue>; }`
 - `CellValue` — `.Text(bytes)` or `.Null`
 - `SqliteError` — `.Open`, `.InvalidInput`, `.Query`, `.Closed`, `.Internal`, each carrying a `string` message
 - `error_message(error: SqliteError) -> string` — extracts the message from any `SqliteError` variant

@@ -9,12 +9,12 @@ import hew.storage.s3;
 import std.encoding.utf8;
 
 fn main() {
-    let store = spawn s3.Bucket(options: Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" });
+    let store = spawn s3.Bucket(options: s3.Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" });
     match store.put("example/hello.txt", "hello".to_bytes(), "text/plain") {
         .Ok(result) => match result {
             .Ok(_) => println("uploaded example/hello.txt"),
             .Err(error) => println(s3.error_message(error)),
-        },
+        }
         .Err(_) => println("S3 actor stopped before replying"),
     }
     match store.get("example/hello.txt") {
@@ -23,8 +23,9 @@ fn main() {
             .Ok(.Found(value)) => println(utf8.decode_lossy(value)),
             .Ok(.Missing) => println("example/hello.txt is missing"),
             .Err(error) => println(s3.error_message(error)),
-        },
+        }
         .Err(_) => println("S3 actor stopped before replying"),
     }
-    let _ = store.close();
+    stop(store);
+    stopped(store);
 }

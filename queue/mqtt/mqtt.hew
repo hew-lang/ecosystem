@@ -11,7 +11,7 @@
 //! import hew.queue.mqtt;
 //!
 //! fn main() {
-//!     let client = spawn mqtt.Conn(options: Options {
+//!     let client = spawn mqtt.Conn(options: mqtt.Options {
 //!         host: "127.0.0.1", port: 11883,
 //!         client_id: "hew-example", keepalive_seconds: 30,
 //!     });
@@ -25,24 +25,25 @@
 //!         },
 //!         .Err(_) => println("MQTT actor stopped before replying"),
 //!     }
-//!     let _ = client.close();
+//!     stop(client);
+//!     stopped(client);
 //! }
 //! ```
 
 #[wire]
 pub enum MqttError {
     /// The broker could not be reached or the connection was lost.
-    Connection(string),
+    Connection(string);
     /// An option, topic, QoS level, payload, or timeout was invalid.
-    InvalidInput(string),
+    InvalidInput(string);
     /// The broker or client rejected an operation.
-    Operation(string),
+    Operation(string);
     /// A bounded operation failed because its deadline elapsed.
-    Timeout(string),
+    Timeout(string);
     /// The actor or native handle is already closed.
-    Closed(string),
+    Closed(string);
     /// The native layer reported an unclassified failure.
-    Internal(string),
+    Internal(string);
 }
 
 /// Return the diagnostic carried by an MQTT error.
@@ -60,20 +61,20 @@ pub fn error_message(error: MqttError) -> string {
 #[wire]
 pub enum QoS {
     /// Deliver at most once (MQTT QoS 0).
-    AtMostOnce,
+    AtMostOnce;
     /// Deliver at least once (MQTT QoS 1).
-    AtLeastOnce,
+    AtLeastOnce;
     /// Deliver exactly once (MQTT QoS 2).
-    ExactlyOnce,
+    ExactlyOnce;
 }
 
 /// Parse a numeric MQTT QoS level without a fail-open default.
 pub fn qos_from_level(level: i32) -> Result<QoS, MqttError> {
     match level {
-        0 => Ok(QoS.AtMostOnce),
-        1 => Ok(QoS.AtLeastOnce),
-        2 => Ok(QoS.ExactlyOnce),
-        _ => Err(MqttError.InvalidInput("MQTT QoS must be 0, 1, or 2")),
+        0 => .Ok(QoS.AtMostOnce),
+        1 => .Ok(QoS.AtLeastOnce),
+        2 => .Ok(QoS.ExactlyOnce),
+        _ => .Err(MqttError.InvalidInput("MQTT QoS must be 0, 1, or 2")),
     }
 }
 
@@ -87,24 +88,24 @@ fn qos_level(qos: QoS) -> i32 {
 
 #[wire]
 pub type Options {
-    host: string @1,
-    port: i64 @2,
-    client_id: string @3,
-    keepalive_seconds: i64 @4,
+    host: string @1;
+    port: i64 @2;
+    client_id: string @3;
+    keepalive_seconds: i64 @4;
 }
 
 #[wire]
 pub type Delivery {
-    topic: string @1,
-    payload: string @2,
+    topic: string @1;
+    payload: string @2;
 }
 
 #[wire]
 pub enum Receive {
     /// No message arrived before the deadline.
-    Missing,
+    Missing;
     /// A complete message arrived.
-    Message(Delivery),
+    Message(Delivery);
 }
 
 fn native_error_from(kind: i32, message: string) -> MqttError {
@@ -127,19 +128,17 @@ fn native_error() -> MqttError {
     }, message.clone())
 }
 
-fn active_handle(closed: bool, handle: i64, error_kind: i32, error_message: string) -> Result<i64, MqttError> {
-    if closed {
-        Err(MqttError.Closed("MQTT connection is closed"))
-    } else if handle == 0 {
-        Err(native_error_from(error_kind, error_message))
+fn active_handle(handle: i64, error_kind: i32, error_message: string) -> Result<i64, MqttError> {
+    if handle == 0 {
+        .Err(native_error_from(error_kind, error_message))
     } else {
-        Ok(handle)
+        .Ok(handle)
     }
 }
 
 #[resource]
 type NativeMessage {
-    handle: i64,
+    handle: i64;
 }
 
 impl NativeMessage {
@@ -164,10 +163,9 @@ impl NativeMessage {
 
 /// An actor that owns and serializes one MQTT connection.
 pub actor Conn {
-    var native_handle: i64 = 0,
-    var connect_error_kind: i32 = 0,
-    var connect_error_message: string = "",
-    var closed: bool = false,
+    var native_handle: i64 = 0;
+    var connect_error_kind: i32 = 0;
+    var connect_error_message: string = "";
 
     init(options: Options) {
         native_handle = unsafe {
@@ -187,7 +185,7 @@ pub actor Conn {
 
     /// Publish a UTF-8 payload to a topic.
     receive fn publish(topic: string, payload: string, qos: QoS, retain: bool) -> Result<(), MqttError> {
-        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let retain_flag: i32 = if retain {
             1
         } else {
@@ -197,28 +195,28 @@ pub actor Conn {
             hew_mqtt_publish(handle, topic, payload, qos_level(qos), retain_flag)
         };
         if status == 0 {
-            Ok(())
+            .Ok(())
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Subscribe to a topic filter, including MQTT `+` and `#` wildcards.
     receive fn subscribe(topic_filter: string, qos: QoS) -> Result<(), MqttError> {
-        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let status = unsafe {
             hew_mqtt_subscribe(handle, topic_filter, qos_level(qos))
         };
         if status == 0 {
-            Ok(())
+            .Ok(())
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Wait for one delivery, preserving timeout as `Receive.Missing`.
     receive fn next_message(timeout_ms: i64) -> Result<Receive, MqttError> {
-        let handle = active_handle(closed, native_handle, connect_error_kind, connect_error_message)?;
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let result = NativeMessage { handle: unsafe {
             hew_mqtt_next_result(handle, timeout_ms)
         } };
@@ -226,30 +224,20 @@ pub actor Conn {
             if unsafe {
                 hew_mqtt_last_error_kind()
             } == 0 {
-                Ok(Receive.Missing)
+                .Ok(Receive.Missing)
             } else {
-                Err(native_error())
+                .Err(native_error())
             }
         } else {
             let topic = result.topic();
             let payload = result.payload();
             let message = Delivery { topic: topic.clone(), payload: payload.clone() };
             result.close();
-            Ok(Receive.Message(message))
+            .Ok(Receive.Message(message))
         }
     }
 
-    /// Close the connection. Repeated close calls are harmless.
-    receive fn close() {
-        if native_handle != 0 {
-            unsafe {
-                hew_mqtt_close(native_handle)
-            };
-            native_handle = 0;
-        }
-        closed = true;
-    }
-
+    /// Release the connection when the actor stops.
     #[on(stop)]
     fn release_native_handle() {
         if native_handle != 0 {

@@ -1,5 +1,3 @@
-import std.testing;
-
 import hew.queue.mqtt;
 
 import hew.queue.mqtt.{Options, Receive};
@@ -22,29 +20,30 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
     };
     let client = spawn mqtt.Conn(options: options("hew-mqtt-integration"));
     match client.subscribe("hew/integration", mqtt.QoS.AtLeastOnce) {
-        .Ok(.Ok(_)) => {},
-        _ => testing.assert_true(false),
+        .Ok(.Ok(_)) => {}
+        _ => assert(false),
     }
     sleep(100ms);
     match client.publish("hew/integration", "exact payload — 雪の結晶", mqtt.QoS.AtLeastOnce, false) {
-        .Ok(.Ok(_)) => {},
-        _ => testing.assert_true(false),
+        .Ok(.Ok(_)) => {}
+        _ => assert(false),
     }
     match client.next_message(3000) {
         .Ok(.Ok(.Message(message))) => {
-            testing.assert_eq_str(message.topic, "hew/integration");
-            testing.assert_eq_str(message.payload, "exact payload — 雪の結晶");
-        },
-        _ => testing.assert_true(false),
+            assert(message.topic == "hew/integration");
+            assert(message.payload == "exact payload — 雪の結晶");
+        }
+        _ => assert(false),
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_mqtt_message_count()
-    }, previous_messages);
+    } == previous_messages);
     match client.next_message(50) {
-        .Ok(.Ok(.Missing)) => {},
-        _ => testing.assert_true(false),
+        .Ok(.Ok(.Missing)) => {}
+        _ => assert(false),
     }
-    let _ = client.close();
+    stop(client);
+    stopped(client);
     var attempts = 0;
     while unsafe {
         hew_mqtt_connection_count()
@@ -52,9 +51,9 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
         sleep(5ms);
         attempts = attempts + 1;
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_mqtt_connection_count()
-    }, previous_connections);
+    } == previous_connections);
 }
 
 fn actor_stop_releases_connection_relative_to_registry() {
@@ -69,10 +68,11 @@ fn actor_stop_releases_connection_relative_to_registry() {
         sleep(5ms);
         attempts = attempts + 1;
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_mqtt_connection_count()
-    }, previous + 1);
-    close(client);
+    } == previous + 1);
+    stop(client);
+    stopped(client);
     attempts = 0;
     while unsafe {
         hew_mqtt_connection_count()
@@ -80,9 +80,9 @@ fn actor_stop_releases_connection_relative_to_registry() {
         sleep(5ms);
         attempts = attempts + 1;
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_mqtt_connection_count()
-    }, previous);
+    } == previous);
 }
 
 fn main() {

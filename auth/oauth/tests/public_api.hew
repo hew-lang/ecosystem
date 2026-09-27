@@ -17,24 +17,25 @@ fn failed_token_exchange_releases_relative_token_count() {
             .Err(.Transport(message)) => assert(message.contains("transport_error")),
             .Err(.TokenEndpoint(_, message)) => assert(!message.is_empty()),
             _ => panic("expected a transport or token-endpoint error"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during client_credentials"),
     }
-    assert_eq(unsafe {
+    assert(unsafe {
         hew_oauth_token_count()
-    }, before);
+    } == before);
     // close() is a fire-and-forget send; settle it so the next test samples
     // a native client count this one has already given back.
-    let _ = client.close();
+    stop(client);
+    stopped(client);
     sleep(20ms);
 }
 
 fn client_without_close(before: i64) -> oauth.Client {
     let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
     sleep(20ms);
-    assert_eq(unsafe {
+    assert(unsafe {
         hew_oauth_client_count()
-    }, before + 1);
+    } == before + 1);
     client
 }
 
@@ -43,7 +44,8 @@ fn actor_stop_releases_relative_client_count() {
         hew_oauth_client_count()
     };
     let client = client_without_close(before);
-    close(client);
+    stop(client);
+    stopped(client);
     var attempts = 0;
     while unsafe {
         hew_oauth_client_count()
@@ -51,9 +53,9 @@ fn actor_stop_releases_relative_client_count() {
         sleep(5ms);
         attempts = attempts + 1;
     }
-    assert_eq(unsafe {
+    assert(unsafe {
         hew_oauth_client_count()
-    }, before);
+    } == before);
 }
 
 fn empty_callback_state_returns_typed_error() {
@@ -62,12 +64,13 @@ fn empty_callback_state_returns_typed_error() {
         .Ok(result) => match result {
             .Err(.InvalidInput(message)) => assert(!message.is_empty()),
             _ => panic("expected an InvalidInput error for an empty callback state"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during validate_state"),
     }
     // close() is a fire-and-forget send; settle it so the next test samples
     // a native client count this one has already given back.
-    let _ = client.close();
+    stop(client);
+    stopped(client);
     sleep(20ms);
 }
 
@@ -81,7 +84,7 @@ fn auth_url_round_trips_long_non_ascii_values() {
         .Ok(result) => match result {
             .Ok(value) => value,
             .Err(_) => panic("expected an authorization URL"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during auth_url"),
     };
     assert(url.contains("client_id=identit%C3%A9-du-client-2026"));
@@ -90,12 +93,13 @@ fn auth_url_round_trips_long_non_ascii_values() {
     assert(url.contains("redirect_uri=https%3A%2F%2Fapp.example%2Fcallback"));
     match client.current_state() {
         .Ok(result) => match result {
-            .Ok(.Some(value)) => assert_eq(value, "état-de-rappel-vérifié-42"),
+            .Ok(.Some(value)) => assert(value == "état-de-rappel-vérifié-42"),
             _ => panic("expected auth_url to retain the caller's state"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during current_state"),
     }
-    let _ = client.close();
+    stop(client);
+    stopped(client);
     sleep(20ms);
 }
 
@@ -105,7 +109,7 @@ fn auth_url_retains_state_and_pkce_verifier() {
         .Ok(result) => match result {
             .Ok(value) => value,
             .Err(_) => panic("expected an authorization URL"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during auth_url"),
     };
     assert(url.contains("code_challenge_method=S256"));
@@ -113,7 +117,7 @@ fn auth_url_retains_state_and_pkce_verifier() {
         .Ok(result) => match result {
             .Ok(.Some(value)) => value,
             _ => panic("expected auth_url to retain a state value"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during current_state"),
     };
     assert(!state.is_empty());
@@ -122,26 +126,27 @@ fn auth_url_retains_state_and_pkce_verifier() {
         .Ok(result) => match result {
             .Ok(.Some(verifier)) => assert(!verifier.is_empty()),
             _ => panic("expected auth_url to retain a PKCE verifier"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during current_code_verifier"),
     }
     match client.validate_state(state) {
         .Ok(result) => match result {
             .Ok(matched) => assert(matched),
             .Err(_) => panic("expected the retained state to validate"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during validate_state"),
     }
     match client.validate_state("a state this client never issued") {
         .Ok(result) => match result {
             .Ok(matched) => assert(!matched),
             .Err(_) => panic("expected a mismatched state to be rejected, not to error"),
-        },
+        }
         .Err(_) => panic("OAuth actor stopped during validate_state"),
     }
     // close() is a fire-and-forget send; settle it so the next test samples
     // a native client count this one has already given back.
-    let _ = client.close();
+    stop(client);
+    stopped(client);
     sleep(20ms);
 }
 

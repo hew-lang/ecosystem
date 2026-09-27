@@ -11,28 +11,30 @@ project that depends on `hew.db.redis = "0.3.0"`:
 
 ```hew
 import hew.db.redis;
+import std.encoding.utf8;
 
 fn main() {
-    let client = spawn redis.Conn(options: Options { url: "redis://127.0.0.1/" });
+    let client = spawn redis.Conn(options: redis.Options { url: "redis://127.0.0.1/" });
 
-    match await client.set("greeting", "hello".to_bytes()) {
+    match client.set("greeting", "hello".to_bytes()) {
         .Ok(result) => match result {
-            .Ok(_) => {},
+            .Ok(_) => {}
             .Err(error) => println(redis.error_message(error)),
-        },
+        }
         .Err(_) => println("Redis actor stopped before replying"),
     }
 
-    match await client.get("greeting") {
+    match client.get("greeting") {
         .Ok(result) => match result {
-            .Ok(.Value(value)) => println(value.to_string()),
+            .Ok(.Value(value)) => println(utf8.decode_lossy(value)),
             .Ok(.Missing) => println("greeting is missing"),
             .Err(error) => println(redis.error_message(error)),
-        },
+        }
         .Err(_) => println("Redis actor stopped before replying"),
     }
 
-    let _ = client.close();
+    stop(client);
+    stopped(client);
 }
 ```
 
@@ -53,11 +55,10 @@ Hew's `bytes` ABI end to end, so embedded NUL and non-text bytes round-trip
 without C-string truncation.
 
 A plain `import hew.db.redis;` brings in the module, not its type names
-unqualified. `Options { url: ... }` still works above because the `spawn`
-parameter's type selects it, and `.Value`/`.Missing` work because the match
-scrutinee's type does. Writing one of those names where nothing selects it — a
-`let` annotation, or a `Vec<Lookup>` — needs either a qualified `redis.Lookup`
-or a brace import:
+unqualified. The example writes `redis.Options { url: ... }` for that reason.
+`.Value` and `.Missing` work because the match scrutinee's type selects the
+enum. A type annotation, such as `Vec<Lookup>`, needs either a qualified
+`redis.Lookup` or a brace import:
 
 ```hew
 import hew.db.redis.{Lookup};
@@ -75,7 +76,7 @@ the native queue and releases it on success or error:
 let commands: Vec<redis.PipelineCommand> = Vec.new();
 commands.push(redis.PipelineCommand.Set("one", "1".to_bytes()));
 commands.push(redis.PipelineCommand.Set("two", "2".to_bytes()));
-let _ = await client.pipeline_exec(commands);
+let _ = client.pipeline_exec(commands);
 ```
 
 ## API surface
@@ -106,7 +107,7 @@ instance. Every method below is a `receive fn` and returns
 | `publish(channel, message: bytes)` | subscriber count |
 | `subscribe_once(channel, timeout_ms)` | `bytes` — one message, or `RedisError.Timeout` |
 | `pipeline_exec(commands: Vec<PipelineCommand>)` | pipeline result count |
-| `close()` | closes the native connection; idempotent |
+| `stop(client); stopped(client);` | Gracefully stop the actor and wait for native connection cleanup. |
 
 Types: `RedisError` (`Connection`, `InvalidInput`, `Command`, `Timeout`,
 `Closed`, `Internal` — use `error_message(error)` for the diagnostic string),

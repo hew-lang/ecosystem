@@ -14,34 +14,35 @@ fn main() {
     var served = false;
     while attempts_left > 0 && !served {
         attempts_left = attempts_left - 1;
-        match await server.accept_one() {
+        match server.accept_one() {
             .Ok(result) => match result {
                 .Ok(request) => {
                     println(f"{request.method()} {request.path()}");
-                    match await server.respond_text(200, "Hello from Hew!\n") {
+                    match server.respond_text(200, "Hello from Hew!\n") {
                         .Ok(response_result) => match response_result {
-                            .Ok(_) => {},
+                            .Ok(_) => {}
                             .Err(error) => println(http.error_message(error)),
-                        },
+                        }
                         .Err(_) => println("HTTP server actor stopped before replying"),
                     }
                     served = true;
-                },
+                }
                 // An idle quarter second is the documented outcome of
                 // accept_one(), so it is a retry rather than a failure.
-                .Err(.Accept(_)) => {},
+                .Err(.Accept(_)) => {}
                 .Err(error) => {
                     println(http.error_message(error));
                     served = true;
-                },
-            },
+                }
+            }
             .Err(_) => {
                 println("HTTP server actor stopped before replying");
                 served = true;
-            },
+            }
         }
     }
-    server.close();
+    stop(server);
+    stopped(server);
 }
 ```
 
@@ -68,21 +69,21 @@ no request at all it prints `no request arrived within 30 seconds` and still
 exits successfully.
 
 All operations that can fail return `Result<_, HttpError>`. The actor retains
-each accepted connection until a response method or `close()` releases it.
+each accepted connection until a response method or actor stop releases it.
 It also releases listener and request handles from its stop hook, including
 failure and caller-abandonment paths.
 
 Only one request may be pending in the actor at a time. Call one of the
-response methods or `server.close()` before accepting another request. An idle
+response methods before accepting another request. Stop the server when it is
+done handling requests. An idle
 `accept_one()` returns an `Accept` error after 250 milliseconds, which keeps a
-queued close or actor stop from being trapped behind a blocking socket call;
+queued actor stop from being trapped behind a blocking socket call;
 servers normally retry `accept_one()` after that timeout.
 
 Header and response methods return `HttpError.NoPending` when the server is
-open but no request is awaiting a response. `HttpError.Closed` is reserved for
-operations attempted after `server.close()`.
+open but no request is awaiting a response.
 
-`await server.header(name)` performs a case-insensitive lookup on the pending
+`server.header(name)` performs a case-insensitive lookup on the pending
 request and returns `Err(HttpError.MissingHeader(name))` when the header is
 absent. An empty header value is therefore distinct from a missing header.
 Incoming HTTP/1.1 requests must contain exactly one valid `Host` header.
@@ -97,8 +98,8 @@ transmitted without truncation. HTTP header values containing NUL are still
 rejected, incoming and outgoing, because NUL is not a valid HTTP field value
 character.
 
-`await server.url_decode(text)` decodes percent escapes as UTF-8 and converts
+`server.url_decode(text)` decodes percent escapes as UTF-8 and converts
 `+` to a space. Malformed escapes and decoded bytes that are not UTF-8 return
-`HttpError.Decode`. `await server.form_value(body, key)` applies the same
+`HttpError.Decode`. `server.form_value(body, key)` applies the same
 strict decoding to URL-encoded form fields; a missing key returns
 `HttpError.MissingFormField` rather than an empty-string sentinel.
