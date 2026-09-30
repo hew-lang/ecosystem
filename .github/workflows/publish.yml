@@ -39,7 +39,7 @@ jobs:
         # this same check as its own first action.
         run: python3 scripts/verify_package_contract.py
 
-      - uses: hew-lang/hew/.github/actions/setup-llvm@5177bd11748b9a9e8f0171996b699c27a22c98df
+      - uses: hew-lang/hew/.github/actions/setup-llvm@74dc19660781c1e8a1b99d64f3fc4c298be16df3
         with:
           version: ${{ env.LLVM_VERSION }}
 
@@ -64,6 +64,8 @@ jobs:
           test "$(git -C .tooling/hew rev-parse HEAD)" = "$HEW_REVISION"
           cargo build --locked --profile release-lib -p hew-cli -p hew-lib \
             --manifest-path .tooling/hew/Cargo.toml
+          # The compiler looks for std beside its profile directory.
+          cp -a .tooling/hew/std .tooling/hew/target/std
           HEW="$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/hew"
           test -x "$HEW"
           echo "HEW=$HEW" >> "$GITHUB_ENV"

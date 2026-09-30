@@ -21,12 +21,12 @@ import hew.dag;
 // A live graph node. `op_code`/`operand` are the same encoding the library uses,
 // so the actor reuses the library's pure operation kernel.
 actor Stage {
-    let op_code: i64,
-    let operand: i64,
+    let op_code: i64;
+    let operand: i64;
     receive fn process(x: i64) -> Result<i64, dag.DagError> {
         match dag.op_of_code(op_code) {
-            .Ok(op) => Ok(dag.apply_op(op, x, operand)),
-            .Err(error) => Err(error),
+            .Ok(op) => .Ok(dag.apply_op(op, x, operand)),
+            .Err(error) => .Err(error),
         }
     }
 }
@@ -35,7 +35,8 @@ actor Stage {
 // completion and every failure path after the stage vector exists.
 fn stop_stages(stages: Vec<Stage>) {
     for stage in stages {
-        close(stage);
+        stop(stage);
+        stopped(stage);
     }
 }
 
@@ -92,16 +93,16 @@ fn main() {
                                             .Ok(v) => {
                                                 outputs.set(node, v);
                                                 println(f"node {node}: in={input} -> out={v}");
-                                            },
+                                            }
                                             .Err(error) => {
                                                 println(dag.describe(error));
                                                 failed = true;
-                                            },
-                                        },
+                                            }
+                                        }
                                         .Err(_) => {
                                             println(f"node {node}: actor ask failed");
                                             failed = true;
-                                        },
+                                        }
                                     }
                                 }
                             }
@@ -111,19 +112,19 @@ fn main() {
                                 let sink = outputs[order[order.len() - 1]];
                                 println(f"sink output = {sink}");
                                 stop_stages(stages);
-                                assert_eq(sink, 160);
+                                assert(sink == 160);
                                 println("actor_pipeline: routed through live actors in topo order, all assertions passed");
                             }
-                        },
+                        }
                         .Err(e) => {
                             println(dag.describe(e));
                             stop_stages(stages);
-                        },
+                        }
                     }
-                },
+                }
                 .Err(e) => println(dag.describe(e)),
             }
-        },
+        }
         .Err(e) => println(dag.describe(e)),
     }
 }

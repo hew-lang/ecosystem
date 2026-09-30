@@ -10,14 +10,15 @@ import hew.auth.oauth;
 
 fn main() {
     let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
-    match await client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
+    match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
         .Ok(result) => match result {
             .Ok(url) => println(f"send the user to {url}"),
             .Err(error) => println(oauth.error_message(error)),
-        },
+        }
         .Err(_) => println("OAuth actor stopped before replying"),
     }
-    let _ = client.close();
+    stop(client);
+    stopped(client);
 }
 ```
 

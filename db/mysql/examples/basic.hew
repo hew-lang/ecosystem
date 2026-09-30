@@ -9,10 +9,11 @@ fn main() {
             .Ok(query) => match query.rows[0].values[0] {
                 .Text(value) => println(utf8.decode_lossy(value)),
                 .Null => println("value is NULL"),
-            },
+            }
             .Err(error) => println(mysql.error_message(error)),
-        },
+        }
         .Err(_) => println("MySQL actor stopped before replying"),
     }
-    let _ = db.close();
+    stop(db);
+    stopped(db);
 }

@@ -11,7 +11,7 @@ docker run --rm -d --name hew-nats -p 14222:4222 nats:2.11.8-alpine3.22
 hew run --pkg-path . queue/nats/examples/pubsub.hew
 ```
 
-Awaiting an actor call returns `Result<R, AskError>`; here `R` is itself a
+An actor call returns `Result<R, ActorError>`; here `R` is itself a
 `Result<T, NatsError>`, so every match nests one level: the outer `Result`
 covers the actor call, the inner one covers the NATS operation.
 
@@ -19,26 +19,27 @@ covers the actor call, the inner one covers the NATS operation.
 import hew.queue.nats;
 
 fn main() {
-    let client = spawn nats.Conn(options: Options { url: "nats://127.0.0.1:14222" });
-    match await client.subscribe("hew.readme") {
+    let client = spawn nats.Conn(options: nats.Options { url: "nats://127.0.0.1:14222" });
+    match client.subscribe("hew.readme") {
         .Ok(result) => match result {
             .Ok(subscription) => {
-                let _ = await client.publish("hew.readme", "hello");
-                match await client.next_message(subscription.clone(), 1000) {
+                let _ = client.publish("hew.readme", "hello");
+                match client.next_message(subscription.clone(), 1000) {
                     .Ok(receive_result) => match receive_result {
                         .Ok(.Message(message)) => println(message.data),
                         .Ok(.Missing) => println("no message arrived"),
                         .Err(error) => println(nats.error_message(error)),
-                    },
+                    }
                     .Err(_) => println("NATS actor stopped before replying"),
                 }
                 let _ = client.unsubscribe(subscription);
-            },
+            }
             .Err(error) => println(nats.error_message(error)),
-        },
+        }
         .Err(_) => println("NATS actor stopped before replying"),
     }
-    let _ = client.close();
+    stop(client);
+    stopped(client);
 }
 ```
 
@@ -52,11 +53,11 @@ fn main() {
   - `receive fn request(subject: string, data: string, timeout_ms: i64) -> Result<Receive, NatsError>`
   - `receive fn reply(message: Delivery, data: string) -> Result<(), NatsError>`
   - `receive fn unsubscribe(subscription: Subscription)`
-  - `receive fn close()`
-- `type Options { url: string }`
-- `type Subscription { handle: i64 }`
-- `type Delivery { subject: string, data: string, reply_to: ReplyTo }`
-- `enum ReplyTo { Missing, Subject(string) }`
-- `enum Receive { Missing, Message(Delivery) }`
-- `enum NatsError { Connection, InvalidInput, Operation, Timeout, Closed, Internal }` — each variant carries a diagnostic `string`.
+- `stop(client); stopped(client);` — gracefully stop the actor and wait for connection cleanup.
+- `type Options { url: string; }`
+- `type Subscription { handle: i64; }`
+- `type Delivery { subject: string; data: string; reply_to: ReplyTo; }`
+- `enum ReplyTo { Missing; Subject(string); }`
+- `enum Receive { Missing; Message(Delivery); }`
+- `enum NatsError { Connection; InvalidInput; Operation; Timeout; Closed; Internal; }` — each variant carries a diagnostic `string`.
 - `fn error_message(error: NatsError) -> string` — extracts the diagnostic from any `NatsError` variant.

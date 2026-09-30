@@ -14,24 +14,25 @@ fn main() {
         database: "example",
     );
 
-    match await db.insert_one("users", "{\"name\":\"Alice\",\"age\":30}") {
+    match db.insert_one("users", "{\"name\":\"Alice\",\"age\":30}") {
         .Ok(result) => match result {
             .Ok(id) => println(f"inserted {id}"),
             .Err(error) => println(mongodb.error_message(error)),
-        },
+        }
         .Err(_) => println("MongoDB actor stopped before replying"),
     }
 
-    match await db.find_one("users", "{\"name\":\"Alice\"}") {
+    match db.find_one("users", "{\"name\":\"Alice\"}") {
         .Ok(result) => match result {
             .Ok(.Found(document)) => println(document),
             .Ok(.Missing) => println("user not found"),
             .Err(error) => println(mongodb.error_message(error)),
-        },
+        }
         .Err(_) => println("MongoDB actor stopped before replying"),
     }
 
-    db.close();
+    stop(db);
+    stopped(db);
 }
 ```
 
@@ -54,7 +55,7 @@ profile.
 returns an immutable `QueryResult` containing every matching document. The
 native MongoDB cursor is a private Hew `#[resource]`: it is always closed
 before the actor replies, including query-row and serialization failure paths.
-The actor similarly closes its client from both `close()` and its stop hook.
+The actor closes its client in its stop hook.
 
 All Hew-to-native string inputs cross as managed Hew strings, which carry an
 exact byte length, and all native data results return as owned Hew `bytes`

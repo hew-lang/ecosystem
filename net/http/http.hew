@@ -30,40 +30,41 @@
 //!         },
 //!         .Err(_) => println("HTTP server actor stopped before replying"),
 //!     }
-//!     server.close();
+//!     stop(server);
+//!     stopped(server);
 //! }
 //! ```
 
 #[wire]
 pub enum HttpError {
     /// The actor could not bind its configured address.
-    Listen(string),
+    Listen(string);
     /// The listener could not accept a connection.
-    Accept(string),
+    Accept(string);
     /// The peer disconnected or timed out while sending its request.
-    Read(string),
+    Read(string);
     /// The incoming request was not supported, valid HTTP/1.1.
-    Parse(string),
+    Parse(string);
     /// A response could not be written to the peer.
-    Write(string),
+    Write(string);
     /// A request header was not present.
-    MissingHeader(string),
+    MissingHeader(string);
     /// Percent-encoded input was malformed or not UTF-8.
-    Decode(string),
+    Decode(string);
     /// A form field was not present.
-    MissingFormField(string),
+    MissingFormField(string);
     /// A response status was outside the final-response range 200 through 599.
-    InvalidStatus(i64),
+    InvalidStatus(i64);
     /// A response header value contained CR or LF.
-    InvalidHeaderValue(string),
+    InvalidHeaderValue(string);
     /// A request is already waiting for a response.
-    Busy(string),
+    Busy(string);
     /// No accepted request is waiting for a header lookup or response.
-    NoPending(string),
+    NoPending(string);
     /// The server has been closed.
-    Closed(string),
+    Closed(string);
     /// The native layer reported an unclassified failure.
-    Internal(string),
+    Internal(string);
 }
 
 /// Return the diagnostic carried by an `HttpError`.
@@ -111,26 +112,26 @@ fn native_error_from(kind: i32, message: string) -> HttpError {
 
 fn valid_status(status: i64) -> Result<i64, HttpError> {
     if status >= 200 && status <= 599 {
-        Ok(status)
+        .Ok(status)
     } else {
-        Err(HttpError.InvalidStatus(status))
+        .Err(HttpError.InvalidStatus(status))
     }
 }
 
 fn valid_header_value(name: string, value: string) -> Result<string, HttpError> {
     if value.contains("\r") || value.contains("\n") {
-        Err(HttpError.InvalidHeaderValue(name))
+        .Err(HttpError.InvalidHeaderValue(name))
     } else {
-        Ok(value)
+        .Ok(value)
     }
 }
 
 #[wire]
 pub type Request {
-    verb: string @1,
-    target: string @2,
-    query_text: string @3,
-    body_text: string @4,
+    verb: string @1;
+    target: string @2;
+    query_text: string @3;
+    body_text: string @4;
 }
 
 /// Methods available on an accepted HTTP request.
@@ -172,10 +173,9 @@ impl RequestMethods for Request {
 /// deliberately avoids promising a generator or background loop that Hew does
 /// not provide, while keeping actor shutdown bounded when no client arrives.
 pub actor Server {
-    let addr: string,
-    var handle: i64 = 0,
-    var request_handle: i64 = 0,
-    var closed: bool = false,
+    let addr: string;
+    var handle: i64 = 0;
+    var request_handle: i64 = 0;
 
     /// Decode a percent-encoded UTF-8 string.
     receive fn url_decode(input: string) -> Result<string, HttpError> {
@@ -185,9 +185,9 @@ pub actor Server {
         if unsafe {
             hew_ecosystem_http_last_status()
         } == 0 {
-            Ok(value)
+            .Ok(value)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
@@ -199,13 +199,13 @@ pub actor Server {
         if unsafe {
             hew_ecosystem_http_last_status()
         } == 0 {
-            Ok(value)
+            .Ok(value)
         } else {
             match unsafe {
                 hew_ecosystem_http_last_error_kind()
             } {
-                8 => Err(HttpError.MissingFormField(key)),
-                _ => Err(native_error()),
+                8 => .Err(HttpError.MissingFormField(key)),
+                _ => .Err(native_error()),
             }
         }
     }
@@ -215,27 +215,24 @@ pub actor Server {
     /// Accept, read, and parse failures are returned as distinct `HttpError`
     /// variants.
     receive fn accept_one() -> Result<Request, HttpError> {
-        if closed {
-            return Err(HttpError.Closed("HTTP server is closed"));
-        }
         if request_handle != 0 {
-            return Err(HttpError.Busy("respond to the current request before accepting another"));
+            return .Err(HttpError.Busy("respond to the current request before accepting another"));
         }
         if handle == 0 {
             handle = unsafe {
                 hew_ecosystem_http_listen(addr)
             };
             if handle == 0 {
-                return Err(native_error());
+                return .Err(native_error());
             }
         }
         request_handle = unsafe {
             hew_ecosystem_http_server_accept(handle)
         };
         if request_handle == 0 {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(Request { verb: unsafe {
+            .Ok(Request { verb: unsafe {
                 hew_ecosystem_http_request_method(request_handle)
             }, target: unsafe {
                 hew_ecosystem_http_request_path(request_handle)
@@ -250,7 +247,7 @@ pub actor Server {
     /// Return one header from the current request.
     receive fn header(name: string) -> Result<string, HttpError> {
         if request_handle == 0 {
-            return Err(HttpError.NoPending("no request is waiting for a response"));
+            return .Err(HttpError.NoPending("no request is waiting for a response"));
         }
         let value = unsafe {
             hew_ecosystem_http_request_header(request_handle, name)
@@ -258,16 +255,16 @@ pub actor Server {
         if unsafe {
             hew_ecosystem_http_last_status()
         } == 0 {
-            Ok(value)
+            .Ok(value)
         } else {
-            Err(HttpError.MissingHeader(name))
+            .Err(HttpError.MissingHeader(name))
         }
     }
 
     /// Send a complete response and release the current connection.
     receive fn respond(status: i64, body: string, content_type: string) -> Result<i64, HttpError> {
         if request_handle == 0 {
-            return Err(HttpError.NoPending("no request is waiting for a response"));
+            return .Err(HttpError.NoPending("no request is waiting for a response"));
         }
         let checked_status = match valid_status(status) {
             .Ok(value) => value,
@@ -276,8 +273,8 @@ pub actor Server {
                     hew_ecosystem_http_request_free(request_handle)
                 };
                 request_handle = 0;
-                return Err(error);
-            },
+                return .Err(error);
+            }
         };
         let checked_type = match valid_header_value("Content-Type", content_type) {
             .Ok(value) => value,
@@ -286,8 +283,8 @@ pub actor Server {
                     hew_ecosystem_http_request_free(request_handle)
                 };
                 request_handle = 0;
-                return Err(error);
-            },
+                return .Err(error);
+            }
         };
         let written = unsafe {
             hew_ecosystem_http_request_respond(request_handle, checked_status, body, checked_type)
@@ -297,16 +294,16 @@ pub actor Server {
         };
         request_handle = 0;
         if written < 0 {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(written)
+            .Ok(written)
         }
     }
 
     /// Send a UTF-8 plain-text response and release the current connection.
     receive fn respond_text(status: i64, body: string) -> Result<i64, HttpError> {
         if request_handle == 0 {
-            return Err(HttpError.NoPending("no request is waiting for a response"));
+            return .Err(HttpError.NoPending("no request is waiting for a response"));
         }
         let checked_status = match valid_status(status) {
             .Ok(value) => value,
@@ -315,8 +312,8 @@ pub actor Server {
                     hew_ecosystem_http_request_free(request_handle)
                 };
                 request_handle = 0;
-                return Err(error);
-            },
+                return .Err(error);
+            }
         };
         let content_type = "text/plain; charset=utf-8";
         let written = unsafe {
@@ -327,16 +324,16 @@ pub actor Server {
         };
         request_handle = 0;
         if written < 0 {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(written)
+            .Ok(written)
         }
     }
 
     /// Send a UTF-8 HTML response and release the current connection.
     receive fn respond_html(status: i64, body: string) -> Result<i64, HttpError> {
         if request_handle == 0 {
-            return Err(HttpError.NoPending("no request is waiting for a response"));
+            return .Err(HttpError.NoPending("no request is waiting for a response"));
         }
         let checked_status = match valid_status(status) {
             .Ok(value) => value,
@@ -345,8 +342,8 @@ pub actor Server {
                     hew_ecosystem_http_request_free(request_handle)
                 };
                 request_handle = 0;
-                return Err(error);
-            },
+                return .Err(error);
+            }
         };
         let content_type = "text/html; charset=utf-8";
         let written = unsafe {
@@ -357,16 +354,16 @@ pub actor Server {
         };
         request_handle = 0;
         if written < 0 {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(written)
+            .Ok(written)
         }
     }
 
     /// Send a 302 redirect and release the current connection.
     receive fn redirect(location: string) -> Result<i64, HttpError> {
         if request_handle == 0 {
-            return Err(HttpError.NoPending("no request is waiting for a response"));
+            return .Err(HttpError.NoPending("no request is waiting for a response"));
         }
         let checked_location = match valid_header_value("Location", location) {
             .Ok(value) => value,
@@ -375,8 +372,8 @@ pub actor Server {
                     hew_ecosystem_http_request_free(request_handle)
                 };
                 request_handle = 0;
-                return Err(error);
-            },
+                return .Err(error);
+            }
         };
         let written = unsafe {
             hew_ecosystem_http_request_redirect(request_handle, checked_location)
@@ -386,29 +383,13 @@ pub actor Server {
         };
         request_handle = 0;
         if written < 0 {
-            Err(native_error())
+            .Err(native_error())
         } else {
-            Ok(written)
+            .Ok(written)
         }
     }
 
-    /// Close the listener. Repeated calls are harmless.
-    receive fn close() {
-        if request_handle != 0 {
-            unsafe {
-                hew_ecosystem_http_request_free(request_handle)
-            };
-            request_handle = 0;
-        }
-        if handle != 0 {
-            unsafe {
-                hew_ecosystem_http_server_close(handle)
-            };
-            handle = 0;
-        }
-        closed = true;
-    }
-
+    /// Release the listener and pending request when the actor stops.
     #[on(stop)]
     fn release_native_handles() {
         if request_handle != 0 {

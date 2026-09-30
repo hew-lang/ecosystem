@@ -10,15 +10,15 @@
 import hew.queue.nats;
 
 fn main() {
-    let client = spawn nats.Conn(options: Options { url: "nats://127.0.0.1:14222" });
+    let client = spawn nats.Conn(options: nats.Options { url: "nats://127.0.0.1:14222" });
     match client.subscribe("hew.example") {
         .Ok(result) => match result {
             .Ok(subscription) => {
                 match client.publish("hew.example", "hello from Hew") {
                     .Ok(publish_result) => match publish_result {
-                        .Ok(_) => {},
+                        .Ok(_) => {}
                         .Err(error) => println(nats.error_message(error)),
-                    },
+                    }
                     .Err(_) => println("NATS actor stopped before replying"),
                 }
                 match client.next_message(subscription.clone(), 3000) {
@@ -26,14 +26,15 @@ fn main() {
                         .Ok(.Message(message)) => println(f"{message.subject}: {message.data}"),
                         .Ok(.Missing) => println("no message arrived within 3 seconds"),
                         .Err(error) => println(nats.error_message(error)),
-                    },
+                    }
                     .Err(_) => println("NATS actor stopped before replying"),
                 }
                 let _ = client.unsubscribe(subscription);
-            },
+            }
             .Err(error) => println(nats.error_message(error)),
-        },
+        }
         .Err(_) => println("NATS actor stopped before replying"),
     }
-    let _ = client.close();
+    stop(client);
+    stopped(client);
 }

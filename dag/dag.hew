@@ -81,13 +81,13 @@ import std.string;
 /// closed operation; the `operand` in a `NodeSpec` parameterizes it.
 pub enum NodeOp {
     /// `x + operand`
-    Add,
+    Add;
     /// `x * operand`
-    Multiply,
+    Multiply;
     /// `x * x` (operand ignored)
-    Square,
+    Square;
     /// `x` unchanged (operand ignored) — a pass-through / fan-in merge point
-    Identity,
+    Identity;
 }
 
 // ── Spec records (structure-of-arrays, flat Copy fields) ────────────────────
@@ -95,47 +95,47 @@ pub enum NodeOp {
 /// operation is parameterized by. `op_code` is the `NodeOp` discriminant stored
 /// as an `i64` so the whole record stays Copy and Vec-storable.
 pub type NodeSpec {
-    id: i64,
-    op_code: i64,
-    operand: i64,
+    id: i64;
+    op_code: i64;
+    operand: i64;
 }
 
 /// A directed dependency edge: `dst` runs after `src` and consumes its output.
 pub type Edge {
-    src: i64,
-    dst: i64,
+    src: i64;
+    dst: i64;
 }
 
 /// A compiled DAG specification. The graph is a flat edge list (two parallel
 /// arrays would also work; an `Edge` record is itself Copy, so a single
 /// `Vec<Edge>` is clean here) plus the per-node operations.
 pub type DagSpec {
-    num_nodes: i64,
-    nodes: Vec<NodeSpec>,
-    edges: Vec<Edge>,
+    num_nodes: i64;
+    nodes: Vec<NodeSpec>;
+    edges: Vec<Edge>;
 }
 
 /// The outcome of routing an input through the graph. `outputs` is indexed by
 /// node id; `order` is the topological order the nodes ran in.
 pub type RunReport {
-    outputs: Vec<i64>,
-    order: Vec<i64>,
-    num_nodes: i64,
+    outputs: Vec<i64>;
+    order: Vec<i64>;
+    num_nodes: i64;
 }
 
 // ── Errors (fail closed) ────────────────────────────────────────────────────
 #[wire]
 pub enum DagError {
     /// No nodes at all.
-    Empty,
+    Empty;
     /// The graph has a cycle, so there is no valid topological order.
-    Cyclic,
+    Cyclic;
     /// An edge referenced a node id outside `[0, num_nodes)`.
-    UnknownNode(i64),
+    UnknownNode(i64);
     /// The spec text was malformed (e.g. a node missing its `op:operand` form).
-    Malformed(i64),
+    Malformed(i64);
     /// A programmatic node carried an operation discriminant this version does not know.
-    UnknownOperation(i64),
+    UnknownOperation(i64);
 }
 
 /// A run failure that also reports how far the run got. Wrapping the `DagError`
@@ -143,19 +143,19 @@ pub enum DagError {
 /// inspectable for the node at which routing stopped (`-1` when the spec was
 /// refused before any node ran).
 pub type RunFailure {
-    err: DagError,
-    stopped_at: i64,
+    err: DagError;
+    stopped_at: i64;
 }
 
 // ── NodeOp <-> code mapping ─────────────────────────────────────────────────
 /// Decode an `op_code` discriminant into a `NodeOp`, refusing unknown codes.
 pub fn op_of_code(code: i64) -> Result<NodeOp, DagError> {
     match code {
-        0 => Ok(NodeOp.Add),
-        1 => Ok(NodeOp.Multiply),
-        2 => Ok(NodeOp.Square),
-        3 => Ok(NodeOp.Identity),
-        _ => Err(DagError.UnknownOperation(code)),
+        0 => .Ok(NodeOp.Add),
+        1 => .Ok(NodeOp.Multiply),
+        2 => .Ok(NodeOp.Square),
+        3 => .Ok(NodeOp.Identity),
+        _ => .Err(DagError.UnknownOperation(code)),
     }
 }
 
@@ -173,13 +173,13 @@ pub fn code_of_op(op: NodeOp) -> i64 {
 /// misspelled runtime spec never routes as a silent no-op.
 fn code_of_name(name: string, token: i64) -> Result<i64, DagError> {
     match name {
-        "add" => Ok(0),
-        "multiply" => Ok(1),
-        "mul" => Ok(1),
-        "square" => Ok(2),
-        "identity" => Ok(3),
-        "id" => Ok(3),
-        _ => Err(DagError.Malformed(token)),
+        "add" => .Ok(0),
+        "multiply" => .Ok(1),
+        "mul" => .Ok(1),
+        "square" => .Ok(2),
+        "identity" => .Ok(3),
+        "id" => .Ok(3),
+        _ => .Err(DagError.Malformed(token)),
     }
 }
 
@@ -220,13 +220,13 @@ fn node_in_range(spec: DagSpec, id: i64) -> bool {
 /// not identify a node in the spec.
 pub fn add_edge(var spec: DagSpec, src: i64, dst: i64) -> Result<DagSpec, DagError> {
     if !node_in_range(spec, src) {
-        return Err(DagError.UnknownNode(src));
+        return .Err(DagError.UnknownNode(src));
     }
     if !node_in_range(spec, dst) {
-        return Err(DagError.UnknownNode(dst));
+        return .Err(DagError.UnknownNode(dst));
     }
     spec.edges.push(Edge { src: src, dst: dst });
-    Ok(spec)
+    .Ok(spec)
 }
 
 // ── Runtime spec loading (text -> DagSpec) ──────────────────────────────────
@@ -260,29 +260,29 @@ fn is_i64_text(text: string) -> bool {
 fn parse_node(token: string, id: i64) -> Result<NodeSpec, DagError> {
     let parts = token.split(":");
     if parts.len() != 2 {
-        return Err(DagError.Malformed(id));
+        return .Err(DagError.Malformed(id));
     }
     let name = match parts.get(0) {
         .Some(s) => s.trim(),
-        .None => return Err(DagError.Malformed(id)),
+        .None => return .Err(DagError.Malformed(id)),
     };
     let operand_text = match parts.get(1) {
         .Some(s) => s.trim(),
-        .None => return Err(DagError.Malformed(id)),
+        .None => return .Err(DagError.Malformed(id)),
     };
     if name.is_empty() {
-        return Err(DagError.Malformed(id));
+        return .Err(DagError.Malformed(id));
     }
     if !is_i64_text(operand_text) {
-        return Err(DagError.Malformed(id));
+        return .Err(DagError.Malformed(id));
     }
     let operand = match string.to_int(operand_text) {
         .Ok(value) => value,
-        .Err(_) => return Err(DagError.Malformed(id)),
+        .Err(_) => return .Err(DagError.Malformed(id)),
     };
     match code_of_name(name, id) {
-        .Ok(code) => Ok(NodeSpec { id: id, op_code: code, operand: operand }),
-        .Err(e) => Err(e),
+        .Ok(code) => .Ok(NodeSpec { id: id, op_code: code, operand: operand }),
+        .Err(e) => .Err(e),
     }
 }
 
@@ -303,7 +303,7 @@ fn nonempty_tokens(section: string, sep: string) -> Vec<StrTok> {
 /// A one-field wrapper so trimmed string tokens live in an indexable `Vec`.
 /// (A bare `Vec<string>` cannot be scalar-indexed on the current substrate.)
 pub type StrTok {
-    s: string,
+    s: string;
 }
 
 /// Load a spec from its text form (see the module docs for the grammar).
@@ -311,7 +311,7 @@ pub type StrTok {
 pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
     let halves = text.split("|");
     if halves.len() > 2 {
-        return Err(DagError.Malformed(2));
+        return .Err(DagError.Malformed(2));
     }
     // A missing node section parses as empty and is refused as `Empty` below;
     // a missing `|` means an edge-free graph of isolated nodes.
@@ -326,7 +326,7 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
     let node_toks = nonempty_tokens(node_section, " ");
     let num_nodes = node_toks.len();
     if num_nodes == 0 {
-        return Err(DagError.Empty);
+        return .Err(DagError.Empty);
     }
     var nodes: Vec<NodeSpec> = Vec.new();
     for i in 0 .. num_nodes {
@@ -334,8 +334,8 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
         match parse_node(tok.s, i) {
             .Ok(node) => nodes.push(node),
             .Err(e) => {
-                return Err(e);
-            },
+                return .Err(e);
+            }
         }
     }
     var edges: Vec<Edge> = Vec.new();
@@ -345,39 +345,39 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
         let tok = edge_toks[i];
         let ends = tok.s.split("->");
         if ends.len() != 2 {
-            return Err(DagError.Malformed(i));
+            return .Err(DagError.Malformed(i));
         }
         let src_text = match ends.get(0) {
             .Some(s) => s.trim(),
-            .None => return Err(DagError.Malformed(i)),
+            .None => return .Err(DagError.Malformed(i)),
         };
         let dst_text = match ends.get(1) {
             .Some(s) => s.trim(),
-            .None => return Err(DagError.Malformed(i)),
+            .None => return .Err(DagError.Malformed(i)),
         };
         let src = match string.to_int(src_text) {
             .Ok(value) => value,
-            .Err(_) => return Err(DagError.Malformed(i)),
+            .Err(_) => return .Err(DagError.Malformed(i)),
         };
         let dst = match string.to_int(dst_text) {
             .Ok(value) => value,
-            .Err(_) => return Err(DagError.Malformed(i)),
+            .Err(_) => return .Err(DagError.Malformed(i)),
         };
         if src < 0 {
-            return Err(DagError.UnknownNode(src));
+            return .Err(DagError.UnknownNode(src));
         }
         if src >= num_nodes {
-            return Err(DagError.UnknownNode(src));
+            return .Err(DagError.UnknownNode(src));
         }
         if dst < 0 {
-            return Err(DagError.UnknownNode(dst));
+            return .Err(DagError.UnknownNode(dst));
         }
         if dst >= num_nodes {
-            return Err(DagError.UnknownNode(dst));
+            return .Err(DagError.UnknownNode(dst));
         }
         edges.push(Edge { src: src, dst: dst });
     }
-    Ok(DagSpec { num_nodes: num_nodes, nodes: nodes, edges: edges })
+    .Ok(DagSpec { num_nodes: num_nodes, nodes: nodes, edges: edges })
 }
 
 // ── Topological sort (Kahn) ─────────────────────────────────────────────────
@@ -387,13 +387,13 @@ fn validate_edges(spec: DagSpec) -> Result<i64, DagError> {
     for e in 0 .. ne {
         let edge = spec.edges[e];
         if !node_in_range(spec, edge.src) {
-            return Err(DagError.UnknownNode(edge.src));
+            return .Err(DagError.UnknownNode(edge.src));
         }
         if !node_in_range(spec, edge.dst) {
-            return Err(DagError.UnknownNode(edge.dst));
+            return .Err(DagError.UnknownNode(edge.dst));
         }
     }
-    Ok(ne)
+    .Ok(ne)
 }
 
 /// In-degree of every node from the edge list.
@@ -407,7 +407,7 @@ fn in_degrees(spec: DagSpec) -> Result<Vec<i64>, DagError> {
         let d = spec.edges[e].dst;
         deg.set(d, deg[d] + 1);
     }
-    Ok(deg)
+    .Ok(deg)
 }
 
 /// Kahn's algorithm. The returned order is shorter than `num_nodes` exactly
@@ -438,30 +438,30 @@ pub fn topo_order(spec: DagSpec) -> Result<Vec<i64>, DagError> {
             }
         }
     }
-    Ok(order)
+    .Ok(order)
 }
 
 /// `true` when the graph has a valid topological order (is acyclic), or a typed
 /// error when an edge endpoint is outside the graph.
 pub fn is_acyclic(spec: DagSpec) -> Result<bool, DagError> {
-    Ok(topo_order(spec)?.len() == spec.num_nodes)
+    .Ok(topo_order(spec)?.len() == spec.num_nodes)
 }
 
 /// Validate the spec for routing: non-empty and acyclic. Returns the node count
 /// on success, or the first violation.
 pub fn validate(spec: DagSpec) -> Result<i64, DagError> {
     if spec.num_nodes == 0 {
-        return Err(DagError.Empty);
+        return .Err(DagError.Empty);
     }
     match is_acyclic(spec) {
         .Ok(acyclic) => {
             if !acyclic {
-                return Err(DagError.Cyclic);
+                return .Err(DagError.Cyclic);
             }
-        },
-        .Err(e) => return Err(e),
+        }
+        .Err(e) => return .Err(e),
     }
-    Ok(spec.num_nodes)
+    .Ok(spec.num_nodes)
 }
 
 // ── Routing ─────────────────────────────────────────────────────────────────
@@ -474,10 +474,10 @@ fn gather_input(spec: DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> Re
     for e in 0 .. ne {
         let edge = spec.edges[e];
         if !node_in_range(spec, edge.src) {
-            return Err(DagError.UnknownNode(edge.src));
+            return .Err(DagError.UnknownNode(edge.src));
         }
         if !node_in_range(spec, edge.dst) {
-            return Err(DagError.UnknownNode(edge.dst));
+            return .Err(DagError.UnknownNode(edge.dst));
         }
         if edge.dst == node {
             feed = feed + outputs[edge.src];
@@ -485,9 +485,9 @@ fn gather_input(spec: DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> Re
         }
     }
     if has_pred {
-        Ok(feed)
+        .Ok(feed)
     } else {
-        Ok(initial)
+        .Ok(initial)
     }
 }
 
@@ -504,14 +504,14 @@ fn gather_input(spec: DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> Re
 /// `await` at statement level instead (see `examples/actor_pipeline.hew`).
 pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn(i64, i64) -> i64) -> Result<RunReport, RunFailure> {
     match validate(spec) {
-        .Ok(_) => {},
+        .Ok(_) => {}
         .Err(e) => {
-            return Err(RunFailure { err: e, stopped_at: -1 });
-        },
+            return .Err(RunFailure { err: e, stopped_at: -1 });
+        }
     }
     let order = match topo_order(spec) {
         .Ok(order) => order,
-        .Err(e) => return Err(RunFailure { err: e, stopped_at: -1 }),
+        .Err(e) => return .Err(RunFailure { err: e, stopped_at: -1 }),
     };
     var outputs: Vec<i64> = Vec.new();
     for _i in 0 .. spec.num_nodes {
@@ -522,11 +522,11 @@ pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn(i64, i64) -> i64) ->
         let node = order[i];
         let input = match gather_input(spec, outputs, node, initial) {
             .Ok(input) => input,
-            .Err(e) => return Err(RunFailure { err: e, stopped_at: node }),
+            .Err(e) => return .Err(RunFailure { err: e, stopped_at: node }),
         };
         outputs.set(node, dispatch(node, input));
     }
-    Ok(RunReport { outputs: outputs, order: order, num_nodes: spec.num_nodes })
+    .Ok(RunReport { outputs: outputs, order: order, num_nodes: spec.num_nodes })
 }
 
 /// The default per-node dispatch: apply each node's own bound operation, read
@@ -534,7 +534,7 @@ pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn(i64, i64) -> i64) ->
 /// `run_text` wires it automatically.
 pub fn apply_spec_node(spec: DagSpec, node: i64, input: i64) -> Result<i64, DagError> {
     let ns = spec.nodes[node];
-    Ok(apply_op(op_of_code(ns.op_code)?, input, ns.operand))
+    .Ok(apply_op(op_of_code(ns.op_code)?, input, ns.operand))
 }
 
 /// Convenience: parse text, then route using each node's own bound operation.
@@ -543,14 +543,14 @@ pub fn run_text(text: string, initial: i64) -> Result<RunReport, RunFailure> {
     match parse_spec(text) {
         .Ok(spec) => {
             match validate(spec) {
-                .Ok(_) => {},
+                .Ok(_) => {}
                 .Err(e) => {
-                    return Err(RunFailure { err: e, stopped_at: -1 });
-                },
+                    return .Err(RunFailure { err: e, stopped_at: -1 });
+                }
             }
             let order = match topo_order(spec) {
                 .Ok(order) => order,
-                .Err(e) => return Err(RunFailure { err: e, stopped_at: -1 }),
+                .Err(e) => return .Err(RunFailure { err: e, stopped_at: -1 }),
             };
             var outputs: Vec<i64> = Vec.new();
             for _i in 0 .. spec.num_nodes {
@@ -561,16 +561,16 @@ pub fn run_text(text: string, initial: i64) -> Result<RunReport, RunFailure> {
                 let node = order[i];
                 let input = match gather_input(spec, outputs, node, initial) {
                     .Ok(input) => input,
-                    .Err(e) => return Err(RunFailure { err: e, stopped_at: node }),
+                    .Err(e) => return .Err(RunFailure { err: e, stopped_at: node }),
                 };
                 match apply_spec_node(spec, node, input) {
                     .Ok(output) => outputs.set(node, output),
-                    .Err(e) => return Err(RunFailure { err: e, stopped_at: node }),
+                    .Err(e) => return .Err(RunFailure { err: e, stopped_at: node }),
                 }
             }
-            Ok(RunReport { outputs: outputs, order: order, num_nodes: spec.num_nodes })
-        },
-        .Err(e) => Err(RunFailure { err: e, stopped_at: -1 }),
+            .Ok(RunReport { outputs: outputs, order: order, num_nodes: spec.num_nodes })
+        }
+        .Err(e) => .Err(RunFailure { err: e, stopped_at: -1 }),
     }
 }
 
@@ -654,15 +654,15 @@ pub fn is_cyclic(e: DagError) -> bool {
 /// See WALLS.md.
 pub enum LifecycleState {
     /// No spec loaded yet.
-    Unloaded,
+    Unloaded;
     /// A spec is loaded but not yet validated; carries the node count.
-    Ready(i64),
+    Ready(i64);
     /// The spec is acyclic and routing may proceed; carries the node count.
-    Routing(i64),
+    Routing(i64);
     /// Routing finished; carries the sink output.
-    Done(i64),
+    Done(i64);
     /// The spec was refused (cyclic/empty); carries the rejecting error.
-    Refused(DagError),
+    Refused(DagError);
 }
 
 /// Drive the lifecycle for `spec`: load it, validate it, and advance to the
@@ -690,28 +690,28 @@ pub fn state_name(s: LifecycleState) -> string {
 // ── Tests ──────────────────────────────────────────────────────────────────
 #[test]
 fn test_apply_op_kernels() {
-    assert_eq(apply_op(NodeOp.Add, 10, 5), 15);
-    assert_eq(apply_op(NodeOp.Multiply, 10, 5), 50);
-    assert_eq(apply_op(NodeOp.Square, 4, 0), 16);
-    assert_eq(apply_op(NodeOp.Identity, 7, 99), 7);
+    assert(apply_op(NodeOp.Add, 10, 5) == 15);
+    assert(apply_op(NodeOp.Multiply, 10, 5) == 50);
+    assert(apply_op(NodeOp.Square, 4, 0) == 16);
+    assert(apply_op(NodeOp.Identity, 7, 99) == 7);
 }
 
 #[test]
 fn test_op_code_round_trip() {
     match op_of_code(0) {
-        .Ok(op) => assert_eq(code_of_op(op), 0),
+        .Ok(op) => assert(code_of_op(op) == 0),
         .Err(_) => assert(false),
     }
     match op_of_code(1) {
-        .Ok(op) => assert_eq(code_of_op(op), 1),
+        .Ok(op) => assert(code_of_op(op) == 1),
         .Err(_) => assert(false),
     }
     match op_of_code(2) {
-        .Ok(op) => assert_eq(code_of_op(op), 2),
+        .Ok(op) => assert(code_of_op(op) == 2),
         .Err(_) => assert(false),
     }
     match op_of_code(3) {
-        .Ok(op) => assert_eq(code_of_op(op), 3),
+        .Ok(op) => assert(code_of_op(op) == 3),
         .Err(_) => assert(false),
     }
 }
@@ -720,7 +720,7 @@ fn test_op_code_round_trip() {
 fn unknown_op_code_is_rejected() {
     match op_of_code(99) {
         .Ok(_) => assert(false),
-        .Err(.UnknownOperation(code)) => assert_eq(code, 99),
+        .Err(.UnknownOperation(code)) => assert(code == 99),
         .Err(_) => assert(false),
     }
 }
@@ -729,13 +729,13 @@ fn unknown_op_code_is_rejected() {
 fn test_parse_spec_reads_nodes_and_edges() {
     match parse_spec("add:2 multiply:3 square:0 | 0->1 ; 1->2") {
         .Ok(spec) => {
-            assert_eq(spec.num_nodes, 3);
-            assert_eq(spec.edges.len(), 2);
-            assert_eq(spec.nodes[0].op_code, 0);
-            assert_eq(spec.nodes[0].operand, 2);
-            assert_eq(spec.nodes[1].op_code, 1);
-            assert_eq(spec.nodes[2].op_code, 2);
-        },
+            assert(spec.num_nodes == 3);
+            assert(spec.edges.len() == 2);
+            assert(spec.nodes[0].op_code == 0);
+            assert(spec.nodes[0].operand == 2);
+            assert(spec.nodes[1].op_code == 1);
+            assert(spec.nodes[2].op_code == 2);
+        }
         .Err(_) => assert(false),
     }
 }
@@ -744,9 +744,9 @@ fn test_parse_spec_reads_nodes_and_edges() {
 fn test_parse_spec_no_edges_is_isolated_nodes() {
     match parse_spec("add:1 add:2") {
         .Ok(spec) => {
-            assert_eq(spec.num_nodes, 2);
-            assert_eq(spec.edges.len(), 0);
-        },
+            assert(spec.num_nodes == 2);
+            assert(spec.edges.is_empty());
+        }
         .Err(_) => assert(false),
     }
 }
@@ -765,19 +765,19 @@ fn test_parse_spec_rejects_unknown_op_name() {
         .Ok(_) => assert(false),
         .Err(e) => {
             match e {
-                .Malformed(i) => assert_eq(i, 0),
+                .Malformed(i) => assert(i == 0),
                 _ => assert(false),
             }
-        },
+        }
     }
     match run_text("add:1 mltiply:2 | 0->1", 4) {
         .Ok(_) => assert(false),
         .Err(f) => {
             match error_of(f) {
-                .Malformed(i) => assert_eq(i, 1),
+                .Malformed(i) => assert(i == 1),
                 _ => assert(false),
             }
-        },
+        }
     }
 }
 
@@ -787,46 +787,46 @@ fn test_parse_spec_rejects_malformed_node_descriptors() {
         .Ok(_) => assert(false),
         .Err(e) => {
             match e {
-                .Malformed(i) => assert_eq(i, 0),
+                .Malformed(i) => assert(i == 0),
                 _ => assert(false),
             }
-        },
+        }
     }
     match parse_spec(":1 multiply:2 | 0->1") {
         .Ok(_) => assert(false),
         .Err(e) => {
             match e {
-                .Malformed(i) => assert_eq(i, 0),
+                .Malformed(i) => assert(i == 0),
                 _ => assert(false),
             }
-        },
+        }
     }
     match parse_spec("add: multiply:2 | 0->1") {
         .Ok(_) => assert(false),
         .Err(e) => {
             match e {
-                .Malformed(i) => assert_eq(i, 0),
+                .Malformed(i) => assert(i == 0),
                 _ => assert(false),
             }
-        },
+        }
     }
     match parse_spec("add:not-an-int multiply:2 | 0->1") {
         .Ok(_) => assert(false),
         .Err(e) => {
             match e {
-                .Malformed(i) => assert_eq(i, 0),
+                .Malformed(i) => assert(i == 0),
                 _ => assert(false),
             }
-        },
+        }
     }
     match parse_spec("add:1:2 multiply:2 | 0->1") {
         .Ok(_) => assert(false),
         .Err(e) => {
             match e {
-                .Malformed(i) => assert_eq(i, 0),
+                .Malformed(i) => assert(i == 0),
                 _ => assert(false),
             }
-        },
+        }
     }
 }
 
@@ -834,12 +834,12 @@ fn test_parse_spec_rejects_malformed_node_descriptors() {
 fn test_parse_spec_rejects_extra_or_trailing_sections() {
     match parse_spec("add:1 | 0->0 | ignored") {
         .Ok(_) => assert(false),
-        .Err(.Malformed(section)) => assert_eq(section, 2),
+        .Err(.Malformed(section)) => assert(section == 2),
         .Err(_) => assert(false),
     }
     match parse_spec("add:1 | 0->0 |") {
         .Ok(_) => assert(false),
-        .Err(.Malformed(section)) => assert_eq(section, 2),
+        .Err(.Malformed(section)) => assert(section == 2),
         .Err(_) => assert(false),
     }
 }
@@ -850,10 +850,10 @@ fn test_parse_spec_rejects_out_of_range_edge() {
         .Ok(_) => assert(false),
         .Err(e) => {
             match e {
-                .UnknownNode(n) => assert_eq(n, 5),
+                .UnknownNode(n) => assert(n == 5),
                 _ => assert(false),
             }
-        },
+        }
     }
 }
 
@@ -863,7 +863,7 @@ fn test_edge(spec: DagSpec, src: i64, dst: i64) -> DagSpec {
         .Err(_) => {
             assert(false);
             spec
-        },
+        }
     }
 }
 
@@ -874,12 +874,12 @@ fn test_add_edge_rejects_out_of_range_node_ids() {
     spec = add_node(spec, NodeOp.Identity, 0);
     match add_edge(spec, -1, 0) {
         .Ok(_) => assert(false),
-        .Err(.UnknownNode(id)) => assert_eq(id, -1),
+        .Err(.UnknownNode(id)) => assert(id == -1),
         .Err(_) => assert(false),
     }
     match add_edge(spec, 0, 2) {
         .Ok(_) => assert(false),
-        .Err(.UnknownNode(id)) => assert_eq(id, 2),
+        .Err(.UnknownNode(id)) => assert(id == 2),
         .Err(_) => assert(false),
     }
 }
@@ -892,7 +892,7 @@ fn test_programmatic_edges_return_errors_before_indexing() {
     bad_src.edges.push(Edge { src: 9, dst: 0 });
     match topo_order(bad_src) {
         .Ok(_) => assert(false),
-        .Err(.UnknownNode(id)) => assert_eq(id, 9),
+        .Err(.UnknownNode(id)) => assert(id == 9),
         .Err(_) => assert(false),
     }
     var bad_dst = new_spec();
@@ -901,7 +901,7 @@ fn test_programmatic_edges_return_errors_before_indexing() {
     bad_dst.edges.push(Edge { src: 0, dst: 7 });
     match validate(bad_dst) {
         .Ok(_) => assert(false),
-        .Err(.UnknownNode(id)) => assert_eq(id, 7),
+        .Err(.UnknownNode(id)) => assert(id == 7),
         .Err(_) => assert(false),
     }
 }
@@ -916,11 +916,11 @@ fn test_topo_order_linear_chain() {
     spec = test_edge(spec, 1, 2);
     match topo_order(spec) {
         .Ok(order) => {
-            assert_eq(order.len(), 3);
-            assert_eq(order[0], 0);
-            assert_eq(order[1], 1);
-            assert_eq(order[2], 2);
-        },
+            assert(order.len() == 3);
+            assert(order[0] == 0);
+            assert(order[1] == 1);
+            assert(order[2] == 2);
+        }
         .Err(_) => assert(false),
     }
 }
@@ -937,7 +937,7 @@ fn test_validate_accepts_diamond() {
     spec = test_edge(spec, 1, 3);
     spec = test_edge(spec, 2, 3);
     match validate(spec) {
-        .Ok(n) => assert_eq(n, 4),
+        .Ok(n) => assert(n == 4),
         .Err(_) => assert(false),
     }
 }
@@ -965,11 +965,11 @@ fn test_run_text_routes_linear_chain() {
     // node0: 5+1=6 ; node1: 6*10=60 ; node2: 60+100=160
     match run_text("add:1 multiply:10 add:100 | 0->1 ; 1->2", 5) {
         .Ok(report) => {
-            assert_eq(output_at(report, 0), 6);
-            assert_eq(output_at(report, 1), 60);
-            assert_eq(output_at(report, 2), 160);
-            assert_eq(sink_output(report), 160);
-        },
+            assert(output_at(report, 0) == 6);
+            assert(output_at(report, 1) == 60);
+            assert(output_at(report, 2) == 160);
+            assert(sink_output(report) == 160);
+        }
         .Err(_) => assert(false),
     }
 }
@@ -980,12 +980,12 @@ fn test_run_text_diamond_fans_in() {
     // node0: id(5)=5 ; node1: 5+10=15 ; node2: 5+20=25 ; node3: id(15+25)=40
     match run_text("id:0 add:10 add:20 id:0 | 0->1 ; 0->2 ; 1->3 ; 2->3", 5) {
         .Ok(report) => {
-            assert_eq(output_at(report, 0), 5);
-            assert_eq(output_at(report, 1), 15);
-            assert_eq(output_at(report, 2), 25);
-            assert_eq(output_at(report, 3), 40);
-            assert_eq(sink_output(report), 40);
-        },
+            assert(output_at(report, 0) == 5);
+            assert(output_at(report, 1) == 15);
+            assert(output_at(report, 2) == 25);
+            assert(output_at(report, 3) == 40);
+            assert(sink_output(report) == 40);
+        }
         .Err(_) => assert(false),
     }
 }
@@ -1009,12 +1009,12 @@ fn test_route_with_inline_closure_dispatch() {
             });
             match report {
                 .Ok(r) => {
-                    assert_eq(output_at(r, 1), 60);
-                    assert_eq(sink_output(r), 160);
-                },
+                    assert(output_at(r, 1) == 60);
+                    assert(sink_output(r) == 160);
+                }
                 .Err(_) => assert(false),
             }
-        },
+        }
         .Err(_) => assert(false),
     }
 }
@@ -1038,7 +1038,7 @@ fn test_route_with_refuses_cyclic() {
 #[test]
 fn test_run_text_end_to_end() {
     match run_text("multiply:2 add:3 | 0->1", 4) {
-        .Ok(report) => assert_eq(sink_output(report), 11),
+        .Ok(report) => assert(sink_output(report) == 11),
         .Err(_) => assert(false),
     }
 }
@@ -1056,8 +1056,8 @@ fn test_lifecycle_accepts_valid_spec() {
     match parse_spec("add:1 add:2 | 0->1") {
         .Ok(spec) => {
             let c = lifecycle_for(spec);
-            assert_eq(state_name(c), "Routing");
-        },
+            assert(state_name(c) == "Routing");
+        }
         .Err(_) => assert(false),
     }
 }
@@ -1070,7 +1070,7 @@ fn test_lifecycle_refuses_cyclic_spec_with_error() {
     spec = test_edge(spec, 0, 1);
     spec = test_edge(spec, 1, 0);
     let c = lifecycle_for(spec);
-    assert_eq(state_name(c), "Refused");
+    assert(state_name(c) == "Refused");
     match c {
         .Refused(e) => assert(is_cyclic(e)),
         _ => assert(false),

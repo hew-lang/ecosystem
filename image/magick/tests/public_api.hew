@@ -2,8 +2,6 @@ import std.fs;
 
 import std.os;
 
-import std.testing;
-
 import hew.image.magick;
 
 extern "C" {
@@ -18,8 +16,8 @@ fn scratch_path(name: string) -> string {
 
 fn assert_ok_i64(result: Result<i64, magick.MagickError>) {
     match result {
-        .Ok(_) => {},
-        .Err(_) => testing.assert_true(false),
+        .Ok(_) => {}
+        .Err(_) => assert(false),
     }
 }
 
@@ -28,57 +26,59 @@ fn transformations_cover_public_surface() {
     let _ = fs.delete(path);
     let image = spawn magick.Image(source: Source.Blank(80, 40, "blue"));
     match image.width() {
-        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 80),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value as i64 == 80),
+        _ => assert(false),
     }
     match image.height() {
-        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 40),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value as i64 == 40),
+        _ => assert(false),
     }
     match image.resize(40, 20) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.crop(20, 10, 0, 0) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.rotate(90.0) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.blur(0.0, 1.0) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.sharpen(0.0, 0.5) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.flip() {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.flop() {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.thumbnail(5, 5) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
     match image.write(path) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
-    let _ = image.close();
+    stop(image);
+    stopped(image);
     sleep(20ms);
     let reopened = spawn magick.Image(source: Source.File(path));
     match reopened.format() {
-        .Ok(.Ok(value)) => testing.assert_true(value == "PNG"),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value == "PNG"),
+        _ => assert(false),
     }
-    let _ = reopened.close();
+    stop(reopened);
+    stopped(reopened);
     sleep(20ms);
     let _ = fs.delete(path);
 }
@@ -91,25 +91,27 @@ fn long_unicode_path_round_trips_a_written_image() {
     let image = spawn magick.Image(source: Source.Blank(48, 32, "#3366cc"));
     match image.write(path) {
         .Ok(result) => assert_ok_i64(result),
-        _ => testing.assert_true(false),
+        _ => assert(false),
     }
-    let _ = image.close();
+    stop(image);
+    stopped(image);
     sleep(20ms);
-    testing.assert_true(fs.exists(path));
+    assert(fs.exists(path));
     let reopened = spawn magick.Image(source: Source.File(path));
     match reopened.width() {
-        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 48),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value as i64 == 48),
+        _ => assert(false),
     }
     match reopened.height() {
-        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 32),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value as i64 == 32),
+        _ => assert(false),
     }
     match reopened.format() {
-        .Ok(.Ok(value)) => testing.assert_true(value == "PNG"),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value == "PNG"),
+        _ => assert(false),
     }
-    let _ = reopened.close();
+    stop(reopened);
+    stopped(reopened);
     sleep(20ms);
     let _ = fs.delete(path);
 }
@@ -119,32 +121,35 @@ fn long_unicode_path_round_trips_a_written_image() {
 fn missing_file_error_carries_the_path() {
     let path = scratch_path("magick-manquant-wörld-très-longue.png");
     let _ = fs.delete(path);
-    testing.assert_true(!fs.exists(path));
+    assert(!fs.exists(path));
     let missing = spawn magick.Image(source: Source.File(path));
     match missing.width() {
-        .Ok(.Err(error)) => testing.assert_true(magick.error_message(error).contains(path)),
-        _ => testing.assert_true(false),
+        .Ok(.Err(error)) => assert(magick.error_message(error).contains(path)),
+        _ => assert(false),
     }
-    let _ = missing.close();
+    stop(missing);
+    stopped(missing);
     sleep(20ms);
 }
 
 fn invalid_inputs_return_typed_errors() {
     let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
     match image.resize(0, 1) {
-        .Ok(.Err(error)) => testing.assert_true(!magick.error_message(error).is_empty()),
-        _ => testing.assert_true(false),
+        .Ok(.Err(error)) => assert(!magick.error_message(error).is_empty()),
+        _ => assert(false),
     }
-    let _ = image.close();
+    stop(image);
+    stopped(image);
     sleep(20ms);
     let rejected = spawn magick.Image(source: Source.Blank(10, 10, "pas-une-couleur"));
     match rejected.width() {
         .Ok(.Err(.InvalidInput(message))) => {
-            testing.assert_true(message.contains("invalid image colour"));
-        },
-        _ => testing.assert_true(false),
+            assert(message.contains("invalid image colour"));
+        }
+        _ => assert(false),
     }
-    let _ = rejected.close();
+    stop(rejected);
+    stopped(rejected);
     sleep(20ms);
 }
 
@@ -153,39 +158,41 @@ fn blob_round_trip_preserves_a_real_image() {
     let encoded = match source.write_blob("PNG") {
         .Ok(.Ok(value)) => value,
         _ => {
-            testing.assert_true(false);
+            assert(false);
             bytes.new()
-        },
+        }
     };
-    testing.assert_true(encoded.len() > 8);
-    let _ = source.close();
+    assert(encoded.len() > 8);
+    stop(source);
+    stopped(source);
     sleep(20ms);
     let decoded = spawn magick.Image(source: Source.Blob(encoded));
     match decoded.width() {
-        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 37),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value as i64 == 37),
+        _ => assert(false),
     }
     match decoded.height() {
-        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 19),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value as i64 == 19),
+        _ => assert(false),
     }
     match decoded.format() {
-        .Ok(.Ok(value)) => testing.assert_true(value == "PNG"),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value == "PNG"),
+        _ => assert(false),
     }
-    let _ = decoded.close();
+    stop(decoded);
+    stopped(decoded);
     sleep(20ms);
 }
 
 fn image_without_close(before: i64) -> magick.Image {
     let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
     match image.width() {
-        .Ok(.Ok(value)) => testing.assert_eq(value as i64, 10),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(value)) => assert(value as i64 == 10),
+        _ => assert(false),
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_magick_image_count()
-    }, before + 1);
+    } == before + 1);
     image
 }
 
@@ -193,9 +200,10 @@ fn actor_stop_releases_relative_registry_count() {
     let before = unsafe {
         hew_magick_image_count()
     };
-    testing.assert_true(before >= 0);
+    assert(before >= 0);
     let image = image_without_close(before);
-    close(image);
+    stop(image);
+    stopped(image);
     var attempts = 0;
     while unsafe {
         hew_magick_image_count()
@@ -203,9 +211,9 @@ fn actor_stop_releases_relative_registry_count() {
         sleep(5ms);
         attempts = attempts + 1;
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_magick_image_count()
-    }, before);
+    } == before);
 }
 
 fn main() {

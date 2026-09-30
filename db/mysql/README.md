@@ -6,20 +6,22 @@ typed `Result` values, query replies are immutable wire-safe snapshots, and SQL
 
 ```hew
 import hew.db.mysql;
+import std.encoding.utf8;
 
 fn main() {
     let db = spawn mysql.Conn(url: "mysql://hew:hew@127.0.0.1:3306/hew_test");
-    match await db.query("SELECT 41 AS value") {
+    match db.query("SELECT 41 AS value") {
         .Ok(result) => match result {
             .Ok(query) => match query.rows[0].values[0] {
-                CellValue.Text(value) => println(value.to_string()),
-                CellValue.Null => println("value is NULL"),
-            },
+                .Text(value) => println(utf8.decode_lossy(value)),
+                .Null => println("value is NULL"),
+            }
             .Err(error) => println(mysql.error_message(error)),
-        },
+        }
         .Err(_) => println("MySQL actor stopped before replying"),
     }
-    let _ = db.close();
+    stop(db);
+    stopped(db);
 }
 ```
 

@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: python3 scripts/verify_package_contract.py
 
-      - uses: hew-lang/hew/.github/actions/setup-llvm@5177bd11748b9a9e8f0171996b699c27a22c98df
+      - uses: hew-lang/hew/.github/actions/setup-llvm@74dc19660781c1e8a1b99d64f3fc4c298be16df3
         with:
           version: ${{ env.LLVM_VERSION }}
 
@@ -90,7 +90,8 @@ jobs:
           install -m 0644 \
             "$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/libhew.a" \
             "$RUNTIME_DIR/libhew.a"
-          cp -a "$GITHUB_WORKSPACE/.tooling/hew/std" "$ARTIFACT_DIR/std"
+          # The compiler looks for std beside its profile directory.
+          cp -a "$GITHUB_WORKSPACE/.tooling/hew/std" "$ARTIFACT_DIR/target/std"
           HEW="$RUNTIME_DIR/hew"
           actual_version="$("$HEW" --version)"
           echo "Built $actual_version"
@@ -194,7 +195,7 @@ jobs:
             --health-interval 5s \
             --health-timeout 3s \
             --health-retries 24 \
-            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
           wait_for_healthy ecosystem-mongodb
           wait_for_healthy ecosystem-mysql
           wait_for_healthy ecosystem-postgres
@@ -203,7 +204,7 @@ jobs:
           wait_for_healthy ecosystem-nats
           wait_for_healthy ecosystem-minio
           docker run --rm --network host --entrypoint /bin/sh \
-            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z -c \
+            pgsty/mc:RELEASE.2026-09-16T00-00-00Z -c \
             'mc alias set local http://127.0.0.1:9000 minioadmin minioadmin && mc mb --ignore-existing local/hew-test'
 
       # scripts/corpus-gate.sh is the single authority for what the corpus gate

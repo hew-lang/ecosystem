@@ -36,15 +36,15 @@ fn main() {
                     println(f"node2 output = {dag.output_at(r, 2)}"); // 160
                     let sink = dag.sink_output(r);
                     println(f"sink output  = {sink}"); // 160
-                    assert_eq(sink, 160);
+                    assert(sink == 160);
                     println("linear_pipeline: routed through topo order, all assertions passed");
-                },
+                }
                 .Err(f) => {
                     let msg = dag.describe(dag.error_of(f));
                     println(f"unexpected failure: {msg}");
-                },
+                }
             }
-        },
+        }
         .Err(e) => println(dag.describe(e)),
     }
 }

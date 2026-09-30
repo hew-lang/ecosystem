@@ -1,5 +1,3 @@
-import std.testing;
-
 import hew.db.sql.{Param};
 
 import hew.db.sqlite;
@@ -29,29 +27,29 @@ fn insert_params() -> Vec<Param> {
 }
 
 fn assert_bytes(actual: bytes, expected: bytes) {
-    testing.assert_eq(actual.len(), expected.len());
+    assert(actual.len() == expected.len());
     for i in 0 .. expected.len() {
         match actual.get(i) {
             .Some(left) => match expected.get(i) {
-                .Some(right) => testing.assert_eq(left as i64, right as i64),
-                .None => testing.assert_true(false),
-            },
-            .None => testing.assert_true(false),
+                .Some(right) => assert(left as i64 == right as i64),
+                .None => assert(false),
+            }
+            .None => assert(false),
         }
     }
 }
 
 fn expect_count(result: Result<i64, SqliteError>, expected: i64) {
     match result {
-        .Ok(value) => testing.assert_eq(value, expected),
-        .Err(_) => testing.assert_true(false),
+        .Ok(value) => assert(value == expected),
+        .Err(_) => assert(false),
     }
 }
 
 fn expect_query_error<T>(result: Result<T, SqliteError>) {
     match result {
-        .Err(.Query(message)) => testing.assert_true(!message.is_empty()),
-        _ => testing.assert_true(false),
+        .Err(.Query(message)) => assert(!message.is_empty()),
+        _ => assert(false),
     }
 }
 
@@ -63,44 +61,44 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
     let db = database();
     match db.execute("CREATE TABLE values_table (id INTEGER PRIMARY KEY, value TEXT NULL)") {
         .Ok(result) => expect_count(result, 0),
-        .Err(_) => testing.assert_true(false),
+        .Err(_) => assert(false),
     }
     match db.execute_params("INSERT INTO values_table VALUES (?, ?)", insert_params()) {
         .Ok(result) => expect_count(result, 1),
-        .Err(_) => testing.assert_true(false),
+        .Err(_) => assert(false),
     }
     match db.execute("INSERT INTO values_table VALUES (2, ''), (3, NULL)") {
         .Ok(result) => expect_count(result, 2),
-        .Err(_) => testing.assert_true(false),
+        .Err(_) => assert(false),
     }
     match db.query("SELECT id, value FROM values_table ORDER BY id") {
         .Ok(.Ok(query)) => {
-            testing.assert_eq(query.columns.len(), 2);
-            testing.assert_eq(query.rows.len(), 3);
+            assert(query.columns.len() == 2);
+            assert(query.rows.len() == 3);
             match query.rows[0].values[1] {
                 .Text(value) => assert_bytes(value, nul_value()),
-                _ => testing.assert_true(false),
+                _ => assert(false),
             }
             match query.rows[1].values[1] {
                 .Text(value) => assert_bytes(value, bytes.new()),
-                _ => testing.assert_true(false),
+                _ => assert(false),
             }
             match query.rows[2].values[1] {
-                .Null => testing.assert_true(true),
-                _ => testing.assert_true(false),
+                .Null => assert(true),
+                _ => assert(false),
             }
-        },
-        _ => testing.assert_true(false),
+        }
+        _ => assert(false),
     }
     match db.query_params("SELECT value FROM values_table WHERE id = ?", [Param.Int(1)]) {
         .Ok(.Ok(query)) => {
-            testing.assert_eq(query.rows.len(), 1);
+            assert(query.rows.len() == 1);
             match query.rows[0].values[0] {
                 .Text(value) => assert_bytes(value, nul_value()),
-                _ => testing.assert_true(false),
+                _ => assert(false),
             }
-        },
-        _ => testing.assert_true(false),
+        }
+        _ => assert(false),
     }
     match db.query("SELECT x'ff00' AS binary_value") {
         .Ok(.Ok(query)) => {
@@ -109,53 +107,56 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
             expected.push(0);
             match query.rows[0].values[0] {
                 .Text(value) => assert_bytes(value, expected),
-                _ => testing.assert_true(false),
+                _ => assert(false),
             }
-        },
-        _ => testing.assert_true(false),
+        }
+        _ => assert(false),
     }
-    let _ = db.close();
+    stop(db);
+    stopped(db);
 }
 
 fn actual_database_failures_are_typed() {
     let db = database();
     match db.execute("NOT SQL") {
         .Ok(result) => expect_query_error(result),
-        .Err(_) => testing.assert_true(false),
+        .Err(_) => assert(false),
     }
     match db.query("SELECT * FROM table_that_does_not_exist") {
         .Ok(result) => expect_query_error(result),
-        .Err(_) => testing.assert_true(false),
+        .Err(_) => assert(false),
     }
     match db.query_params("SELECT ?", Vec.new()) {
-        .Ok(.Err(.Query(message))) => testing.assert_true(!message.is_empty()),
-        _ => testing.assert_true(false),
+        .Ok(.Err(.Query(message))) => assert(!message.is_empty()),
+        _ => assert(false),
     }
-    let _ = db.close();
+    stop(db);
+    stopped(db);
     match db.query("SELECT 1") {
-        .Ok(.Err(.Closed(_))) => testing.assert_true(true),
-        _ => testing.assert_true(false),
+        .Err(.Dead) => {}
+        _ => assert(false),
     }
 }
 
 fn open_failure_is_typed() {
     let db = spawn sqlite.Db(path: "/hew-sql-beta-missing/parent/database.sqlite");
     match db.query("SELECT 1") {
-        .Ok(.Err(.Open(message))) => testing.assert_true(!message.is_empty()),
-        _ => testing.assert_true(false),
+        .Ok(.Err(.Open(message))) => assert(!message.is_empty()),
+        _ => assert(false),
     }
-    let _ = db.close();
+    stop(db);
+    stopped(db);
 }
 
 fn actor_without_close(previous: i64) -> sqlite.Db {
     let db = database();
     match db.query("SELECT 1") {
-        .Ok(.Ok(_)) => testing.assert_true(true),
-        _ => testing.assert_true(false),
+        .Ok(.Ok(_)) => assert(true),
+        _ => assert(false),
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_sqlite_connection_count()
-    }, previous + 1);
+    } == previous + 1);
     db
 }
 
@@ -163,9 +164,10 @@ fn explicit_actor_stop_releases_connection() {
     let previous = unsafe {
         hew_sqlite_connection_count()
     };
-    testing.assert_true(previous >= 0);
+    assert(previous >= 0);
     let db = actor_without_close(previous);
-    close(db);
+    stop(db);
+    stopped(db);
     var attempts = 0;
     while unsafe {
         hew_sqlite_connection_count()
@@ -173,9 +175,9 @@ fn explicit_actor_stop_releases_connection() {
         sleep(5ms);
         attempts = attempts + 1;
     }
-    testing.assert_eq(unsafe {
+    assert(unsafe {
         hew_sqlite_connection_count()
-    }, previous);
+    } == previous);
 }
 
 fn typed_parameters_preserve_values() {
@@ -185,10 +187,10 @@ fn typed_parameters_preserve_values() {
     let parameters = [Param.Null, Param.Bool(true), Param.Int(-9223372036854775807 - 1), Param.Int(9223372036854775807), Param.Float(1.25), Param.Text("first line\nZoë 雪's \\ path"), Param.Text(""), Param.Bytes(binary), Param.Bytes(bytes.new())];
     match db.query_params("SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?", parameters) {
         .Ok(.Ok(query)) => {
-            testing.assert_eq(query.rows.len(), 1);
-            testing.assert_eq(query.columns.len(), 9);
+            assert(query.rows.len() == 1);
+            assert(query.columns.len() == 9);
             match query.rows[0].values[0] {
-                .Null => {},
+                .Null => {}
                 _ => panic("NULL parameter changed"),
             }
             let expected = ["1", "-9223372036854775808", "9223372036854775807", "1.25", "first line\nZoë 雪's \\ path", ""];
@@ -208,15 +210,16 @@ fn typed_parameters_preserve_values() {
                 .Text(value) => assert_bytes(value, bytes.new()),
                 _ => panic("empty binary parameter became NULL"),
             }
-        },
+        }
         .Ok(.Err(error)) => panic(sqlite.error_message(error)),
         .Err(_) => panic("SQL actor stopped during typed query"),
     }
     match db.query_params("SELECT 1", Vec.new()) {
-        .Ok(.Ok(query)) => testing.assert_eq(query.rows.len(), 1),
+        .Ok(.Ok(query)) => assert(query.rows.len() == 1),
         _ => panic("empty parameter list failed"),
     }
-    let _ = db.close();
+    stop(db);
+    stopped(db);
 }
 
 fn main() {

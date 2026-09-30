@@ -23,7 +23,8 @@
 //!         },
 //!         .Err(_) => println("MongoDB actor stopped before replying"),
 //!     }
-//!     db.close();
+//!     stop(db);
+//!     stopped(db);
 //! }
 //! ```
 
@@ -32,17 +33,17 @@ import std.encoding.utf8;
 #[wire]
 pub enum MongoError {
     /// The URI or database name was invalid, or the server was unavailable.
-    Connect(string),
+    Connect(string);
     /// A document, filter, or update was not a valid JSON object.
-    InvalidJson(string),
+    InvalidJson(string);
     /// MongoDB rejected or could not complete an operation.
-    Operation(string),
+    Operation(string);
     /// A BSON document could not be represented as JSON.
-    Serialize(string),
+    Serialize(string);
     /// The connection actor has been closed.
-    Closed(string),
+    Closed(string);
     /// The native layer rejected an invalid handle.
-    Internal(string),
+    Internal(string);
 }
 
 /// Return the diagnostic carried by a `MongoError`.
@@ -60,14 +61,14 @@ pub fn error_message(error: MongoError) -> string {
 #[wire]
 pub enum DocumentLookup {
     /// A matching document, serialized as JSON.
-    Found(string),
+    Found(string);
     /// No document matched the filter.
-    Missing,
+    Missing;
 }
 
 #[wire]
 pub type QueryResult {
-    documents: Vec<string> @1,
+    documents: Vec<string> @1;
 }
 
 fn native_error() -> MongoError {
@@ -89,10 +90,8 @@ fn native_error_from(kind: i32, message: string) -> MongoError {
     }
 }
 
-fn connection_state(closed: bool, handle: i64) -> i32 {
-    if closed {
-        1
-    } else if handle == 0 {
+fn connection_state(handle: i64) -> i32 {
+    if handle == 0 {
         2
     } else {
         0
@@ -101,7 +100,7 @@ fn connection_state(closed: bool, handle: i64) -> i32 {
 
 #[resource]
 type NativeCursor {
-    handle: i64,
+    handle: i64;
 }
 
 impl NativeCursor {
@@ -122,10 +121,9 @@ impl NativeCursor {
 /// releases the native client, and the actor stop hook provides the same
 /// cleanup if the caller abandons it.
 pub actor Conn {
-    var handle: i64 = 0,
-    var connect_error_kind: i32 = 0,
-    var connect_error_message: string = "",
-    var closed: bool = false,
+    var handle: i64 = 0;
+    var connect_error_kind: i32 = 0;
+    var connect_error_message: string = "";
 
     init(uri: string, database: string) {
         handle = unsafe {
@@ -141,10 +139,10 @@ pub actor Conn {
 
     /// Insert one JSON document and return its MongoDB `_id` representation.
     receive fn insert_one(collection: string, document: string) -> Result<string, MongoError> {
-        match connection_state(closed, handle) {
-            1 => return Err(MongoError.Closed("MongoDB connection is closed")),
-            2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
-            _ => {},
+        match connection_state(handle) {
+            1 => return .Err(MongoError.Closed("MongoDB connection is closed")),
+            2 => return .Err(native_error_from(connect_error_kind, connect_error_message.clone())),
+            _ => {}
         }
         let id_bytes = unsafe {
             hew_mongodb_insert_one(handle, collection, document)
@@ -152,18 +150,18 @@ pub actor Conn {
         if unsafe {
             hew_mongodb_last_status()
         } == 0 {
-            Ok(utf8.decode_lossy(id_bytes))
+            .Ok(utf8.decode_lossy(id_bytes))
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Find the first document matching a JSON filter.
     receive fn find_one(collection: string, filter: string) -> Result<DocumentLookup, MongoError> {
-        match connection_state(closed, handle) {
-            1 => return Err(MongoError.Closed("MongoDB connection is closed")),
-            2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
-            _ => {},
+        match connection_state(handle) {
+            1 => return .Err(MongoError.Closed("MongoDB connection is closed")),
+            2 => return .Err(native_error_from(connect_error_kind, connect_error_message.clone())),
+            _ => {}
         }
         let document_bytes = unsafe {
             hew_mongodb_find_one(handle, collection, filter)
@@ -171,13 +169,13 @@ pub actor Conn {
         if unsafe {
             hew_mongodb_last_status()
         } != 0 {
-            Err(native_error())
+            .Err(native_error())
         } else if unsafe {
             hew_mongodb_last_value_present()
         } == 0 {
-            Ok(DocumentLookup.Missing)
+            .Ok(DocumentLookup.Missing)
         } else {
-            Ok(DocumentLookup.Found(utf8.decode_lossy(document_bytes)))
+            .Ok(DocumentLookup.Found(utf8.decode_lossy(document_bytes)))
         }
     }
 
@@ -186,16 +184,16 @@ pub actor Conn {
     /// The private native cursor is a `#[resource]`; it closes before this
     /// method replies, including invalid-row and serialization error paths.
     receive fn find(collection: string, filter: string) -> Result<QueryResult, MongoError> {
-        match connection_state(closed, handle) {
-            1 => return Err(MongoError.Closed("MongoDB connection is closed")),
-            2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
-            _ => {},
+        match connection_state(handle) {
+            1 => return .Err(MongoError.Closed("MongoDB connection is closed")),
+            2 => return .Err(native_error_from(connect_error_kind, connect_error_message.clone())),
+            _ => {}
         }
         let cursor_handle = unsafe {
             hew_mongodb_find(handle, collection, filter)
         };
         if cursor_handle == 0 {
-            return Err(native_error());
+            return .Err(native_error());
         }
         let cursor = NativeCursor { handle: cursor_handle };
         var documents: Vec<string> = Vec.new();
@@ -208,13 +206,13 @@ pub actor Conn {
             } != 0 {
                 let error = native_error();
                 cursor.close();
-                return Err(error);
+                return .Err(error);
             }
             if unsafe {
                 hew_mongodb_last_value_present()
             } == 0 {
                 cursor.close();
-                return Ok(QueryResult { documents: documents });
+                return .Ok(QueryResult { documents: documents });
             }
             documents.push(utf8.decode_lossy(document_bytes));
         }
@@ -222,10 +220,10 @@ pub actor Conn {
 
     /// Update the first document matching a JSON filter.
     receive fn update_one(collection: string, filter: string, update: string) -> Result<i64, MongoError> {
-        match connection_state(closed, handle) {
-            1 => return Err(MongoError.Closed("MongoDB connection is closed")),
-            2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
-            _ => {},
+        match connection_state(handle) {
+            1 => return .Err(MongoError.Closed("MongoDB connection is closed")),
+            2 => return .Err(native_error_from(connect_error_kind, connect_error_message.clone())),
+            _ => {}
         }
         let modified = unsafe {
             hew_mongodb_update_one(handle, collection, filter, update)
@@ -233,18 +231,18 @@ pub actor Conn {
         if unsafe {
             hew_mongodb_last_status()
         } == 0 {
-            Ok(modified)
+            .Ok(modified)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Delete the first document matching a JSON filter.
     receive fn delete_one(collection: string, filter: string) -> Result<i64, MongoError> {
-        match connection_state(closed, handle) {
-            1 => return Err(MongoError.Closed("MongoDB connection is closed")),
-            2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
-            _ => {},
+        match connection_state(handle) {
+            1 => return .Err(MongoError.Closed("MongoDB connection is closed")),
+            2 => return .Err(native_error_from(connect_error_kind, connect_error_message.clone())),
+            _ => {}
         }
         let deleted = unsafe {
             hew_mongodb_delete_one(handle, collection, filter)
@@ -252,18 +250,18 @@ pub actor Conn {
         if unsafe {
             hew_mongodb_last_status()
         } == 0 {
-            Ok(deleted)
+            .Ok(deleted)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
     /// Count documents matching a JSON filter.
     receive fn count(collection: string, filter: string) -> Result<i64, MongoError> {
-        match connection_state(closed, handle) {
-            1 => return Err(MongoError.Closed("MongoDB connection is closed")),
-            2 => return Err(native_error_from(connect_error_kind, connect_error_message.clone())),
-            _ => {},
+        match connection_state(handle) {
+            1 => return .Err(MongoError.Closed("MongoDB connection is closed")),
+            2 => return .Err(native_error_from(connect_error_kind, connect_error_message.clone())),
+            _ => {}
         }
         let count = unsafe {
             hew_mongodb_count(handle, collection, filter)
@@ -271,23 +269,13 @@ pub actor Conn {
         if unsafe {
             hew_mongodb_last_status()
         } == 0 {
-            Ok(count)
+            .Ok(count)
         } else {
-            Err(native_error())
+            .Err(native_error())
         }
     }
 
-    /// Close the native client. Repeated calls are harmless.
-    receive fn close() {
-        if handle != 0 {
-            unsafe {
-                hew_mongodb_close(handle)
-            };
-            handle = 0;
-        }
-        closed = true;
-    }
-
+    /// Release the native client when the actor stops.
     #[on(stop)]
     fn release_native_handle() {
         if handle != 0 {

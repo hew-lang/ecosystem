@@ -1,7 +1,7 @@
 # Hew ecosystem
 
 Hew is a statically typed language whose concurrency is built from actors:
-state is owned by an actor, and callers reach it by `await`ing a `receive fn`.
+state is owned by an actor, and callers reach it through a `receive fn` call.
 This repository holds the official Hew packages — thin, typed wrappers over the
 databases, brokers, and services a service usually needs, each one small enough
 to read in a sitting.
@@ -79,20 +79,21 @@ scrutinee's type already selects the enum. And every error enum has an
 to reach inside the variant to report a failure.
 
 The service-backed packages add one wrapper: they own their connection in an
-actor, so a call is `await conn.query(sql)` and its answer is
-`Result<Result<T, E>, AskError>` — the outer `Result` reports whether the actor
+actor, so a call is `conn.query(sql)` and its answer is
+`Result<Result<T, E>, ActorError>` — the outer `Result` reports whether the actor
 answered at all, the inner one whether the operation succeeded.
 
 ```hew
 let conn = spawn postgres.Conn(connstr: "host=127.0.0.1 user=hew password=hew dbname=hew_test");
-match await conn.query("select 1") {
+match conn.query("select 1") {
     .Ok(result) => match result {
         .Ok(query) => println(f"{query.rows.len()} rows"),
         .Err(error) => println(postgres.error_message(error)),
     },
     .Err(_) => println("connection actor stopped"),
 }
-conn.close();
+stop(conn);
+stopped(conn);
 ```
 
 Every example in this repository writes that pair the same way: one `match` per
