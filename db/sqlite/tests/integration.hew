@@ -133,7 +133,7 @@ fn actual_database_failures_are_typed() {
     stop(db);
     stopped(db);
     match db.query("SELECT 1") {
-        .Ok(.Err(.Closed(_))) => assert(true),
+        .Err(.Dead) => {}
         _ => assert(false),
     }
 }

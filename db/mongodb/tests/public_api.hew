@@ -49,14 +49,9 @@ fn connection_failure_is_typed_for_every_operation() {
     stop(db);
     stopped(db);
     match db.count("items", "{}") {
-        .Ok(result) => match result {
-            .Err(.Closed(message)) => assert(message == "MongoDB connection is closed"),
-            _ => panic("expected Closed after close"),
-        }
-        .Err(_) => panic("actor stopped after close"),
+        .Err(.Dead) => {}
+        _ => panic("expected Dead after stop"),
     }
-    stop(db);
-    stopped(db);
 }
 
 fn typed_values_preserve_missing_and_empty_results() {

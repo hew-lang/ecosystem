@@ -104,11 +104,8 @@ fn reports_no_pending_busy_and_closed_states() {
     stop(server);
     stopped(server);
     match server.accept_one() {
-        .Ok(result) => match result {
-            .Err(.Closed(_)) => {}
-            _ => panic("expected Closed after close"),
-        }
-        .Err(_) => panic("server actor stopped after close"),
+        .Err(.Dead) => {}
+        _ => panic("expected Dead after stop"),
     }
     unsafe {
         hew_ecosystem_http_test_fixture_free(fixture)

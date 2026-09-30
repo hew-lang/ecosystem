@@ -19,7 +19,7 @@ fn invalid_url_and_explicit_close_return_typed_errors() {
     stop(db);
     stopped(db);
     match db.query("SELECT 1") {
-        .Ok(.Err(.Closed(message))) => assert(message == "MySQL connection is closed"),
+        .Err(.Dead) => {}
         _ => assert(false),
     }
 }
