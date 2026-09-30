@@ -90,7 +90,8 @@ jobs:
           install -m 0644 \
             "$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/libhew.a" \
             "$RUNTIME_DIR/libhew.a"
-          cp -a "$GITHUB_WORKSPACE/.tooling/hew/std" "$ARTIFACT_DIR/std"
+          # The compiler looks for std beside its profile directory.
+          cp -a "$GITHUB_WORKSPACE/.tooling/hew/std" "$ARTIFACT_DIR/target/std"
           HEW="$RUNTIME_DIR/hew"
           actual_version="$("$HEW" --version)"
           echo "Built $actual_version"

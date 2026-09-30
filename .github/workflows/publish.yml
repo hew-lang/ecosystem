@@ -64,6 +64,8 @@ jobs:
           test "$(git -C .tooling/hew rev-parse HEAD)" = "$HEW_REVISION"
           cargo build --locked --profile release-lib -p hew-cli -p hew-lib \
             --manifest-path .tooling/hew/Cargo.toml
+          # The compiler looks for std beside its profile directory.
+          cp -a .tooling/hew/std .tooling/hew/target/std
           HEW="$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/hew"
           test -x "$HEW"
           echo "HEW=$HEW" >> "$GITHUB_ENV"

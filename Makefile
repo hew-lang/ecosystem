@@ -46,6 +46,8 @@ toolchain:
 	CARGO_TARGET_DIR="$(TOOLCHAIN_TARGET)" cargo build --locked --profile release-lib \
 		-p hew-cli -p hew-lib --manifest-path "$(HEW_SOURCE)/Cargo.toml"
 	test -x "$(HEW_BIN)"
+	rm -rf "$(TOOLCHAIN_TARGET)/std"
+	cp -a "$(HEW_SOURCE)/std" "$(TOOLCHAIN_TARGET)/std"
 	test "$$("$(HEW_BIN)" --version)" = "hew $(HEW_VERSION)"
 	@echo "pinned toolchain: $(HEW_BIN)"
 
