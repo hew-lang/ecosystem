@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: python3 scripts/verify_package_contract.py
 
-      - uses: hew-lang/hew/.github/actions/setup-llvm@5177bd11748b9a9e8f0171996b699c27a22c98df
+      - uses: hew-lang/hew/.github/actions/setup-llvm@74dc19660781c1e8a1b99d64f3fc4c298be16df3
         with:
           version: ${{ env.LLVM_VERSION }}
 
