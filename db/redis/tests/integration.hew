@@ -338,13 +338,13 @@ fn pubsub_preserves_binary_messages_and_times_out_typed() {
     stopped(publisher);
 }
 
-fn explicit_close_makes_later_work_fail_typed() {
+fn calls_to_a_stopped_client_report_dead() {
     let client = client_actor();
     stop(client);
     stopped(client);
     match client.get("hew:redis:beta:closed") {
-        .Ok(result) => assert_error(result),
-        .Err(_) => assert(false),
+        .Err(.Dead) => {}
+        _ => assert(false),
     }
 }
 
@@ -391,6 +391,6 @@ fn main() {
     set_commands_preserve_binary_members();
     pipeline_executes_or_reports_command_error();
     pubsub_preserves_binary_messages_and_times_out_typed();
-    explicit_close_makes_later_work_fail_typed();
+    calls_to_a_stopped_client_report_dead();
     abandoned_actor_releases_connection_on_stop();
 }
