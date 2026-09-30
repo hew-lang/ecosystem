@@ -745,7 +745,7 @@ fn test_parse_spec_no_edges_is_isolated_nodes() {
     match parse_spec("add:1 add:2") {
         .Ok(spec) => {
             assert(spec.num_nodes == 2);
-            assert(spec.edges.len() == 0);
+            assert(spec.edges.is_empty());
         }
         .Err(_) => assert(false),
     }

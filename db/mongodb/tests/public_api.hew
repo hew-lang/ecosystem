@@ -71,7 +71,7 @@ fn typed_values_preserve_missing_and_empty_results() {
         _ => panic("expected Found with an empty value"),
     }
     let result = QueryResult { documents: Vec.new() };
-    assert(result.documents.len() == 0);
+    assert(result.documents.is_empty());
 }
 
 fn error_messages_preserve_each_variant_diagnostic() {
