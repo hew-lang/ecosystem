@@ -68,7 +68,8 @@ described under [Layout](#layout) resolves `import hew.math.stats` without
 anything being installed. That is the route that works from a clone today.
 For a registry install, first run `hew info hew.math.stats` to confirm a
 published version exists. If it reports that the package is not found, use the
-clone route above. Once a version is available, `hew add hew.math.stats --version <VERSION>`
+clone route above. A lookup that falls back to the local cache does not confirm
+registry availability. Once a version is available, `hew add hew.math.stats --version <VERSION>`
 followed by `hew install` resolves the same import without
 `--pkg-path`.
 
