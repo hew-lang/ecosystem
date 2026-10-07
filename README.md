@@ -8,8 +8,9 @@ to read in a sitting.
 
 ## Packages
 
-Every package publishes under its dotted name (`hew.math.stats`) and lives in
-the directory that matches it.
+Every package uses a dotted name (`hew.math.stats`) and lives in the directory
+that matches it. A package in this repository may not yet be published to the
+registry.
 
 | Package | Directory | What it gives you |
 | --- | --- | --- |
@@ -65,11 +66,11 @@ mean = 3
 `--pkg-path` points the compiler at the clone, where the `hew/` mirror tree
 described under [Layout](#layout) resolves `import hew.math.stats` without
 anything being installed. That is the route that works from a clone today.
-Once these packages are published, `hew add hew.math.stats` followed by
-`hew install` resolves the same import from the registry and `--pkg-path` is no
-longer needed; the registry has no 0.3.0 to serve yet, and `hew add` against a
-version the registry does not hold will resolve to whatever the local package
-cache happens to contain instead.
+For a registry install, first run `hew info hew.math.stats` to confirm a
+published version exists. If it reports that the package is not found, use the
+clone route above. Once a version is available, `hew add hew.math.stats --version <VERSION>`
+followed by `hew install` resolves the same import without
+`--pkg-path`.
 
 Three things in that snippet carry across every package here. A fallible call
 returns `Result<T, E>` with a package-specific error enum, never a sentinel
