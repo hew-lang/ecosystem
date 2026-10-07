@@ -32,6 +32,10 @@ registry.
 
 ## Two minutes of Hew
 
+Use the compiler pinned in the [toolchain guide](docs/toolchain.md) for these
+packages. Newer compilers that require explicit wire variant tags need a package
+migration before these examples will build.
+
 `hew.math.stats` is pure Hew with no service behind it, so it is the shortest
 thing here that runs. Clone this repository, make a directory beside the clone,
 and write `main.hew` in it:

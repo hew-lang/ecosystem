@@ -37,13 +37,13 @@ pub type Histogram {
 #[wire]
 pub enum StatsError {
     /// The dataset contains too few observations for the operation.
-    InsufficientData(i64) @0;
+    InsufficientData(i64);
     /// Two paired datasets have different lengths.
-    LengthMismatch(i64, i64) @1;
+    LengthMismatch(i64, i64);
     /// A percentile, smoothing factor, window, or bin count was invalid.
-    InvalidParameter(string) @2;
+    InvalidParameter(string);
     /// The requested relationship is undefined for constant data.
-    ZeroVariance(string) @3;
+    ZeroVariance(string);
 }
 
 /// Return the diagnostic carried by a `StatsError`.
