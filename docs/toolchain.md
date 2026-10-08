@@ -1,8 +1,8 @@
 # Toolchain pin
 
 Every package in this repository is validated against one exact Hew compiler
-build: `v0.6.0-rc4`, at revision
-`74dc19660781c1e8a1b99d64f3fc4c298be16df3`. CI builds that revision from source
+build: `v0.6.0-rc7`, at revision
+`f09d3403587d1cf1bc33d00444bc76ae96861c17`. CI builds that revision from source
 before it checks anything here, so a green run means the packages work against
 that compiler and not merely against whatever the runner happened to have.
 
@@ -69,7 +69,7 @@ from the workflow within a release.
 ```sh
 # Build the pinned compiler from source.
 git clone https://github.com/hew-lang/hew.git /tmp/hew
-git -C /tmp/hew checkout 74dc19660781c1e8a1b99d64f3fc4c298be16df3
+git -C /tmp/hew checkout f09d3403587d1cf1bc33d00444bc76ae96861c17
 cargo build --locked --profile release-lib -p hew-cli -p hew-lib --manifest-path /tmp/hew/Cargo.toml
 
 # Start the services the suites and examples connect to.

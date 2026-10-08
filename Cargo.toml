@@ -23,7 +23,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/hew-lang/ecosystem"
 
 [workspace.dependencies]
-hew-cabi = { git = "https://github.com/hew-lang/hew", rev = "74dc19660781c1e8a1b99d64f3fc4c298be16df3" }
+hew-cabi = { git = "https://github.com/hew-lang/hew", rev = "f09d3403587d1cf1bc33d00444bc76ae96861c17" }
 libc = "0.2"
 
 [patch.crates-io]
