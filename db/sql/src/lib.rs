@@ -52,13 +52,10 @@ fn decode_param(value: Value) -> Result<Param, &'static str> {
     if entry.len() != 1 {
         return Err("expected one variant");
     }
-    let (Value::Integer(tag), Value::Array(mut fields)) = entry.pop().unwrap() else {
+    let (Value::Integer(tag), payload) = entry.pop().unwrap() else {
         return Err("invalid variant representation");
     };
-    if fields.len() != 1 {
-        return Err("expected one variant payload");
-    }
-    match (i128::from(tag), fields.pop().unwrap()) {
+    match (i128::from(tag), payload) {
         (1, Value::Bool(value)) => Ok(Param::Bool(value)),
         (2, Value::Integer(value)) => i64::try_from(value)
             .map(Param::Int)
@@ -80,12 +77,24 @@ mod tests {
             &b""[..],
             &[0x80, 0],
             &[0x81, 6],
-            &[0x81, 0xa1, 2, 0x81, 0xf5],
+            &[0x81, 0xa1, 2, 0xf5],
+            &[0x81, 0xa1, 2, 0x81, 7],
             &[0xa0],
         ] {
             assert!(decode(data).is_err(), "accepted {data:?}");
         }
         assert_eq!(decode(&[0x80]).unwrap(), Vec::new());
         assert_eq!(decode(&[0x81, 0]).unwrap(), vec![Param::Null]);
+    }
+
+    #[test]
+    fn decodes_the_format_codec_representation() {
+        // cbor.encode of [.Null, .Int(7), .Text("a")]: unit variants are their
+        // tag, payload variants are a one-entry map from tag to payload.
+        let data = [0x83, 0x00, 0xa1, 0x02, 0x07, 0xa1, 0x04, 0x61, 0x61];
+        assert_eq!(
+            decode(&data).unwrap(),
+            vec![Param::Null, Param::Int(7), Param::Text("a".to_owned())]
+        );
     }
 }

@@ -74,17 +74,17 @@
 #[wire]
 pub enum MetricsError {
     /// A metric name, help string, label set, bucket list, or value was invalid.
-    InvalidInput(string);
+    InvalidInput(string) @0;
     /// A metric handle did not identify a registered metric.
-    UnknownMetric(i64);
+    UnknownMetric(i64) @1;
     /// A metric handle was used with an operation for another metric kind.
-    WrongMetricKind(i64);
+    WrongMetricKind(i64) @2;
     /// A new label tuple would exceed the metric's 1024-series limit.
-    SeriesLimit(i64);
+    SeriesLimit(i64) @3;
     /// The registry has already been closed.
-    Closed(string);
+    Closed(string) @4;
     /// The native registry could not complete the operation.
-    Internal(string);
+    Internal(string) @5;
 }
 
 /// Return the diagnostic carried by a `MetricsError`.

@@ -32,7 +32,7 @@ fn nul_value() -> bytes {
 
 fn assert_bytes(actual: bytes, expected: bytes) {
     assert(actual.len() == expected.len());
-    for i in 0 .. expected.len() {
+    for i in 0..expected.len() {
         match actual.get(i) {
             .Some(left) => match expected.get(i) {
                 .Some(right) => assert(left as i64 == right as i64),

@@ -38,33 +38,33 @@
 #[wire]
 pub enum HttpError {
     /// The actor could not bind its configured address.
-    Listen(string);
+    Listen(string) @0;
     /// The listener could not accept a connection.
-    Accept(string);
+    Accept(string) @1;
     /// The peer disconnected or timed out while sending its request.
-    Read(string);
+    Read(string) @2;
     /// The incoming request was not supported, valid HTTP/1.1.
-    Parse(string);
+    Parse(string) @3;
     /// A response could not be written to the peer.
-    Write(string);
+    Write(string) @4;
     /// A request header was not present.
-    MissingHeader(string);
+    MissingHeader(string) @5;
     /// Percent-encoded input was malformed or not UTF-8.
-    Decode(string);
+    Decode(string) @6;
     /// A form field was not present.
-    MissingFormField(string);
+    MissingFormField(string) @7;
     /// A response status was outside the final-response range 200 through 599.
-    InvalidStatus(i64);
+    InvalidStatus(i64) @8;
     /// A response header value contained CR or LF.
-    InvalidHeaderValue(string);
+    InvalidHeaderValue(string) @9;
     /// A request is already waiting for a response.
-    Busy(string);
+    Busy(string) @10;
     /// No accepted request is waiting for a header lookup or response.
-    NoPending(string);
+    NoPending(string) @11;
     /// The server has been closed.
-    Closed(string);
+    Closed(string) @12;
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string) @13;
 }
 
 /// Return the diagnostic carried by an `HttpError`.

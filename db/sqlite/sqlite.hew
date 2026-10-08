@@ -2,17 +2,17 @@
 
 import std.encoding.utf8;
 
-import std.encoding.wire;
+import std.encoding.cbor;
 
 import hew.db.sql.{Param};
 
 #[wire]
 pub enum SqliteError {
-    Open(string);
-    InvalidInput(string);
-    Query(string);
-    Closed(string);
-    Internal(string);
+    Open(string) @0;
+    InvalidInput(string) @1;
+    Query(string) @2;
+    Closed(string) @3;
+    Internal(string) @4;
 }
 
 pub fn error_message(error: SqliteError) -> string {
@@ -27,8 +27,8 @@ pub fn error_message(error: SqliteError) -> string {
 
 #[wire]
 pub enum CellValue {
-    Null;
-    Text(bytes);
+    Null @0;
+    Text(bytes) @1;
 }
 
 #[wire]
@@ -123,14 +123,14 @@ fn collect_result(consume result: NativeResult) -> Result<QueryResult, SqliteErr
         return .Err(error);
     }
     var columns: Vec<string> = Vec.new();
-    for column in 0 .. column_count {
+    for column in 0..column_count {
         let value = result.column(column);
         columns.push(utf8.decode_lossy(value));
     }
     var rows: Vec<Row> = Vec.new();
-    for row in 0 .. row_count {
+    for row in 0..row_count {
         var values: Vec<CellValue> = Vec.new();
-        for column in 0 .. column_count {
+        for column in 0..column_count {
             match result.cell_kind(row, column) {
                 0 => values.push(CellValue.Null),
                 1 => {
@@ -187,7 +187,7 @@ pub actor Db {
     receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, SqliteError> {
         let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
         let affected = unsafe {
-            hew_sqlite_execute_params(connection, sql, wire.encode(params))
+            hew_sqlite_execute_params(connection, sql, cbor.encode(params))
         };
         if unsafe {
             hew_sqlite_last_error_kind()
@@ -212,7 +212,7 @@ pub actor Db {
     receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, SqliteError> {
         let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
-            hew_sqlite_query_params(connection, sql, wire.encode(params))
+            hew_sqlite_query_params(connection, sql, cbor.encode(params))
         } };
         if result.handle == 0 {
             return .Err(native_error());

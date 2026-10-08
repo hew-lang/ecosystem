@@ -5,12 +5,12 @@
 
 #[wire]
 pub enum MagickError {
-    InvalidInput(string);
-    Decode(string);
-    Transform(string);
-    Io(string);
-    Closed(string);
-    Internal(string);
+    InvalidInput(string) @0;
+    Decode(string) @1;
+    Transform(string) @2;
+    Io(string) @3;
+    Closed(string) @4;
+    Internal(string) @5;
 }
 
 /// Return the diagnostic carried by an image error.
@@ -27,9 +27,9 @@ pub fn error_message(error: MagickError) -> string {
 
 #[wire]
 pub enum Source {
-    File(string);
-    Blob(bytes);
-    Blank(i32, i32, string);
+    File(string) @0;
+    Blob(bytes) @1;
+    Blank(i32, i32, string) @2;
 }
 
 fn native_error_from(kind: i32, message: string) -> MagickError {

@@ -37,17 +37,17 @@
 #[wire]
 pub enum NatsError {
     /// The server could not be reached or the connection was lost.
-    Connection(string);
+    Connection(string) @0;
     /// A URL, subject, payload, reply target, or timeout was invalid.
-    InvalidInput(string);
+    InvalidInput(string) @1;
     /// The server or client rejected an operation.
-    Operation(string);
+    Operation(string) @2;
     /// A bounded operation failed because its deadline elapsed.
-    Timeout(string);
+    Timeout(string) @3;
     /// The connection or subscription is already closed.
-    Closed(string);
+    Closed(string) @4;
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string) @5;
 }
 
 /// Return the diagnostic carried by a NATS error.
@@ -75,9 +75,9 @@ pub type Subscription {
 #[wire]
 pub enum ReplyTo {
     /// The publisher did not request a reply.
-    Missing;
+    Missing @0;
     /// Replies should be published to this subject.
-    Subject(string);
+    Subject(string) @1;
 }
 
 #[wire]
@@ -90,9 +90,9 @@ pub type Delivery {
 #[wire]
 pub enum Receive {
     /// No message arrived before the deadline.
-    Missing;
+    Missing @0;
     /// A complete message arrived.
-    Message(Delivery);
+    Message(Delivery) @1;
 }
 
 fn native_error_from(kind: i32, message: string) -> NatsError {

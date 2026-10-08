@@ -37,13 +37,13 @@ pub type Histogram {
 #[wire]
 pub enum StatsError {
     /// The dataset contains too few observations for the operation.
-    InsufficientData(i64);
+    InsufficientData(i64) @0;
     /// Two paired datasets have different lengths.
-    LengthMismatch(i64, i64);
+    LengthMismatch(i64, i64) @1;
     /// A percentile, smoothing factor, window, or bin count was invalid.
-    InvalidParameter(string);
+    InvalidParameter(string) @2;
     /// The requested relationship is undefined for constant data.
-    ZeroVariance(string);
+    ZeroVariance(string) @3;
 }
 
 /// Return the diagnostic carried by a `StatsError`.
@@ -87,7 +87,7 @@ pub fn mean(data: Vec<f64>) -> Result<f64, StatsError> {
         return .Err(StatsError.InsufficientData(0));
     }
     var total = 0.0;
-    for i in 0 .. n {
+    for i in 0..n {
         total = total + data[i];
     }
     .Ok(total / n as f64)
@@ -96,7 +96,7 @@ pub fn mean(data: Vec<f64>) -> Result<f64, StatsError> {
 /// Compute the sum of a dataset.
 pub fn sum(data: Vec<f64>) -> f64 {
     var total = 0.0;
-    for i in 0 .. len(data) {
+    for i in 0..len(data) {
         total = total + data[i];
     }
     total
@@ -109,7 +109,7 @@ pub fn min_val(data: Vec<f64>) -> Result<f64, StatsError> {
         return .Err(StatsError.InsufficientData(0));
     }
     var result = data[0];
-    for i in 1 .. n {
+    for i in 1..n {
         if data[i] < result {
             result = data[i];
         }
@@ -124,7 +124,7 @@ pub fn max_val(data: Vec<f64>) -> Result<f64, StatsError> {
         return .Err(StatsError.InsufficientData(0));
     }
     var result = data[0];
-    for i in 1 .. n {
+    for i in 1..n {
         if data[i] > result {
             result = data[i];
         }
@@ -145,7 +145,7 @@ pub fn variance(data: Vec<f64>) -> Result<f64, StatsError> {
     }
     let m = mean(data)?;
     var ss = 0.0;
-    for i in 0 .. n {
+    for i in 0..n {
         let d = data[i] - m;
         ss = ss + d * d;
     }
@@ -160,7 +160,7 @@ pub fn variance_sample(data: Vec<f64>) -> Result<f64, StatsError> {
     }
     let m = mean(data)?;
     var ss = 0.0;
-    for i in 0 .. n {
+    for i in 0..n {
         let d = data[i] - m;
         ss = ss + d * d;
     }
@@ -242,7 +242,7 @@ pub fn correlation(x: Vec<f64>, y: Vec<f64>) -> Result<f64, StatsError> {
     var sxy = 0.0;
     var sxx = 0.0;
     var syy = 0.0;
-    for i in 0 .. n {
+    for i in 0..n {
         let dx = x[i] - mx;
         let dy = y[i] - my;
         sxy = sxy + dx * dy;
@@ -268,7 +268,7 @@ pub fn covariance(x: Vec<f64>, y: Vec<f64>) -> Result<f64, StatsError> {
     let mx = mean(x)?;
     let my = mean(y)?;
     var sxy = 0.0;
-    for i in 0 .. n {
+    for i in 0..n {
         sxy = sxy + (x[i] - mx) * (y[i] - my);
     }
     .Ok(sxy / (n - 1) as f64)
@@ -289,7 +289,7 @@ pub fn linear_regression(x: Vec<f64>, y: Vec<f64>) -> Result<LinearFit, StatsErr
     let my = mean(y)?;
     var sxy = 0.0;
     var sxx = 0.0;
-    for i in 0 .. n {
+    for i in 0..n {
         let dx = x[i] - mx;
         sxy = sxy + dx * (y[i] - my);
         sxx = sxx + dx * dx;
@@ -302,7 +302,7 @@ pub fn linear_regression(x: Vec<f64>, y: Vec<f64>) -> Result<LinearFit, StatsErr
     // R-squared
     var ss_res = 0.0;
     var ss_tot = 0.0;
-    for i in 0 .. n {
+    for i in 0..n {
         let predicted = slope * x[i] + intercept;
         let res = y[i] - predicted;
         ss_res = ss_res + res * res;
@@ -328,12 +328,12 @@ pub fn simple_moving_avg(data: Vec<f64>, window: i64) -> Result<Vec<f64>, StatsE
     var result: Vec<f64> = Vec.new();
     // Compute first window sum
     var window_sum = 0.0;
-    for i in 0 .. window {
+    for i in 0..window {
         window_sum = window_sum + data[i];
     }
     result.push(window_sum / window as f64);
     // Slide window
-    for i in window .. n {
+    for i in window..n {
         window_sum = window_sum + data[i] - data[i - window];
         result.push(window_sum / window as f64);
     }
@@ -352,7 +352,7 @@ pub fn exponential_moving_avg(data: Vec<f64>, alpha: f64) -> Result<Vec<f64>, St
     var result: Vec<f64> = Vec.new();
     var ema = data[0];
     result.push(ema);
-    for i in 1 .. n {
+    for i in 1..n {
         ema = alpha * data[i] + (1.0 - alpha) * ema;
         result.push(ema);
     }
@@ -383,10 +383,10 @@ pub fn histogram(data: Vec<f64>, num_bins: i64) -> Result<Histogram, StatsError>
     for i in 0 .. num_bins + 1 {
         edges.push(lo + i as f64 * bin_width);
     }
-    for i in 0 .. num_bins {
+    for i in 0..num_bins {
         counts.push(0);
     }
-    for i in 0 .. n {
+    for i in 0..n {
         var bin = ((data[i] - lo) / bin_width) as i64;
         if bin >= num_bins {
             bin = num_bins - 1;
@@ -491,11 +491,11 @@ impl RunningMethods for Running {
 /// Sort a copy of the data (insertion sort for simplicity).
 fn sort_f64(data: Vec<f64>) -> Vec<f64> {
     var sorted: Vec<f64> = Vec.new();
-    for i in 0 .. len(data) {
+    for i in 0..len(data) {
         sorted.push(data[i]);
     }
     let n = len(sorted);
-    for i in 1 .. n {
+    for i in 1..n {
         let key = sorted[i];
         var j = i - 1;
         while j >= 0 && sorted[j] > key {
