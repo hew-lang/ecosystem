@@ -45,7 +45,7 @@ fn stop_stages(stages: Vec<Stage>) {
 fn gather(spec: dag.DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> i64 {
     var feed = 0;
     var has_pred = false;
-    for e in 0 .. dag.edge_count(spec) {
+    for e in 0..dag.edge_count(spec) {
         if dag.edge_dst(spec, e) == node {
             feed = feed + outputs[dag.edge_src(spec, e)];
             has_pred = true;
@@ -67,7 +67,7 @@ fn main() {
                 .Ok(_) => {
                     // Spawn one live actor per node.
                     var stages: Vec<Stage> = Vec.new();
-                    for i in 0 .. dag.node_count(spec) {
+                    for i in 0..dag.node_count(spec) {
                         let ns = dag.node_at(spec, i);
                         stages.push(spawn Stage(op_code: ns.op_code, operand: ns.operand));
                     }
@@ -76,7 +76,7 @@ fn main() {
                     match dag.topo_order(spec) {
                         .Ok(order) => {
                             var outputs: Vec<i64> = Vec.new();
-                            for _i in 0 .. dag.node_count(spec) {
+                            for _i in 0..dag.node_count(spec) {
                                 outputs.push(0);
                             }
                             let initial = 5;

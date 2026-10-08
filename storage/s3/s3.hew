@@ -6,17 +6,17 @@
 
 #[wire]
 pub enum S3Error {
-    Connection(string);
-    InvalidInput(string);
-    NotFound(string);
-    AccessDenied(string);
-    Throttled(string);
-    ServerError(i64, string);
-    Network(string);
-    HttpStatus(i64, string);
-    Decode(string);
-    Closed(string);
-    Internal(string);
+    Connection(string) @0;
+    InvalidInput(string) @1;
+    NotFound(string) @2;
+    AccessDenied(string) @3;
+    Throttled(string) @4;
+    ServerError(i64, string) @5;
+    Network(string) @6;
+    HttpStatus(i64, string) @7;
+    Decode(string) @8;
+    Closed(string) @9;
+    Internal(string) @10;
 }
 
 /// Return the diagnostic carried by an S3 error.
@@ -38,8 +38,8 @@ pub fn error_message(error: S3Error) -> string {
 
 #[wire]
 pub enum ObjectLookup {
-    Missing;
-    Found(bytes);
+    Missing @0;
+    Found(bytes) @1;
 }
 
 #[wire]
@@ -237,7 +237,7 @@ pub actor Bucket {
             return .Err(error);
         }
         var entries: Vec<ObjectInfo> = Vec.new();
-        for index in 0 .. count {
+        for index in 0..count {
             entries.push(ObjectInfo { key: result.key(index), size: result.size(index) });
         }
         result.close();

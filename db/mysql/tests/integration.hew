@@ -32,7 +32,7 @@ fn insert_params() -> Vec<Param> {
 
 fn assert_bytes(actual: bytes, expected: bytes) {
     assert(actual.len() == expected.len());
-    for i in 0 .. expected.len() {
+    for i in 0..expected.len() {
         match actual.get(i) {
             .Some(left) => match expected.get(i) {
                 .Some(right) => assert(left as i64 == right as i64),
@@ -213,7 +213,7 @@ fn typed_parameters_preserve_values() {
                 _ => panic("NULL parameter changed"),
             }
             let expected = ["1", "-9223372036854775808", "9223372036854775807", "1.25", "first line\nZoë 雪's \\ path", ""];
-            for index in 0 .. expected.len() {
+            for index in 0..expected.len() {
                 match query.rows[0].values[index + 1] {
                     .Text(value) => assert_bytes(value, expected[index].to_bytes()),
                     _ => panic("typed parameter became NULL"),

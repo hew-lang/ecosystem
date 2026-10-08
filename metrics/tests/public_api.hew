@@ -85,7 +85,7 @@ fn labeled_metric_returns_typed_error_at_series_limit() {
     let registry = spawn metrics.Registry;
     match registry.counter_vec("bounded_requests_total", "Bounded requests", "route") {
         .Ok(.Ok(counter)) => {
-            for i in 0 .. 1024 {
+            for i in 0..1024 {
                 match registry.counter_vec_inc(counter, f"{i}") {
                     .Ok(.Ok(_)) => {}
                     _ => assert(false),

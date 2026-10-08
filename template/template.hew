@@ -76,7 +76,7 @@ pub fn render(tmpl: string, ctx: string) -> string {
             }
         };
         rendered.append(tmpl.slice(cursor, opening).to_bytes());
-        let raw = opening + 2 < template_len && tmpl.char_at(opening + 2).unwrap_or('\0') == '{';
+        let raw = opening + 2 < template_len && (tmpl.char_at(opening + 2) ?? '\0') == '{';
         let key_start = if raw {
             opening + 3
         } else {
@@ -137,7 +137,7 @@ fn find_marker(s: string, start: i64, marker: char, count: i64) -> Option<i64> {
         var matched = true;
         var offset = 0;
         while offset < count {
-            if s.char_at(index + offset).unwrap_or('\0') != marker {
+            if (s.char_at(index + offset) ?? '\0') != marker {
                 matched = false;
                 offset = count;
             } else {

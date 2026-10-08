@@ -6,10 +6,10 @@
 
 #[wire]
 pub enum Param {
-    Null;
-    Bool(bool);
-    Int(i64);
-    Float(f64);
-    Text(string);
-    Bytes(bytes);
+    Null @0;
+    Bool(bool) @1;
+    Int(i64) @2;
+    Float(f64) @3;
+    Text(string) @4;
+    Bytes(bytes) @5;
 }

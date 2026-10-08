@@ -33,17 +33,17 @@ import std.encoding.utf8;
 #[wire]
 pub enum MongoError {
     /// The URI or database name was invalid, or the server was unavailable.
-    Connect(string);
+    Connect(string) @0;
     /// A document, filter, or update was not a valid JSON object.
-    InvalidJson(string);
+    InvalidJson(string) @1;
     /// MongoDB rejected or could not complete an operation.
-    Operation(string);
+    Operation(string) @2;
     /// A BSON document could not be represented as JSON.
-    Serialize(string);
+    Serialize(string) @3;
     /// The connection actor has been closed.
-    Closed(string);
+    Closed(string) @4;
     /// The native layer rejected an invalid handle.
-    Internal(string);
+    Internal(string) @5;
 }
 
 /// Return the diagnostic carried by a `MongoError`.
@@ -61,9 +61,9 @@ pub fn error_message(error: MongoError) -> string {
 #[wire]
 pub enum DocumentLookup {
     /// A matching document, serialized as JSON.
-    Found(string);
+    Found(string) @0;
     /// No document matched the filter.
-    Missing;
+    Missing @1;
 }
 
 #[wire]

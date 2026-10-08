@@ -35,17 +35,17 @@
 #[wire]
 pub enum RedisError {
     /// The server could not be reached or the connection was lost.
-    Connection(string);
+    Connection(string) @0;
     /// An input such as a URL, TTL, or timeout was invalid.
-    InvalidInput(string);
+    InvalidInput(string) @1;
     /// Redis rejected a command or returned an incompatible value.
-    Command(string);
+    Command(string) @2;
     /// A bounded operation elapsed before producing a value.
-    Timeout(string);
+    Timeout(string) @3;
     /// The actor or an owned resource has already been closed.
-    Closed(string);
+    Closed(string) @4;
     /// The native layer reported an unclassified failure.
-    Internal(string);
+    Internal(string) @5;
 }
 
 /// Return the diagnostic carried by a `RedisError`.
@@ -63,19 +63,19 @@ pub fn error_message(error: RedisError) -> string {
 #[wire]
 pub enum Lookup {
     /// Redis returned nil because the key, field, or list element is absent.
-    Missing;
+    Missing @0;
     /// Redis returned exact bytes. An empty buffer remains a present value.
-    Value(bytes);
+    Value(bytes) @1;
 }
 
 #[wire]
 pub enum KeyTtl {
     /// The key does not exist.
-    Missing;
+    Missing @0;
     /// The key exists without an expiration.
-    Persistent;
+    Persistent @1;
     /// The key expires after this many seconds.
-    Seconds(i64);
+    Seconds(i64) @2;
 }
 
 #[wire]
@@ -97,13 +97,13 @@ pub type Options {
 #[wire]
 pub enum PipelineCommand {
     /// Queue `PING`.
-    Ping;
+    Ping @0;
     /// Queue `DEL key`.
-    Del(string);
+    Del(string) @1;
     /// Queue `SET key value` with an exact binary value.
-    Set(string, bytes);
+    Set(string, bytes) @2;
     /// Queue `HSET key field value` with an exact binary value.
-    Hset(string, string, bytes);
+    Hset(string, string, bytes) @3;
 }
 
 fn native_error() -> RedisError {
@@ -403,7 +403,7 @@ pub actor Conn {
             return .Err(error);
         }
         var entries: Vec<HashEntry> = Vec.new();
-        for i in 0 .. count {
+        for i in 0..count {
             entries.push(HashEntry { field: result.key(i), value: result.value(i) });
         }
         result.close();
@@ -444,7 +444,7 @@ pub actor Conn {
             return .Err(error);
         }
         var members: Vec<SetMember> = Vec.new();
-        for i in 0 .. count {
+        for i in 0..count {
             members.push(SetMember { value: result.value(i) });
         }
         result.close();

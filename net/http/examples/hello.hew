@@ -16,7 +16,7 @@ import hew.net.http;
 import std.os;
 
 fn main() {
-    let addr = os.env("HEW_HTTP_EXAMPLE_ADDR").unwrap_or("127.0.0.1:8080");
+    let addr = os.env("HEW_HTTP_EXAMPLE_ADDR") ?? "127.0.0.1:8080";
     let server = spawn http.Server(addr: addr);
     println(f"listening for one request on http://{addr}");
     println(f"send it within 30 seconds, for example: curl http://{addr}/hello");
