@@ -20,6 +20,7 @@ registry.
 | `hew.db.mysql` | `db/mysql` | MySQL client with typed errors and query snapshots |
 | `hew.db.postgres` | `db/postgres` | PostgreSQL client with typed errors and query snapshots |
 | `hew.db.redis` | `db/redis` | Redis client with typed errors, explicit misses, pipelines, and bounded pub/sub |
+| `hew.db.sql` | `db/sql` | Typed SQL parameters shared by SQLite, MySQL and PostgreSQL |
 | `hew.db.sqlite` | `db/sqlite` | SQLite client with typed errors and query snapshots |
 | `hew.image.magick` | `image/magick` | ImageMagick 7 images with typed transformation and I/O errors |
 | `hew.math.stats` | `math/stats` | Descriptive statistics, correlation, regression, streaming aggregates |
@@ -33,8 +34,8 @@ registry.
 ## Two minutes of Hew
 
 Use the compiler pinned in the [toolchain guide](docs/toolchain.md) for these
-packages. Newer compilers that require explicit wire variant tags need a package
-migration before these examples will build.
+packages: Hew 0.6.0-rc7. This is the compiler used to validate the packages'
+explicit wire variant tags and codec API.
 
 `hew.math.stats` is pure Hew with no service behind it, so it is the shortest
 thing here that runs. Clone this repository, make a directory beside the clone,
@@ -70,12 +71,17 @@ mean = 3
 `--pkg-path` points the compiler at the clone, where the `hew/` mirror tree
 described under [Layout](#layout) resolves `import hew.math.stats` without
 anything being installed. That is the route that works from a clone today.
-For a registry install, first run `hew info hew.math.stats` to confirm a
-published version exists. If it reports that the package is not found, use the
-clone route above. A lookup that falls back to the local cache does not confirm
-registry availability. Once a version is available, `hew add hew.math.stats --version <VERSION>`
-followed by `hew install` resolves the same import without
-`--pkg-path`.
+The `0.3.0` packages in this clone are not yet published. The registry's older
+`0.2.0` archives use syntax removed by rc4 and rc7, so they cannot replace this
+clone. Released rc7 also needs a package-client fix for the registry's URL
+format. Use the clone route until compatible packages and a corrected client
+are published.
+
+For a future registry install, `hew info hew.math.stats` must confirm a
+compiler-compatible version exists. A lookup that falls back to the local
+cache does not confirm registry availability. With that version and a corrected
+client, `hew add hew.math.stats --version <VERSION>` followed by `hew install`
+resolves the same import without `--pkg-path`.
 
 Three things in that snippet carry across every package here. A fallible call
 returns `Result<T, E>` with a package-specific error enum, never a sentinel

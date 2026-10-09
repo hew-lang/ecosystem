@@ -17,6 +17,7 @@ import tomllib
 EXPECTED_MANIFESTS = 16
 EXPECTED_SOURCES = 53
 EXPECTED_VERSION = "0.3.0"
+EXPECTED_HEW_RANGE = ">=0.6.0-rc7, <0.7.0"
 VEC_NEW = re.compile(r"\bVec::new\b")
 QUOTED_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 SQL_KEYWORD = re.compile(
@@ -263,6 +264,11 @@ def main(argv: list[str]) -> int:
         if version != EXPECTED_VERSION:
             raise SystemExit(
                 f"{manifest}: expected version {EXPECTED_VERSION}, found {version}"
+            )
+        if package.get("hew") != EXPECTED_HEW_RANGE:
+            raise SystemExit(
+                f"{manifest}: migrated packages require compiler range "
+                f"{EXPECTED_HEW_RANGE!r}, found {package.get('hew')!r}"
             )
         try:
             registry_path(name)
