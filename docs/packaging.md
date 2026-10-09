@@ -46,10 +46,16 @@ error, it does not use freed memory.
 
 ## Package workflow
 
+Use the [clone workflow](../README.md#two-minutes-of-hew) with the pinned rc7
+compiler for the current `0.3.0` sources. These versions are not yet published;
+the older `0.2.0` registry archives use removed syntax. The registry commands below
+require a compiler-compatible published version and a corrected package client,
+as described in the README.
+
 ```sh
-hew add hew.math.stats   # add a dependency
-hew install              # resolve and fetch
-hew publish              # publish this package
+hew add hew.math.stats --version <VERSION>  # select a compatible published version
+hew install                               # resolve and fetch
+hew publish                               # publish this package
 ```
 
 Within a package directory, `hew build` builds a declared `[native]` crate,
