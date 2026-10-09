@@ -20,7 +20,7 @@ registry.
 | `hew.db.mysql` | `db/mysql` | MySQL client with typed errors and query snapshots |
 | `hew.db.postgres` | `db/postgres` | PostgreSQL client with typed errors and query snapshots |
 | `hew.db.redis` | `db/redis` | Redis client with typed errors, explicit misses, pipelines, and bounded pub/sub |
-| `hew.db.sql` | `db/sql` | Shared SQL values, rows, and query results used by the database clients |
+| `hew.db.sql` | `db/sql` | Typed SQL parameters shared by SQLite, MySQL and PostgreSQL |
 | `hew.db.sqlite` | `db/sqlite` | SQLite client with typed errors and query snapshots |
 | `hew.image.magick` | `image/magick` | ImageMagick 7 images with typed transformation and I/O errors |
 | `hew.math.stats` | `math/stats` | Descriptive statistics, correlation, regression, streaming aggregates |
