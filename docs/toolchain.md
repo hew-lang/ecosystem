@@ -53,12 +53,14 @@ reviewed edit to `Cargo.lock`, not a side effect of running a test.
 Every package declares:
 
 ```toml
-hew = ">=0.6.0-rc1, <0.7.0"
+hew = ">=0.6.0-rc7, <0.7.0"
 ```
 
-The range accepts rc1 and later compatible 0.6 releases while excluding the
-next breaking minor release. Native crates pin `hew-cabi` to the same exact
-revision as the compiler, keeping their C ABI aligned with it.
+The minimum supported compiler is rc7, the version used to validate the migrated
+wire variant tags and codec API. The range excludes older release candidates
+and the next breaking minor release; CI validates the exact rc7 revision above.
+Native crates pin `hew-cabi` to that same revision, keeping their C ABI aligned
+with the compiler.
 
 ## The corpus gate
 

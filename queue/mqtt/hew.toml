@@ -2,7 +2,7 @@
 name = "hew.queue.mqtt"
 version = "0.3.0"
 edition = "2026"
-hew = ">=0.6.0-rc1, <0.7.0"
+hew = ">=0.6.0-rc7, <0.7.0"
 description = "Typed, actor-owned MQTT 3.1.1 publish/subscribe client"
 authors = ["Hew Contributors"]
 license = "MIT OR Apache-2.0"

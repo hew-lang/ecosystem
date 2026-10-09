@@ -20,6 +20,7 @@ registry.
 | `hew.db.mysql` | `db/mysql` | MySQL client with typed errors and query snapshots |
 | `hew.db.postgres` | `db/postgres` | PostgreSQL client with typed errors and query snapshots |
 | `hew.db.redis` | `db/redis` | Redis client with typed errors, explicit misses, pipelines, and bounded pub/sub |
+| `hew.db.sql` | `db/sql` | Shared SQL values, rows, and query results used by the database clients |
 | `hew.db.sqlite` | `db/sqlite` | SQLite client with typed errors and query snapshots |
 | `hew.image.magick` | `image/magick` | ImageMagick 7 images with typed transformation and I/O errors |
 | `hew.math.stats` | `math/stats` | Descriptive statistics, correlation, regression, streaming aggregates |
@@ -33,8 +34,8 @@ registry.
 ## Two minutes of Hew
 
 Use the compiler pinned in the [toolchain guide](docs/toolchain.md) for these
-packages. Newer compilers that require explicit wire variant tags need a package
-migration before these examples will build.
+packages: Hew 0.6.0-rc7. This is the compiler used to validate the packages'
+explicit wire variant tags and codec API.
 
 `hew.math.stats` is pure Hew with no service behind it, so it is the shortest
 thing here that runs. Clone this repository, make a directory beside the clone,
