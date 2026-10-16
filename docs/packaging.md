@@ -62,6 +62,31 @@ Within a package directory, `hew build` builds a declared `[native]` crate,
 `hew check` validates a manifest or a source file, and `hew test` runs Hew
 tests.
 
+Native publishers build before acquiring a publication grant:
+
+```sh
+HEW=<pinned compiler> HEW_NATIVE_ARCHIVE_DIR=<output> make native-prebuilts
+```
+
+The ordinary
+`scripts/publish-packages.sh` then publishes the source packages followed by
+those native archives using the same login and signing key. For archives whose
+source versions are already published, pass `--native-only` to that script.
+
+Each signed archive binds its exact package source checksum, compiler build
+version, native target and Rust toolchain stamp. Consumers with a matching
+artifact install and build without Cargo; `hew.lock` pins the qualified archive
+checksum, and the verified cache also works without registry access. An absent artifact permits the ordinary source
+build. Invalid signatures, damaged bytes, incompatible identities and failed
+downloads refuse rather than switching to source compilation.
+
+The publication workflow currently builds the Linux x86_64 SQLite archive.
+`HEW_NATIVE_PACKAGES` selects packages from the maintained native manifest list;
+leaving it unset builds every native package whose system dependencies are
+installed. Other native package and target recipes remain to be qualified,
+including ImageMagick 7 system libraries. A static library does not bundle
+those system dependencies.
+
 ## Contract checks
 
 `scripts/verify_package_contract.py` is the authority for the dotted-name

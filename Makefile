@@ -61,6 +61,9 @@ publish-local:
 	}
 	HEW="$(HEW_BIN)" scripts/publish-packages.sh
 
+native-prebuilts:
+	HEW="$(HEW)" scripts/build-native-packages.sh
+
 # ImageMagick is a system dependency, and magick_rust's link directives do not
 # survive the trip through this package's staticlib, so the MagickWand
 # libraries have to be named on the link line. pkg-config knows where they are.

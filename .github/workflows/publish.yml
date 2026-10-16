@@ -17,6 +17,9 @@ jobs:
     name: Publish unpublished manifest versions
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      HEW_NATIVE_ARCHIVE_DIR: ${{ github.workspace }}/.tooling/native-packages
+      HEW_NATIVE_PACKAGES: hew.db.sqlite
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
@@ -69,6 +72,10 @@ jobs:
           HEW="$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/hew"
           test -x "$HEW"
           echo "HEW=$HEW" >> "$GITHUB_ENV"
+
+      - name: Build Linux x86_64 SQLite native archive before authentication
+        shell: bash
+        run: scripts/build-native-packages.sh
 
       # Authentication, the manifest loop, and the version assertion all live in
       # the script so that a local publish takes the identical path.

@@ -17,6 +17,13 @@
 
 set -euo pipefail
 
+native_only=0
+if [[ "${1:-}" == --native-only ]]; then
+  native_only=1
+  shift
+fi
+[[ $# -eq 0 ]] || { echo "usage: $0 [--native-only]" >&2; exit 2; }
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
@@ -139,6 +146,7 @@ while IFS=$'\t' read -r manifest name version; do
     || fail "$manifest: package name is not publishable: $name"
 done < "$manifests_file"
 
+if [[ "$native_only" -eq 0 ]]; then
 while IFS=$'\t' read -r manifest name version; do
   package_path="${name//./\/}"
   package_url="$REGISTRY_API/packages/$package_path"
@@ -209,3 +217,13 @@ while IFS=$'\t' read -r manifest name version; do
 
   echo "Verified $name@$version: $local_cksum"
 done < "$manifests_file"
+fi
+
+if [[ -n "${HEW_NATIVE_ARCHIVE_DIR:-}" ]]; then
+  for native_archive in "$HEW_NATIVE_ARCHIVE_DIR"/*.tar.zst; do
+    [[ -f "$native_archive" ]] || fail "no native archives in $HEW_NATIVE_ARCHIVE_DIR"
+    "$hew_bin" native publish "$native_archive"
+  done
+elif [[ "$native_only" -eq 1 ]]; then
+  fail "HEW_NATIVE_ARCHIVE_DIR is required for --native-only"
+fi

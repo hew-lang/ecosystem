@@ -91,7 +91,7 @@ def tracked_hew_sources() -> list[pathlib.Path]:
     return [pathlib.Path(line) for line in output.splitlines()]
 
 
-def publish_order() -> None:
+def publish_order(native_only: bool = False) -> None:
     packages = {}
     for path in tracked_manifests():
         manifest = tomllib.loads(path.read_text())
@@ -109,6 +109,8 @@ def publish_order() -> None:
         raise SystemExit(f"package dependency cycle: {error.args[1]}") from error
     for name in order:
         path, manifest = packages[name]
+        if native_only and "native" not in manifest:
+            continue
         print(f"{path}\t{name}\t{manifest['package']['version']}")
 
 
@@ -257,6 +259,9 @@ def main(argv: list[str]) -> int:
         return check_name(argv[1])
     if argv == ["--publish-order"]:
         publish_order()
+        return 0
+    if argv == ["--native-publish-order"]:
+        publish_order(native_only=True)
         return 0
     if argv:
         raise SystemExit(
