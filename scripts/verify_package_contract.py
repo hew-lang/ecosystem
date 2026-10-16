@@ -12,7 +12,7 @@ from graphlib import CycleError, TopologicalSorter
 
 
 EXPECTED_VERSION = "0.3.0"
-EXPECTED_HEW_RANGE = ">=0.6.0-rc7, <0.7.0"
+EXPECTED_HEW_RANGE = ">=0.6.1, <0.7.0"
 VEC_NEW = re.compile(r"\bVec::new\b")
 QUOTED_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 SQL_KEYWORD = re.compile(

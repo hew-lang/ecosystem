@@ -21,7 +21,7 @@ HEW_BIN := $(TOOLCHAIN_TARGET)/release-lib/hew
 # than the one on PATH: `HEW=.tooling/target/release-lib/hew make magick-example`.
 HEW ?= hew
 
-.PHONY: verify lint toolchain publish-local magick-example
+.PHONY: verify lint toolchain update-toolchain-lock publish-local magick-example
 
 verify: lint
 	scripts/verify-pins.sh
@@ -30,6 +30,9 @@ verify: lint
 lint:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
+
+update-toolchain-lock:
+	cargo update --package hew-cabi
 
 # Builds hew at the pinned revision from the checkout named by HEW_SOURCE.
 # HEW_SOURCE must already be at HEW_REVISION: this target never moves someone
