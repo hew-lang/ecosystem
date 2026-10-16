@@ -86,7 +86,7 @@ fn assert_bytes_result(result: Result<bytes, redis.RedisError>, expected: bytes)
 }
 
 fn client_actor() -> redis.Conn {
-    spawn redis.Conn(options: redis.Options { url: "redis://127.0.0.1:6379/" })
+    spawn redis.Conn { options: redis.Options { url: "redis://127.0.0.1:6379/" } }
 }
 
 actor DelayedPublisher {
@@ -99,7 +99,7 @@ actor DelayedPublisher {
 }
 
 fn unavailable_endpoint_returns_connection_error() {
-    let client = spawn redis.Conn(options: redis.Options { url: "redis://127.0.0.1:1/" });
+    let client = spawn redis.Conn { options: redis.Options { url: "redis://127.0.0.1:1/" } };
     match client.get("key") {
         .Ok(result) => match result {
             .Ok(_) => assert(false),
@@ -318,7 +318,7 @@ fn pipeline_executes_or_reports_command_error() {
 fn pubsub_preserves_binary_messages_and_times_out_typed() {
     let subscriber = client_actor();
     let publisher = client_actor();
-    let delayed = spawn DelayedPublisher(client: publisher);
+    let delayed = spawn DelayedPublisher { client: publisher };
     let _ = mailbox(delayed, on_full: .Reject).publish("hew:redis:beta:channel", nul_value());
     match subscriber.subscribe_once("hew:redis:beta:channel", 1000) {
         .Ok(result) => assert_bytes_result(result, nul_value()),

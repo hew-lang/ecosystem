@@ -18,7 +18,7 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
     let previous_messages = unsafe {
         hew_mqtt_message_count()
     };
-    let client = spawn mqtt.Conn(options: options("hew-mqtt-integration"));
+    let client = spawn mqtt.Conn { options: options("hew-mqtt-integration") };
     match client.subscribe("hew/integration", mqtt.QoS.AtLeastOnce) {
         .Ok(.Ok(_)) => {}
         _ => assert(false),
@@ -60,7 +60,7 @@ fn actor_stop_releases_connection_relative_to_registry() {
     let previous = unsafe {
         hew_mqtt_connection_count()
     };
-    let client = spawn mqtt.Conn(options: options("hew-mqtt-stop-cleanup"));
+    let client = spawn mqtt.Conn { options: options("hew-mqtt-stop-cleanup") };
     var attempts = 0;
     while unsafe {
         hew_mqtt_connection_count()

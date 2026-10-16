@@ -176,7 +176,9 @@ pub actor Conn {
 
     /// Execute SQL and return the exact affected-row count.
     receive fn execute(sql: string) -> Result<i64, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let affected = unsafe {
             hew_mysql_execute(connection, sql)
         };
@@ -191,7 +193,9 @@ pub actor Conn {
 
     /// Execute SQL with newline-delimited text parameters.
     receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let affected = unsafe {
             hew_mysql_execute_params(connection, sql, cbor.encode(params))
         };
@@ -206,7 +210,9 @@ pub actor Conn {
 
     /// Query SQL and return a wire-safe snapshot.
     receive fn query(sql: string) -> Result<QueryResult, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let result = NativeResult { handle: unsafe {
             hew_mysql_query(connection, sql)
         } };
@@ -218,7 +224,9 @@ pub actor Conn {
 
     /// Query SQL with newline-delimited text parameters.
     receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let result = NativeResult { handle: unsafe {
             hew_mysql_query_params(connection, sql, cbor.encode(params))
         } };

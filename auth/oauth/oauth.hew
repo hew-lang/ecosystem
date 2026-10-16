@@ -219,7 +219,10 @@ pub actor Client {
     // oauth_scope may be empty. On failure, the returned Token has is_ok() == 0
     // and exposes status/message diagnostics.
     receive fn client_credentials(token_url: string, oauth_scope: string) -> Result<Token, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         if token_url.is_empty() {
             return .Err(OAuthError.InvalidInput("token URL must not be empty"));
         }
@@ -232,7 +235,10 @@ pub actor Client {
     // Always includes PKCE S256 parameters. If state is empty, a CSPRNG state is
     // generated. The state and PKCE verifier are retained on this client.
     receive fn auth_url(auth_url: string, redirect_uri: string, oauth_scope: string, state: string) -> Result<string, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         if auth_url.is_empty() || redirect_uri.is_empty() {
             return .Err(OAuthError.InvalidInput("authorization and redirect URLs must not be empty"));
         }
@@ -248,7 +254,10 @@ pub actor Client {
 
     // Return the current authorization-code state generated or accepted by auth_url.
     receive fn current_state() -> Result<Option<string>, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         let value = unsafe {
             hew_oauth_current_state(client)
         };
@@ -261,7 +270,10 @@ pub actor Client {
 
     // Return the current PKCE code verifier for external encrypted/session storage.
     receive fn current_code_verifier() -> Result<Option<string>, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         let value = unsafe {
             hew_oauth_current_code_verifier(client)
         };
@@ -274,7 +286,10 @@ pub actor Client {
 
     // Validate a callback state against the current state. Returns 1 on match.
     receive fn validate_state(callback_state: string) -> Result<bool, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         if callback_state.is_empty() {
             return .Err(OAuthError.InvalidInput("callback state must not be empty"));
         }
@@ -285,7 +300,10 @@ pub actor Client {
 
     // Exchange an authorization code for a token using the verifier from auth_url.
     receive fn exchange_code(token_url: string, code: string, redirect_uri: string) -> Result<Token, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         token_result(unsafe {
             hew_oauth_exchange_code(client, token_url, code, redirect_uri)
         })
@@ -293,7 +311,10 @@ pub actor Client {
 
     // Exchange an authorization code with an explicitly supplied PKCE verifier.
     receive fn exchange_code_with_verifier(token_url: string, code: string, redirect_uri: string, code_verifier: string) -> Result<Token, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         if code_verifier.is_empty() {
             return .Err(OAuthError.InvalidInput("PKCE verifier must not be empty"));
         }
@@ -304,7 +325,10 @@ pub actor Client {
 
     // Refresh a token using a refresh token string.
     receive fn refresh(token_url: string, refresh_token: string) -> Result<Token, OAuthError> {
-        let client = live_handle(handle)?;
+        let client = match live_handle(handle) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         if refresh_token.is_empty() {
             return .Err(OAuthError.InvalidInput("refresh token must not be empty"));
         }

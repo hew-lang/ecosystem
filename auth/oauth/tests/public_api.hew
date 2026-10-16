@@ -11,7 +11,7 @@ fn failed_token_exchange_releases_relative_token_count() {
     let before = unsafe {
         hew_oauth_token_count()
     };
-    let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
+    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
     match client.client_credentials("not a URL", "") {
         .Ok(result) => match result {
             .Err(.Transport(message)) => assert(message.contains("transport_error")),
@@ -31,7 +31,7 @@ fn failed_token_exchange_releases_relative_token_count() {
 }
 
 fn client_without_close(before: i64) -> oauth.Client {
-    let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
+    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
     sleep(20ms);
     assert(unsafe {
         hew_oauth_client_count()
@@ -59,7 +59,7 @@ fn actor_stop_releases_relative_client_count() {
 }
 
 fn empty_callback_state_returns_typed_error() {
-    let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
+    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
     match client.validate_state("") {
         .Ok(result) => match result {
             .Err(.InvalidInput(message)) => assert(!message.is_empty()),
@@ -79,7 +79,7 @@ fn empty_callback_state_returns_typed_error() {
 // go into the native layer as managed strings and the built URL and the
 // retained state come back out.
 fn auth_url_round_trips_long_non_ascii_values() {
-    let client = spawn oauth.Client(client_id: "identité-du-client-2026", client_secret: "secret");
+    let client = spawn oauth.Client { client_id: "identité-du-client-2026", client_secret: "secret" };
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "lecture écriture profil élargi", "état-de-rappel-vérifié-42") {
         .Ok(result) => match result {
             .Ok(value) => value,
@@ -104,7 +104,7 @@ fn auth_url_round_trips_long_non_ascii_values() {
 }
 
 fn auth_url_retains_state_and_pkce_verifier() {
-    let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
+    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
         .Ok(result) => match result {
             .Ok(value) => value,

@@ -10,7 +10,7 @@
 import hew.queue.mqtt;
 
 fn main() {
-    let client = spawn mqtt.Conn(options: mqtt.Options { host: "127.0.0.1", port: 11883, client_id: "hew-mqtt-example", keepalive_seconds: 30 });
+    let client = spawn mqtt.Conn { options: mqtt.Options { host: "127.0.0.1", port: 11883, client_id: "hew-mqtt-example", keepalive_seconds: 30 } };
     match client.subscribe("hew/example", mqtt.QoS.AtLeastOnce) {
         .Ok(result) => match result {
             .Ok(_) => {

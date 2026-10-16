@@ -11,7 +11,7 @@ fn error_variants_preserve_diagnostics() {
 }
 
 fn invalid_url_and_explicit_close_return_typed_errors() {
-    let db = spawn mysql.Conn(url: "not-a-mysql-url");
+    let db = spawn mysql.Conn { url: "not-a-mysql-url" };
     match db.query("SELECT 1") {
         .Ok(.Err(.Connect(message))) => assert(!message.is_empty()),
         _ => assert(false),

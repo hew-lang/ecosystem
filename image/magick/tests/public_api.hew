@@ -24,7 +24,7 @@ fn assert_ok_i64(result: Result<i64, magick.MagickError>) {
 fn transformations_cover_public_surface() {
     let path = scratch_path("magick-public-api.png");
     let _ = fs.delete(path);
-    let image = spawn magick.Image(source: Source.Blank(80, 40, "blue"));
+    let image = spawn magick.Image { source: Source.Blank(80, 40, "blue") };
     match image.width() {
         .Ok(.Ok(value)) => assert(value as i64 == 80),
         _ => assert(false),
@@ -72,7 +72,7 @@ fn transformations_cover_public_surface() {
     stop(image);
     stopped(image);
     sleep(20ms);
-    let reopened = spawn magick.Image(source: Source.File(path));
+    let reopened = spawn magick.Image { source: Source.File(path) };
     match reopened.format() {
         .Ok(.Ok(value)) => assert(value == "PNG"),
         _ => assert(false),
@@ -88,7 +88,7 @@ fn transformations_cover_public_surface() {
 fn long_unicode_path_round_trips_a_written_image() {
     let path = scratch_path("magick-héllo-wörld-très-longue-imagé.png");
     let _ = fs.delete(path);
-    let image = spawn magick.Image(source: Source.Blank(48, 32, "#3366cc"));
+    let image = spawn magick.Image { source: Source.Blank(48, 32, "#3366cc") };
     match image.write(path) {
         .Ok(result) => assert_ok_i64(result),
         _ => assert(false),
@@ -97,7 +97,7 @@ fn long_unicode_path_round_trips_a_written_image() {
     stopped(image);
     sleep(20ms);
     assert(fs.exists(path));
-    let reopened = spawn magick.Image(source: Source.File(path));
+    let reopened = spawn magick.Image { source: Source.File(path) };
     match reopened.width() {
         .Ok(.Ok(value)) => assert(value as i64 == 48),
         _ => assert(false),
@@ -122,7 +122,7 @@ fn missing_file_error_carries_the_path() {
     let path = scratch_path("magick-manquant-wörld-très-longue.png");
     let _ = fs.delete(path);
     assert(!fs.exists(path));
-    let missing = spawn magick.Image(source: Source.File(path));
+    let missing = spawn magick.Image { source: Source.File(path) };
     match missing.width() {
         .Ok(.Err(error)) => assert(magick.error_message(error).contains(path)),
         _ => assert(false),
@@ -133,7 +133,7 @@ fn missing_file_error_carries_the_path() {
 }
 
 fn invalid_inputs_return_typed_errors() {
-    let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
+    let image = spawn magick.Image { source: Source.Blank(10, 10, "white") };
     match image.resize(0, 1) {
         .Ok(.Err(error)) => assert(!magick.error_message(error).is_empty()),
         _ => assert(false),
@@ -141,7 +141,7 @@ fn invalid_inputs_return_typed_errors() {
     stop(image);
     stopped(image);
     sleep(20ms);
-    let rejected = spawn magick.Image(source: Source.Blank(10, 10, "pas-une-couleur"));
+    let rejected = spawn magick.Image { source: Source.Blank(10, 10, "pas-une-couleur") };
     match rejected.width() {
         .Ok(.Err(.InvalidInput(message))) => {
             assert(message.contains("invalid image colour"));
@@ -154,7 +154,7 @@ fn invalid_inputs_return_typed_errors() {
 }
 
 fn blob_round_trip_preserves_a_real_image() {
-    let source = spawn magick.Image(source: Source.Blank(37, 19, "#2f80ed"));
+    let source = spawn magick.Image { source: Source.Blank(37, 19, "#2f80ed") };
     let encoded = match source.write_blob("PNG") {
         .Ok(.Ok(value)) => value,
         _ => {
@@ -166,7 +166,7 @@ fn blob_round_trip_preserves_a_real_image() {
     stop(source);
     stopped(source);
     sleep(20ms);
-    let decoded = spawn magick.Image(source: Source.Blob(encoded));
+    let decoded = spawn magick.Image { source: Source.Blob(encoded) };
     match decoded.width() {
         .Ok(.Ok(value)) => assert(value as i64 == 37),
         _ => assert(false),
@@ -185,7 +185,7 @@ fn blob_round_trip_preserves_a_real_image() {
 }
 
 fn image_without_close(before: i64) -> magick.Image {
-    let image = spawn magick.Image(source: Source.Blank(10, 10, "white"));
+    let image = spawn magick.Image { source: Source.Blank(10, 10, "white") };
     match image.width() {
         .Ok(.Ok(value)) => assert(value as i64 == 10),
         _ => assert(false),

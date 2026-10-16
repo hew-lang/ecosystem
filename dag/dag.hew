@@ -397,7 +397,7 @@ fn validate_edges(spec: DagSpec) -> Result<i64, DagError> {
 }
 
 /// In-degree of every node from the edge list.
-fn in_degrees(spec: DagSpec) -> Result<Vec<i64>, DagError> {
+fn in_degrees(spec: DagSpec) -> Vec<i64> fails DagError {
     let ne = validate_edges(spec)?;
     var deg: Vec<i64> = Vec.new();
     for _i in 0..spec.num_nodes {
@@ -407,13 +407,13 @@ fn in_degrees(spec: DagSpec) -> Result<Vec<i64>, DagError> {
         let d = spec.edges[e].dst;
         deg.set(d, deg[d] + 1);
     }
-    .Ok(deg)
+    deg
 }
 
 /// Kahn's algorithm. The returned order is shorter than `num_nodes` exactly
 /// when the graph contains a cycle. Invalid edge endpoints are rejected before
 /// indexing the in-degree vector.
-pub fn topo_order(spec: DagSpec) -> Result<Vec<i64>, DagError> {
+pub fn topo_order(spec: DagSpec) -> Vec<i64> fails DagError {
     var indeg = in_degrees(spec)?;
     var order: Vec<i64> = Vec.new();
     var queue: Vec<i64> = Vec.new();
@@ -438,13 +438,13 @@ pub fn topo_order(spec: DagSpec) -> Result<Vec<i64>, DagError> {
             }
         }
     }
-    .Ok(order)
+    order
 }
 
 /// `true` when the graph has a valid topological order (is acyclic), or a typed
 /// error when an edge endpoint is outside the graph.
-pub fn is_acyclic(spec: DagSpec) -> Result<bool, DagError> {
-    .Ok(topo_order(spec)?.len() == spec.num_nodes)
+pub fn is_acyclic(spec: DagSpec) -> bool fails DagError {
+    (topo_order(spec)?).len() == spec.num_nodes
 }
 
 /// Validate the spec for routing: non-empty and acyclic. Returns the node count
@@ -532,9 +532,9 @@ pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn(i64, i64) -> i64) ->
 /// The default per-node dispatch: apply each node's own bound operation, read
 /// from `spec`, to the routed input. This is the dispatch most callers want, so
 /// `run_text` wires it automatically.
-pub fn apply_spec_node(spec: DagSpec, node: i64, input: i64) -> Result<i64, DagError> {
+pub fn apply_spec_node(spec: DagSpec, node: i64, input: i64) -> i64 fails DagError {
     let ns = spec.nodes[node];
-    .Ok(apply_op(op_of_code(ns.op_code)?, input, ns.operand))
+    apply_op(op_of_code(ns.op_code)?, input, ns.operand)
 }
 
 /// Convenience: parse text, then route using each node's own bound operation.
