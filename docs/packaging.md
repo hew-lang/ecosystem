@@ -82,8 +82,8 @@ downloads refuse rather than switching to source compilation.
 
 The publication workflow currently builds the Linux x86_64 SQLite archive.
 `HEW_NATIVE_PACKAGES` selects packages from the maintained native manifest list;
-leaving it unset builds every native package whose system dependencies are
-installed. Other native package and target recipes remain to be qualified,
+leaving it unset attempts every native package and requires its system
+dependencies. Other native package and target recipes remain to be qualified,
 including ImageMagick 7 system libraries. A static library does not bundle
 those system dependencies.
 
