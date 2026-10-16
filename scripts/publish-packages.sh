@@ -130,25 +130,7 @@ esac
 echo "Signing with $key_fingerprint"
 
 # 4. Publish every manifest version the registry does not already have.
-manifest_rows() {
-  python3 - <<'PY'
-import pathlib
-import subprocess
-import tomllib
-
-manifests = subprocess.check_output(
-    ["git", "ls-files", "*hew.toml"], text=True
-).splitlines()
-if not manifests:
-    raise SystemExit("no package manifests found")
-for manifest in sorted(manifests):
-    data = tomllib.loads(pathlib.Path(manifest).read_text())
-    package = data["package"]
-    print(f"{manifest}\t{package['name']}\t{package['version']}")
-PY
-}
-
-manifest_rows > "$manifests_file"
+python3 scripts/verify_package_contract.py --publish-order > "$manifests_file"
 
 # The name grammar is defined once, in the contract script; this asks it rather
 # than re-implementing a weaker check.

@@ -34,19 +34,11 @@ trap 'rm -rf "$build_dir"' EXIT
 # warning-free.
 run_check() {
     echo "== check: every tracked Hew source"
-    # The expected count is asserted by the contract script and read from it
-    # here, so the number is written down once.
-    local expected actual
-    expected="$(python3 scripts/verify_package_contract.py --source-count)"
-    actual="$(git ls-files '*.hew' | wc -l | tr -d ' ')"
-    if [[ "$actual" != "$expected" ]]; then
-        echo "tracked .hew count is $actual, expected $expected;" \
-            "add the new file to this gate deliberately" >&2
-        exit 1
-    fi
+    local status=0
     while IFS= read -r file; do
-        "$HEW" check -A dead_code --pkg-path "$repo_root" "$repo_root/$file"
+        "$HEW" check -A dead_code --pkg-path "$repo_root" "$repo_root/$file" || status=1
     done < <(git ls-files '*.hew')
+    return "$status"
 }
 
 run_program() {
