@@ -9,8 +9,8 @@ to read in a sitting.
 ## Packages
 
 Every package uses a dotted name (`hew.math.stats`) and lives in the directory
-that matches it. A package in this repository may not yet be published to the
-registry.
+that matches it. The current source release is `0.3.0`, compatible with Hew
+0.6.1. Check a package's published versions with `hew info <PACKAGE>`.
 
 | Package | Directory | What it gives you |
 | --- | --- | --- |
@@ -70,17 +70,17 @@ mean = 3
 
 `--pkg-path` points the compiler at the clone, where the `hew/` mirror tree
 described under [Layout](#layout) resolves `import hew.math.stats` without
-anything being installed. That is the route that works from a clone today.
-The `0.3.0` packages in this clone are not yet published. The registry's older
-`0.2.0` archives use syntax removed by rc4 and rc7, so they cannot replace this
-clone. Use the pinned Hew 0.6.1 toolchain and the clone route until the 0.3.0
-packages are published.
+anything being installed. For a registry-backed project, use the published
+`0.3.0` package:
 
-For a future registry install, `hew info hew.math.stats` must confirm a
-compiler-compatible version exists. A lookup that falls back to the local
-cache does not confirm registry availability. With that version,
-`hew add hew.math.stats --version <VERSION>` followed by `hew install`
-resolves the same import without `--pkg-path`.
+```sh
+hew init hello-registry
+cd hello-registry
+hew add hew.math.stats --version 0.3.0
+hew install
+```
+
+Save the program as `main.hew`, then run `hew run main.hew` without `--pkg-path`.
 
 Three things in that snippet carry across every package here. A fallible call
 returns `Result<T, E>` with a package-specific error enum, never a sentinel
@@ -95,7 +95,7 @@ actor, so a call is `conn.query(sql)` and its answer is
 answered at all, the inner one whether the operation succeeded.
 
 ```hew
-let conn = spawn postgres.Conn(connstr: "host=127.0.0.1 user=hew password=hew dbname=hew_test");
+let conn = spawn postgres.Conn { connstr: "host=127.0.0.1 user=hew password=hew dbname=hew_test" };
 match conn.query("select 1") {
     .Ok(result) => match result {
         .Ok(query) => println(f"{query.rows.len()} rows"),

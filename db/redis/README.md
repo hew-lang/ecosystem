@@ -14,7 +14,7 @@ import hew.db.redis;
 import std.encoding.utf8;
 
 fn main() {
-    let client = spawn redis.Conn(options: redis.Options { url: "redis://127.0.0.1/" });
+    let client = spawn redis.Conn { options: redis.Options { url: "redis://127.0.0.1/" } };
 
     match client.set("greeting", "hello".to_bytes()) {
         .Ok(result) => match result {

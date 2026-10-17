@@ -14,13 +14,13 @@ import hew.storage.s3;
 import std.encoding.utf8;
 
 fn main() {
-    let store = spawn s3.Bucket(options: s3.Options {
+    let store = spawn s3.Bucket { options: s3.Options {
         endpoint: "http://127.0.0.1:9000",
         region: "us-east-1",
         bucket: "hew-example",
         access_key: "<ACCESS_KEY>",
         secret_key: "<SECRET_KEY>",
-    });
+    } };
 
     match store.put("hello.txt", "hello".to_bytes(), "text/plain") {
         .Ok(result) => match result {
@@ -60,7 +60,7 @@ It prints `uploaded example/hello.txt` and then `hello`.
 
 ## API surface
 
-`spawn s3.Bucket(options: Options)` connects and returns the actor handle.
+`spawn s3.Bucket { options: config }` connects and returns the actor handle.
 `Options` fields: `endpoint`, `region`, `bucket`, `access_key`, `secret_key`
 (all `string`).
 

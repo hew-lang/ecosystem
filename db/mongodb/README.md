@@ -9,10 +9,10 @@ connection and query failures.
 import hew.db.mongodb;
 
 fn main() {
-    let db = spawn mongodb.Conn(
+    let db = spawn mongodb.Conn {
         uri: "mongodb://127.0.0.1:27017",
         database: "example",
-    );
+    };
 
     match db.insert_one("users", "{\"name\":\"Alice\",\"age\":30}") {
         .Ok(result) => match result {

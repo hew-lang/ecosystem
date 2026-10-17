@@ -9,7 +9,7 @@ an unavailable request generator.
 import hew.net.http;
 
 fn main() {
-    let server = spawn http.Server(addr: "127.0.0.1:8080");
+    let server = spawn http.Server { addr: "127.0.0.1:8080" };
     var attempts_left = 120;
     var served = false;
     while attempts_left > 0 && !served {

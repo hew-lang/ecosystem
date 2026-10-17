@@ -21,10 +21,10 @@ covers the MQTT operation.
 import hew.queue.mqtt;
 
 fn main() {
-    let client = spawn mqtt.Conn(options: mqtt.Options {
+    let client = spawn mqtt.Conn { options: mqtt.Options {
         host: "127.0.0.1", port: 11883,
         client_id: "hew-readme", keepalive_seconds: 30,
-    });
+    } };
     let _ = client.subscribe("hew/readme", mqtt.QoS.AtLeastOnce);
     let _ = client.publish("hew/readme", "hello", mqtt.QoS.AtLeastOnce, false);
     match client.next_message(1000) {
