@@ -19,7 +19,7 @@ covers the actor call, the inner one covers the NATS operation.
 import hew.queue.nats;
 
 fn main() {
-    let client = spawn nats.Conn(options: nats.Options { url: "nats://127.0.0.1:14222" });
+    let client = spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:14222" } };
     match client.subscribe("hew.readme") {
         .Ok(result) => match result {
             .Ok(subscription) => {

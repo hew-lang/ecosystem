@@ -9,7 +9,7 @@ import hew.db.mysql;
 import std.encoding.utf8;
 
 fn main() {
-    let db = spawn mysql.Conn(url: "mysql://hew:hew@127.0.0.1:3306/hew_test");
+    let db = spawn mysql.Conn { url: "mysql://hew:hew@127.0.0.1:3306/hew_test" };
     match db.query("SELECT 41 AS value") {
         .Ok(result) => match result {
             .Ok(query) => match query.rows[0].values[0] {

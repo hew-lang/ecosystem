@@ -169,6 +169,7 @@ while IFS=$'\t' read -r manifest name version; do
   echo "Publishing $name@$version from $manifest"
   (
     cd "$(dirname "$manifest")"
+    "$hew_bin" install
     "$hew_bin" publish
   ) | tee "$publish_log"
 

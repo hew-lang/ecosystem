@@ -42,7 +42,7 @@ Save this as `main.hew` in a project depending on
 import hew.image.magick;
 
 fn main() {
-    let image = spawn magick.Image(source: Source.Blank(640, 480, "#3366cc"));
+    let image = spawn magick.Image { source: Source.Blank(640, 480, "#3366cc") };
     let _ = image.thumbnail(160, 120);
     let _ = image.sharpen(0.0, 0.5);
     let png = match image.write_blob("PNG") {
@@ -58,7 +58,7 @@ fn main() {
     // A freshly created image carries no ImageMagick format tag until it is
     // decoded from real image data, so format() is checked on the reopened
     // blob rather than on `image` itself.
-    let decoded = spawn magick.Image(source: Source.Blob(png));
+    let decoded = spawn magick.Image { source: Source.Blob(png) };
     match decoded.format() {
         .Ok(result) => match result {
             .Ok(value) => println(value),

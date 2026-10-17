@@ -1,11 +1,10 @@
-# Substrate walls — `hew.dag` (runtime workflow DAG handler)
+# Historical substrate gaps — `hew.dag`
 
-This is the record of substrate gaps that shaped this library. Every
-reproduction below was last re-checked against the pinned compiler,
-`v0.6.0-rc2-dev.107+84c34d2bd` (see [`../docs/toolchain.md`](../docs/toolchain.md)),
-and each one states what that compiler does today. Re-check them when the pin
-moves: a wall that has lifted is a design constraint that no longer earns its
-keep.
+This records the compiler behaviour that shaped the library before Hew 0.6.0.
+The reproductions below were checked with `v0.6.0-rc2-dev.107+84c34d2bd`;
+they describe that historical compiler, not the supported Hew 0.6.1 release.
+For current usage, see the [package guide](README.md) and
+[toolchain guide](../docs/toolchain.md).
 
 The library is **fully working** for everything it exposes: inline tests and
 runnable examples cover the pure routing engine (spec loading, validation,

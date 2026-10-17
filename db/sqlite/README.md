@@ -13,7 +13,7 @@ import hew.db.sqlite;
 import std.encoding.utf8;
 
 fn main() {
-    let db = spawn sqlite.Db(path: ":memory:");
+    let db = spawn sqlite.Db { path: ":memory:" };
     let _ = db.execute("CREATE TABLE values_table (value TEXT)");
     let _ = db.execute("INSERT INTO values_table VALUES ('hello')");
     match db.query("SELECT value FROM values_table") {
@@ -48,7 +48,7 @@ explicit lengths.
 
 ## API surface
 
-`spawn sqlite.Db(path: string)` opens (or creates) the database file at
+`spawn sqlite.Db { path: filename }` opens (or creates) the database file at
 `path`; pass `":memory:"` for an in-process database. `Db` is an actor — every
 call below is made with `db.<method>(...)`.
 
