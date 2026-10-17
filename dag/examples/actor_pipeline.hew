@@ -69,7 +69,7 @@ fn main() {
                     var stages: Vec<Stage> = Vec.new();
                     for i in 0..dag.node_count(spec) {
                         let ns = dag.node_at(spec, i);
-                        stages.push(spawn Stage(op_code: ns.op_code, operand: ns.operand));
+                        stages.push(spawn Stage { op_code: ns.op_code, operand: ns.operand });
                     }
                     // Route input 5 through the topological order, asking each
                     // live actor and feeding results forward along the edges.

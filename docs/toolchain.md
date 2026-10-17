@@ -1,8 +1,8 @@
 # Toolchain pin
 
 Every package in this repository is validated against one exact Hew compiler
-build: `v0.6.0-rc7`, at revision
-`f09d3403587d1cf1bc33d00444bc76ae96861c17`. CI builds that revision from source
+build: `v0.6.1`, at revision
+`6a446f773391f45d2c0ce0a799240b8b9afef54e`. CI builds that revision from source
 before it checks anything here, so a green run means the packages work against
 that compiler and not merely against whatever the runner happened to have.
 
@@ -33,7 +33,8 @@ shipping a split toolchain.
    line in `.github/workflows/ci.yml` and `.github/workflows/publish.yml`, the
    `hew-cabi` `rev` in the workspace `Cargo.toml`, and the revision and version
    named at the top of this file.
-3. Run `make verify`. It fails naming any copy you missed.
+3. Run `make update-toolchain-lock` and `make verify` to refresh the native ABI
+   dependency and check all pins.
 4. Rebuild and re-check: `HEW_SOURCE=<hew checkout> make toolchain`, then the
    corpus gate below.
 
@@ -53,12 +54,11 @@ reviewed edit to `Cargo.lock`, not a side effect of running a test.
 Every package declares:
 
 ```toml
-hew = ">=0.6.0-rc7, <0.7.0"
+hew = ">=0.6.1, <0.7.0"
 ```
 
-The minimum supported compiler is rc7, the version used to validate the migrated
-wire variant tags and codec API. The range excludes older release candidates
-and the next breaking minor release; CI validates the exact rc7 revision above.
+The minimum supported compiler is 0.6.1. The range excludes older compilers
+and the next breaking minor release; CI validates the exact revision above.
 Native crates pin `hew-cabi` to that same revision, keeping their C ABI aligned
 with the compiler.
 
@@ -71,14 +71,14 @@ from the workflow within a release.
 ```sh
 # Build the pinned compiler from source.
 git clone https://github.com/hew-lang/hew.git /tmp/hew
-git -C /tmp/hew checkout f09d3403587d1cf1bc33d00444bc76ae96861c17
-cargo build --locked --profile release-lib -p hew-cli -p hew-lib --manifest-path /tmp/hew/Cargo.toml
+git -C /tmp/hew checkout 6a446f773391f45d2c0ce0a799240b8b9afef54e
+HEW_SOURCE=/tmp/hew make toolchain
 
 # Start the services the suites and examples connect to.
 docker compose up -d
 
 # Run the gate.
-HEW=/tmp/hew/target/release-lib/hew scripts/corpus-gate.sh all
+HEW=.tooling/target/release-lib/hew scripts/corpus-gate.sh all
 
 # Native crate tests.
 cargo test --locked --workspace

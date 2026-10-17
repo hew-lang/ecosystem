@@ -1,7 +1,5 @@
 import hew.db.sql.{Param};
 
-import hew.db.mysql;
-
 import hew.db.mysql.{MysqlError, CellValue};
 
 extern "C" {
@@ -65,7 +63,7 @@ fn expect_query_error_reporting<T>(result: Result<T, MysqlError>, expected: stri
 }
 
 fn connection() -> mysql.Conn {
-    spawn mysql.Conn(url: "mysql://hew:hew@127.0.0.1:3306/hew_test")
+    spawn mysql.Conn { url: "mysql://hew:hew@127.0.0.1:3306/hew_test" }
 }
 
 fn query_snapshot_preserves_values_null_empty_and_nul() {

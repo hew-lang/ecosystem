@@ -1,7 +1,5 @@
 import hew.db.sql.{Param};
 
-import hew.db.sqlite;
-
 import hew.db.sqlite.{SqliteError, CellValue};
 
 extern "C" {
@@ -54,7 +52,7 @@ fn expect_query_error<T>(result: Result<T, SqliteError>) {
 }
 
 fn database() -> sqlite.Db {
-    spawn sqlite.Db(path: ":memory:")
+    spawn sqlite.Db { path: ":memory:" }
 }
 
 fn query_snapshot_preserves_values_null_empty_and_nul() {
@@ -139,7 +137,7 @@ fn actual_database_failures_are_typed() {
 }
 
 fn open_failure_is_typed() {
-    let db = spawn sqlite.Db(path: "/hew-sql-beta-missing/parent/database.sqlite");
+    let db = spawn sqlite.Db { path: "/hew-sql-beta-missing/parent/database.sqlite" };
     match db.query("SELECT 1") {
         .Ok(.Err(.Open(message))) => assert(!message.is_empty()),
         _ => assert(false),

@@ -9,7 +9,7 @@ extern "C" {
 }
 
 fn connection() -> nats.Conn {
-    spawn nats.Conn(options: nats.Options { url: "nats://127.0.0.1:14222" })
+    spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:14222" } }
 }
 
 fn publish_subscribe_preserves_exact_message_and_timeout() {
@@ -97,7 +97,7 @@ fn request_reply_preserves_reply_subject_and_payload() {
         _ => panic("NATS responder subscribe failed"),
     };
     let requester = connection();
-    let harness = spawn ResponderHarness(responder_pid: responder, subscription_id: subscription);
+    let harness = spawn ResponderHarness { responder_pid: responder, subscription_id: subscription };
     // Fork the responder's listen-and-reply so it runs concurrently with the
     // requester's blocking `request`, which needs a live listener to answer.
     let serving = fork harness.serve();

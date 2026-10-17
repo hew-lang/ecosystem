@@ -1,7 +1,5 @@
 import hew.db.sql.{Param};
 
-import hew.db.postgres;
-
 import hew.db.postgres.{PostgresError, CellValue};
 
 extern "C" {
@@ -61,7 +59,7 @@ fn expect_query_error_reporting<T>(result: Result<T, PostgresError>, expected: s
 }
 
 fn connection() -> postgres.Conn {
-    spawn postgres.Conn(connstr: "host=127.0.0.1 port=5432 user=hew password=hew dbname=hew_test")
+    spawn postgres.Conn { connstr: "host=127.0.0.1 port=5432 user=hew password=hew dbname=hew_test" }
 }
 
 fn query_snapshot_preserves_values_null_and_empty() {

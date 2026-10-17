@@ -11,7 +11,7 @@
 import hew.auth.oauth;
 
 fn main() {
-    let client = spawn oauth.Client(client_id: "demo", client_secret: "secret");
+    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
     match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
         .Ok(result) => match result {
             .Ok(url) => println(f"send the user to {url}"),

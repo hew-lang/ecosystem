@@ -13,7 +13,7 @@ extern "C" {
 }
 
 fn store() -> s3.Bucket {
-    spawn s3.Bucket(options: s3.Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" })
+    spawn s3.Bucket { options: s3.Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" } }
 }
 
 fn binary_round_trip_and_missing_are_distinct() {
@@ -103,7 +103,7 @@ fn get_missing_key_is_distinct_from_present() {
 }
 
 fn bad_access_key_fails_typed() {
-    let client = spawn s3.Bucket(options: s3.Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "not-the-real-key", secret_key: "not-the-real-secret" });
+    let client = spawn s3.Bucket { options: s3.Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "not-the-real-key", secret_key: "not-the-real-secret" } };
     match client.get("hew/integration.bin") {
         .Ok(.Err(error)) => assert(!s3.error_message(error).is_empty()),
         _ => assert(false),

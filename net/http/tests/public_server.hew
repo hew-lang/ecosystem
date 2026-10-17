@@ -42,7 +42,7 @@ fn expect_client_response(client: i64, case_id: i32) {
 fn reports_no_pending_busy_and_closed_states() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
-    let server = spawn http.Server(addr: addr.clone());
+    let server = spawn http.Server { addr: addr.clone() };
     match server.header("X-Test") {
         .Ok(result) => match result {
             .Err(.NoPending(_)) => {}
@@ -115,7 +115,7 @@ fn reports_no_pending_busy_and_closed_states() {
 fn validation_errors_release_pending_connections() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
-    let server = spawn http.Server(addr: addr.clone());
+    let server = spawn http.Server { addr: addr.clone() };
     let invalid_status_client = test_client(fixture, 0);
     match server.accept_one() {
         .Ok(result) => match result {
@@ -234,7 +234,7 @@ fn validation_errors_release_pending_connections() {
 fn validates_targets_and_completes_expect_handshake() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
-    let server = spawn http.Server(addr: addr.clone());
+    let server = spawn http.Server { addr: addr.clone() };
     let invalid_target_client = test_client(fixture, 1);
     match server.accept_one() {
         .Ok(result) => match result {
@@ -298,7 +298,7 @@ fn validates_targets_and_completes_expect_handshake() {
 fn carries_nul_bytes_without_truncation() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
-    let server = spawn http.Server(addr: addr.clone());
+    let server = spawn http.Server { addr: addr.clone() };
     let body_nul_client = test_client(fixture, 5);
     match server.accept_one() {
         .Ok(result) => match result {
@@ -366,7 +366,7 @@ fn carries_nul_bytes_without_truncation() {
 fn round_trips_long_percent_encoded_text() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
-    let server = spawn http.Server(addr: addr.clone());
+    let server = spawn http.Server { addr: addr.clone() };
     let path_client = test_client(fixture, 7);
     var target = "";
     match server.accept_one() {
@@ -425,7 +425,7 @@ fn round_trips_long_percent_encoded_text() {
 /// An unusable listen address must surface the native diagnostic, which
 /// quotes the address the actor was given.
 fn reports_the_native_listen_failure() {
-    let server = spawn http.Server(addr: "hew-http-not-an-address");
+    let server = spawn http.Server { addr: "hew-http-not-an-address" };
     match server.accept_one() {
         .Ok(result) => match result {
             .Err(.Listen(message)) => assert(message.contains("hew-http-not-an-address")),

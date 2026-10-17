@@ -3,7 +3,7 @@ import hew.db.sqlite;
 import std.encoding.utf8;
 
 fn main() {
-    let db = spawn sqlite.Db(path: ":memory:");
+    let db = spawn sqlite.Db { path: ":memory:" };
     let _ = db.execute("CREATE TABLE values_table (value TEXT)");
     let _ = db.execute("INSERT INTO values_table VALUES ('hello')");
     match db.query("SELECT value FROM values_table") {

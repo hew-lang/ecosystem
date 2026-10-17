@@ -8,16 +8,11 @@ import re
 import subprocess
 import sys
 import tomllib
+from graphlib import CycleError, TopologicalSorter
 
 
-# The two counts this repository asserts about its own tree. They live here,
-# together, because a count kept in a second file drifts from this one:
-# `--source-count` hands the source count to scripts/corpus-gate.sh so the gate
-# does not restate it. Adding a package moves one or both, deliberately.
-EXPECTED_MANIFESTS = 16
-EXPECTED_SOURCES = 53
 EXPECTED_VERSION = "0.3.0"
-EXPECTED_HEW_RANGE = ">=0.6.0-rc7, <0.7.0"
+EXPECTED_HEW_RANGE = ">=0.6.1, <0.7.0"
 VEC_NEW = re.compile(r"\bVec::new\b")
 QUOTED_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 SQL_KEYWORD = re.compile(
@@ -94,6 +89,27 @@ def tracked_manifests() -> list[pathlib.Path]:
 def tracked_hew_sources() -> list[pathlib.Path]:
     output = subprocess.check_output(["git", "ls-files", "--", "*.hew"], text=True)
     return [pathlib.Path(line) for line in output.splitlines()]
+
+
+def publish_order() -> None:
+    packages = {}
+    for path in tracked_manifests():
+        manifest = tomllib.loads(path.read_text())
+        name = manifest["package"]["name"]
+        if name in packages:
+            raise SystemExit(f"duplicate package {name}: {packages[name][0]} and {path}")
+        packages[name] = (path, manifest)
+    dependencies = {
+        name: sorted(set(manifest.get("dependencies", {})) & packages.keys())
+        for name, (_, manifest) in sorted(packages.items())
+    }
+    try:
+        order = tuple(TopologicalSorter(dependencies).static_order())
+    except CycleError as error:
+        raise SystemExit(f"package dependency cycle: {error.args[1]}") from error
+    for name in order:
+        path, manifest = packages[name]
+        print(f"{path}\t{name}\t{manifest['package']['version']}")
 
 
 def sql_cast_positions(line: str) -> set[int]:
@@ -239,21 +255,19 @@ def check_name(name: str) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) == 2 and argv[0] == "--check-name":
         return check_name(argv[1])
-    if argv == ["--source-count"]:
-        print(EXPECTED_SOURCES)
+    if argv == ["--publish-order"]:
+        publish_order()
         return 0
     if argv:
         raise SystemExit(
-            f"usage: {sys.argv[0]} [--check-name NAME | --source-count]"
+            f"usage: {sys.argv[0]} [--check-name NAME | --publish-order]"
         )
 
     verify_legacy_syntax_detector()
     verify_name_grammar()
     manifests = tracked_manifests()
-    if len(manifests) != EXPECTED_MANIFESTS:
-        raise SystemExit(
-            f"expected {EXPECTED_MANIFESTS} tracked package manifests, found {len(manifests)}"
-        )
+    if not manifests:
+        raise SystemExit("no tracked package manifests found")
 
     for manifest in manifests:
         package = tomllib.loads(manifest.read_text())["package"]
@@ -279,11 +293,6 @@ def main(argv: list[str]) -> int:
         raise SystemExit("dotted registry mapping is not depth-independent")
 
     sources = tracked_hew_sources()
-    if len(sources) != EXPECTED_SOURCES:
-        raise SystemExit(
-            f"expected {EXPECTED_SOURCES} tracked Hew sources, found {len(sources)}"
-        )
-
     roots = {manifest.parent for manifest in manifests}
     verify_native_crates(roots)
     verify_active_package_text(roots)

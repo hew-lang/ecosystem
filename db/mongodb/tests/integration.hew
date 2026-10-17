@@ -256,7 +256,7 @@ fn count_invalid_filter_returns_invalid_json(db: mongodb.Conn) {
 }
 
 fn main() {
-    let db = spawn mongodb.Conn(uri: "mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=1000", database: "hew_mongodb_public_integration");
+    let db = spawn mongodb.Conn { uri: "mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=1000", database: "hew_mongodb_public_integration" };
     insert_one_valid_document_returns_nonempty_id(db);
     find_one_existing_document_returns_found_value(db);
     insert_and_find_preserve_unicode_document_values(db);

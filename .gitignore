@@ -18,6 +18,7 @@ magick-*.png
 
 # local toolchain build
 .tooling/
+.hew/
 
 # lefthook per-developer overrides
 lefthook-local.yml

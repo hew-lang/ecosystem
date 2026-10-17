@@ -213,7 +213,10 @@ pub actor Conn {
 
     /// Publish a UTF-8 payload to a subject.
     receive fn publish(subject: string, data: string) -> Result<(), NatsError> {
-        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         let status = unsafe {
             hew_nats_publish(handle, subject, data)
         };
@@ -226,7 +229,10 @@ pub actor Conn {
 
     /// Create an actor-owned subscription.
     receive fn subscribe(subject: string) -> Result<Subscription, NatsError> {
-        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         let subscription = unsafe {
             hew_nats_subscribe(handle, subject)
         };
@@ -239,7 +245,10 @@ pub actor Conn {
 
     /// Wait for one subscription delivery, preserving timeout as missing.
     receive fn next_message(subscription: Subscription, timeout_ms: i64) -> Result<Receive, NatsError> {
-        let _ = active_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let _ = match active_handle(native_handle, connect_error_kind, connect_error_message) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         receive_result(unsafe {
             hew_nats_next_result(subscription.handle, timeout_ms)
         })
@@ -247,7 +256,10 @@ pub actor Conn {
 
     /// Publish a request and wait for one reply, preserving timeout as missing.
     receive fn request(subject: string, data: string, timeout_ms: i64) -> Result<Receive, NatsError> {
-        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         receive_result(unsafe {
             hew_nats_request(handle, subject, data, timeout_ms)
         })
@@ -255,7 +267,10 @@ pub actor Conn {
 
     /// Reply to a message, rejecting messages without a reply subject.
     receive fn reply(message: Delivery, data: string) -> Result<(), NatsError> {
-        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
+            .Ok(_hew_migrate_value) => _hew_migrate_value,
+            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+        };
         match message.reply_to {
             .Missing => .Err(NatsError.InvalidInput("NATS message has no reply subject")),
             .Subject(subject) => {

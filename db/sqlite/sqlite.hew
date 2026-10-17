@@ -171,7 +171,9 @@ pub actor Db {
     }
 
     receive fn execute(sql: string) -> Result<i64, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let affected = unsafe {
             hew_sqlite_execute(connection, sql)
         };
@@ -185,7 +187,9 @@ pub actor Db {
     }
 
     receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let affected = unsafe {
             hew_sqlite_execute_params(connection, sql, cbor.encode(params))
         };
@@ -199,7 +203,9 @@ pub actor Db {
     }
 
     receive fn query(sql: string) -> Result<QueryResult, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let result = NativeResult { handle: unsafe {
             hew_sqlite_query(connection, sql)
         } };
@@ -210,7 +216,9 @@ pub actor Db {
     }
 
     receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
+            return .Err(error);
+        };
         let result = NativeResult { handle: unsafe {
             hew_sqlite_query_params(connection, sql, cbor.encode(params))
         } };
