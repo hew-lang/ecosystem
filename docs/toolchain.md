@@ -2,7 +2,7 @@
 
 Every package in this repository is validated against one exact Hew compiler
 build: `v0.6.1`, at revision
-`02d4fd2fe0e528e6ba7a0e210c8f944b7cd15654`. CI builds that revision from source
+`6a446f773391f45d2c0ce0a799240b8b9afef54e`. CI builds that revision from source
 before it checks anything here, so a green run means the packages work against
 that compiler and not merely against whatever the runner happened to have.
 
@@ -71,7 +71,7 @@ from the workflow within a release.
 ```sh
 # Build the pinned compiler from source.
 git clone https://github.com/hew-lang/hew.git /tmp/hew
-git -C /tmp/hew checkout 02d4fd2fe0e528e6ba7a0e210c8f944b7cd15654
+git -C /tmp/hew checkout 6a446f773391f45d2c0ce0a799240b8b9afef54e
 HEW_SOURCE=/tmp/hew make toolchain
 
 # Start the services the suites and examples connect to.
