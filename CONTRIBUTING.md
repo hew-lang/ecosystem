@@ -30,11 +30,6 @@ pre-commit hook formats staged files for you if you have it installed.
 3. If the package wraps a Rust library, add the crate to the workspace
    `Cargo.toml` and follow the native-crate contract in
    [`docs/packaging.md`](docs/packaging.md).
-4. Bump the expected counts in `scripts/verify_package_contract.py` —
-   `EXPECTED_MANIFESTS` for the new package, `EXPECTED_SOURCES` for every
-   `.hew` file it adds. Both counts are written there and nowhere else;
-   `scripts/corpus-gate.sh` reads the source count from that script rather
-   than restating it.
 
 ## What a package looks like
 

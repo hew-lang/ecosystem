@@ -62,12 +62,9 @@ tests.
 
 ## Contract checks
 
-`scripts/verify_package_contract.py` is the authority for the dotted-name
-grammar, for the metadata every manifest must carry, and for the agreement
-between a package's `hew.toml` and its Cargo crate — same version, same library
-name, same crate type. It runs from `make verify` and again as the first action
-of `scripts/publish-packages.sh`, so a local publish and a CI publish ask the
-same question. It also holds the two counts this repository asserts about its
-own tree — how many package manifests and how many `.hew` sources are tracked —
-and hands the source count to `scripts/corpus-gate.sh`, so adding a package
-means moving those numbers in one file.
+`scripts/verify_package_contract.py` checks each manifest's name and version
+(the version must match the workspace) and the agreement between a package's
+`hew.toml` and its Cargo crate: same library name, same crate type. It runs
+from `make verify` and again as the first action of `scripts/publish-packages.sh`,
+so a local publish and a CI publish ask the same question. The publish script
+also uses it for the dependency-first publish order and the package-name check.
