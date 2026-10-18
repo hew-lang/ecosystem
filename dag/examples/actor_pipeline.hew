@@ -5,11 +5,9 @@
 // `Stage` actor; the driver asks them in topo order, feeding each node the
 // merged output of its predecessors.
 //
-// The `await` driver loop is open-coded here rather than passed to
-// `route_with` as a closure: on the current substrate an `await` inside a
-// closure compiles and then yields a value that is not the actor's reply, so
-// the ask has to happen at statement level. (See WALLS.md.) The DAG library
-// supplies parsing, validation, and the topological sort.
+// The driver loop is open-coded here rather than passed to `route_with` as a
+// closure: `route_with` takes a non-suspending dispatch `fn`, and asking an
+// actor suspends.
 //
 //   node0 (add 1) ──> node1 (multiply 10) ──> node2 (add 100)
 //

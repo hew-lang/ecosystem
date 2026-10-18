@@ -64,4 +64,5 @@ root for a complete example.
 
 For routing through one live actor per node instead of a plain dispatch
 function, see `dag/examples/actor_pipeline.hew` — the driver is open-coded
-in the consumer (see `dag.hew`'s module doc comment and `WALLS.md` for why).
+in the consumer, because `route_with` takes a non-suspending dispatch `fn` and
+asking an actor suspends.
