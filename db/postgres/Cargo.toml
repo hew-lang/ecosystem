@@ -4,10 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "hew.db.postgres — actor-owned PostgreSQL client for Hew"
-readme = "README.md"
-keywords = ["database", "postgresql", "sql"]
-categories = ["database"]
+publish = false
 
 [lib]
 name = "hew_hew_db_postgres"
@@ -18,7 +15,6 @@ hew-ecosystem-db-sql = { path = "../sql" }
 postgres = "0.19"
 bytes = "1"
 hew-cabi.workspace = true
-libc.workspace = true
 
 [features]
 integration = []

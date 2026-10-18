@@ -4,10 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "hew.queue.mqtt — MQTT 3.1.1 messaging client for Hew"
-readme = "README.md"
-keywords = ["hew", "mqtt", "messaging", "pubsub"]
-categories = ["network-programming"]
+publish = false
 
 [lib]
 name = "hew_hew_queue_mqtt"
@@ -15,9 +12,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 hew-cabi.workspace = true
-# default-features = false: TLS (tokio-rustls) deferred to v1 (see mqtt.hew
-# out-of-scope note); v1 is plaintext TCP only, keeping the dep tree lean per
-# the plan's dependency-weight note.
+# Plaintext TCP only; TLS is not supported.
 rumqttc = { version = "0.25", default-features = false }
 
 [features]

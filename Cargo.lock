@@ -947,17 +947,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
 
 [[package]]
-name = "futures-executor"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432"
-dependencies = [
- "futures-core",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
 name = "futures-io"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1122,23 +1111,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "hew-ecosystem-auth-oauth"
-version = "0.3.0"
-dependencies = [
- "base64 0.22.1",
- "getrandom 0.2.17",
- "hew-cabi",
- "serde_json",
- "sha2 0.10.9",
- "ureq",
-]
-
-[[package]]
 name = "hew-ecosystem-db-mongodb"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "mongodb",
  "serde_json",
  "tokio",
@@ -1150,7 +1126,6 @@ version = "0.3.0"
 dependencies = [
  "hew-cabi",
  "hew-ecosystem-db-sql",
- "libc",
  "mysql",
 ]
 
@@ -1161,7 +1136,6 @@ dependencies = [
  "bytes",
  "hew-cabi",
  "hew-ecosystem-db-sql",
- "libc",
  "postgres",
 ]
 
@@ -1170,9 +1144,7 @@ name = "hew-ecosystem-db-redis"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "redis",
- "serial_test",
 ]
 
 [[package]]
@@ -1188,7 +1160,6 @@ version = "0.3.0"
 dependencies = [
  "hew-cabi",
  "hew-ecosystem-db-sql",
- "libc",
  "rusqlite",
 ]
 
@@ -1197,7 +1168,6 @@ name = "hew-ecosystem-image-magick"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "magick_rust",
 ]
 
@@ -1238,7 +1208,6 @@ name = "hew-ecosystem-storage-s3"
 version = "0.3.0"
 dependencies = [
  "hew-cabi",
- "libc",
  "rusty-s3",
  "ureq",
  "url",
@@ -2766,31 +2735,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial_test"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "699f4197115b8a7e7ff19c9a315a4bd6fffec26cc4626ef45ecaea389e081c6d"
-dependencies = [
- "futures-executor",
- "futures-util",
- "log",
- "once_cell",
- "parking_lot",
- "serial_test_derive",
-]
-
-[[package]]
-name = "serial_test_derive"
-version = "3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94e153fc76e1c6a068703d6d29c508a0b15c061c4b7e43da59cc097bc342673c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3351,8 +3295,6 @@ dependencies = [
  "once_cell",
  "rustls 0.23.43",
  "rustls-pki-types",
- "serde",
- "serde_json",
  "url",
  "webpki-roots 0.26.11",
 ]
