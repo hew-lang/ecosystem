@@ -19,8 +19,7 @@ text as `text` and binary data as `bytea`. The database applies explicit casts
 and column conversions; incompatible values and out-of-range conversions return
 a query error. An untyped NULL needs enough SQL context to infer its type (for
 example, `CAST($1 AS text)`). SQLite stores booleans as 0 or 1; MySQL follows its
-boolean alias for a small integer. Query snapshots retain the driver's existing
-`CellValue` API.
+boolean alias for a small integer. Query results use each driver's `CellValue`.
 
 The clients encode parameters using Hew's shared wire codec. The binary format
 is an internal native boundary, not an application serialization API.

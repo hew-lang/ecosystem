@@ -1,7 +1,7 @@
 //! Create an image, thumbnail it, write it out, and read its format back.
 //!
 //! ImageMagick 7 is a system dependency and its libraries have to be named on
-//! the link line. From the ecosystem checkout: `make magick-example`.
+//! the link line. From the ecosystem checkout: `scripts/corpus-gate.sh native`.
 //! image/magick/README.md spells out the full command.
 
 import hew.image.magick;

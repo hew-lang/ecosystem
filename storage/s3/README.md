@@ -52,7 +52,7 @@ program against the MinIO service in `docker-compose.yml`. Run it from the
 ecosystem checkout:
 
 ```sh
-docker compose up -d minio minio-init
+docker compose up --detach --wait minio
 hew run --pkg-path . storage/s3/examples/basic.hew
 ```
 

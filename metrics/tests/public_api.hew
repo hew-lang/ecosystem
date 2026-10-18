@@ -6,7 +6,11 @@ extern "C" {
 
 fn registry_without_close(before: i64) -> metrics.Registry {
     let registry = spawn metrics.Registry;
-    sleep(20ms);
+    // Handlers run only after init, so this reply proves the native registry exists.
+    match registry.export() {
+        .Ok(.Ok(_)) => {}
+        _ => assert(false),
+    }
     assert(unsafe {
         hew_metrics_registry_count()
     } == before + 1);
@@ -20,13 +24,6 @@ fn actor_stop_releases_relative_registry_count() {
     let registry = registry_without_close(before);
     stop(registry);
     stopped(registry);
-    var attempts = 0;
-    while unsafe {
-        hew_metrics_registry_count()
-    } != before && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_metrics_registry_count()
     } == before);

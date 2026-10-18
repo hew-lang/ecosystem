@@ -141,8 +141,8 @@ pub actor Registry {
     /// Register a counter.
     receive fn counter(name: string, help: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_counter_new(registry, name, help)
@@ -152,8 +152,8 @@ pub actor Registry {
     // Register a labeled counter vector. label_names is comma/newline/whitespace-delimited.
     receive fn counter_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_counter_vec_new(registry, name, help, label_names)
@@ -163,8 +163,8 @@ pub actor Registry {
     // Register a gauge. Returns a metric handle (i64), or -1 on error.
     receive fn gauge(name: string, help: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_gauge_new(registry, name, help)
@@ -174,8 +174,8 @@ pub actor Registry {
     // Register a labeled gauge vector. label_names is comma/newline/whitespace-delimited.
     receive fn gauge_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_gauge_vec_new(registry, name, help, label_names)
@@ -185,8 +185,8 @@ pub actor Registry {
     // Register a histogram with default buckets. Returns a metric handle, or -1 on error.
     receive fn histogram(name: string, help: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_histogram_new(registry, name, help)
@@ -196,8 +196,8 @@ pub actor Registry {
     // Register a histogram with custom buckets. buckets is comma/newline/whitespace-delimited f64s.
     receive fn histogram_with_buckets(name: string, help: string, buckets: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_histogram_with_buckets(registry, name, help, buckets)
@@ -207,8 +207,8 @@ pub actor Registry {
     // Register a labeled histogram vector with default buckets.
     receive fn histogram_vec(name: string, help: string, label_names: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_histogram_vec_new(registry, name, help, label_names)
@@ -218,8 +218,8 @@ pub actor Registry {
     // Register a labeled histogram vector with custom buckets.
     receive fn histogram_vec_with_buckets(name: string, help: string, label_names: string, buckets: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         registered(unsafe {
             hew_metrics_histogram_vec_with_buckets(registry, name, help, label_names, buckets)
@@ -229,8 +229,8 @@ pub actor Registry {
     // Increment a counter by 1.
     receive fn counter_inc(metric: i64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_counter_inc(registry, metric)
@@ -240,8 +240,8 @@ pub actor Registry {
     // Add a non-negative finite value to a counter.
     receive fn counter_add(metric: i64, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         if value < 0.0 {
             return .Err(MetricsError.InvalidInput("counter increments must be non-negative"));
@@ -254,8 +254,8 @@ pub actor Registry {
     // Increment a labeled counter by 1. label_values order must match registration label_names.
     receive fn counter_vec_inc(metric: i64, label_values: string) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_counter_vec_inc(registry, metric, label_values)
@@ -265,8 +265,8 @@ pub actor Registry {
     // Add a non-negative finite value to a labeled counter.
     receive fn counter_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         if value < 0.0 {
             return .Err(MetricsError.InvalidInput("counter increments must be non-negative"));
@@ -279,8 +279,8 @@ pub actor Registry {
     // Set a gauge to an absolute value.
     receive fn gauge_set(metric: i64, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_gauge_set(registry, metric, value)
@@ -290,8 +290,8 @@ pub actor Registry {
     // Add a value to a gauge.
     receive fn gauge_add(metric: i64, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_gauge_add(registry, metric, value)
@@ -301,8 +301,8 @@ pub actor Registry {
     // Decrement a gauge by a value.
     receive fn gauge_dec(metric: i64, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_gauge_dec(registry, metric, value)
@@ -312,8 +312,8 @@ pub actor Registry {
     // Set a labeled gauge to an absolute value.
     receive fn gauge_vec_set(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_gauge_vec_set(registry, metric, label_values, value)
@@ -323,8 +323,8 @@ pub actor Registry {
     // Add a value to a labeled gauge.
     receive fn gauge_vec_add(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_gauge_vec_add(registry, metric, label_values, value)
@@ -334,8 +334,8 @@ pub actor Registry {
     // Decrement a labeled gauge by a value.
     receive fn gauge_vec_dec(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_gauge_vec_dec(registry, metric, label_values, value)
@@ -345,8 +345,8 @@ pub actor Registry {
     // Record a histogram observation.
     receive fn histogram_observe(metric: i64, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_histogram_observe(registry, metric, value)
@@ -356,8 +356,8 @@ pub actor Registry {
     // Record a labeled histogram observation.
     receive fn histogram_vec_observe(metric: i64, label_values: string, value: f64) -> Result<i64, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         changed(metric, unsafe {
             hew_metrics_histogram_vec_observe(registry, metric, label_values, value)
@@ -367,8 +367,8 @@ pub actor Registry {
     // Export all metrics in Prometheus text format.
     receive fn export() -> Result<string, MetricsError> {
         let registry = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(registry) => registry,
+            .Err(error) => return .Err(error),
         };
         .Ok(unsafe {
             hew_metrics_export(registry)

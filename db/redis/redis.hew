@@ -279,8 +279,8 @@ pub actor Conn {
     /// Set an exact binary value.
     receive fn set(key: string, value: bytes) -> Result<i64, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         checked_count(unsafe {
             hew_redis_set(handle, key, value)
@@ -290,8 +290,8 @@ pub actor Conn {
     /// Get an exact binary value, preserving missing versus present-empty.
     receive fn get(key: string) -> Result<Lookup, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         lookup_result(StringResource { handle: unsafe {
             hew_redis_get(handle, key)
@@ -301,8 +301,8 @@ pub actor Conn {
     /// Delete a key and return the number removed.
     receive fn del(key: string) -> Result<i64, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         checked_count(unsafe {
             hew_redis_del(handle, key)
@@ -312,8 +312,8 @@ pub actor Conn {
     /// Set a value with a positive expiration in seconds.
     receive fn set_ex(key: string, value: bytes, ttl_seconds: i64) -> Result<i64, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         checked_count(unsafe {
             hew_redis_set_ex(handle, key, value, ttl_seconds)
@@ -323,14 +323,14 @@ pub actor Conn {
     /// Set a positive expiration and return whether the key existed.
     receive fn expire(key: string, ttl_seconds: i64) -> Result<bool, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let changed = match checked_count(unsafe {
             hew_redis_expire(handle, key, ttl_seconds)
         }) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(changed) => changed,
+            .Err(error) => return .Err(error),
         };
         .Ok(changed == 1)
     }
@@ -338,8 +338,8 @@ pub actor Conn {
     /// Return a typed key-lifetime outcome.
     receive fn ttl(key: string) -> Result<KeyTtl, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let seconds = unsafe {
             hew_redis_ttl(handle, key)
@@ -360,8 +360,8 @@ pub actor Conn {
     /// Atomically increment an integer value and return the new value.
     receive fn incr(key: string) -> Result<i64, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let value = unsafe {
             hew_redis_incr(handle, key)
@@ -372,8 +372,8 @@ pub actor Conn {
     /// Push a value at the head of a list and return the new length.
     receive fn lpush(key: string, value: bytes) -> Result<i64, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         checked_count(unsafe {
             hew_redis_lpush(handle, key, value)
@@ -383,8 +383,8 @@ pub actor Conn {
     /// Pop the tail of a list, returning `Missing` for an empty list.
     receive fn rpop(key: string) -> Result<Lookup, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         lookup_result(StringResource { handle: unsafe {
             hew_redis_rpop(handle, key)
@@ -394,14 +394,14 @@ pub actor Conn {
     /// Set a hash field and return whether it was newly added.
     receive fn hset(key: string, field: string, value: bytes) -> Result<bool, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let added = match checked_count(unsafe {
             hew_redis_hset(handle, key, field, value)
         }) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(added) => added,
+            .Err(error) => return .Err(error),
         };
         .Ok(added == 1)
     }
@@ -409,8 +409,8 @@ pub actor Conn {
     /// Get a hash field, preserving missing versus empty.
     receive fn hget(key: string, field: string) -> Result<Lookup, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         lookup_result(StringResource { handle: unsafe {
             hew_redis_hget(handle, key, field)
@@ -420,14 +420,14 @@ pub actor Conn {
     /// Delete a hash field and return whether it existed.
     receive fn hdel(key: string, field: string) -> Result<bool, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let removed = match checked_count(unsafe {
             hew_redis_hdel(handle, key, field)
         }) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(removed) => removed,
+            .Err(error) => return .Err(error),
         };
         .Ok(removed == 1)
     }
@@ -435,8 +435,8 @@ pub actor Conn {
     /// Return every hash field and value as wire-safe snapshots.
     receive fn hgetall(key: string) -> Result<Vec<HashEntry>, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let result = HashResource { handle: unsafe {
             hew_redis_hgetall(handle, key)
@@ -461,14 +461,14 @@ pub actor Conn {
     /// Add a set member and return whether it was newly inserted.
     receive fn sadd(key: string, member: bytes) -> Result<bool, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let added = match checked_count(unsafe {
             hew_redis_sadd(handle, key, member)
         }) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(added) => added,
+            .Err(error) => return .Err(error),
         };
         .Ok(added == 1)
     }
@@ -476,14 +476,14 @@ pub actor Conn {
     /// Remove a set member and return whether it existed.
     receive fn srem(key: string, member: bytes) -> Result<bool, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let removed = match checked_count(unsafe {
             hew_redis_srem(handle, key, member)
         }) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(removed) => removed,
+            .Err(error) => return .Err(error),
         };
         .Ok(removed == 1)
     }
@@ -491,8 +491,8 @@ pub actor Conn {
     /// Return every set member as a wire-safe snapshot.
     receive fn smembers(key: string) -> Result<Vec<SetMember>, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let result = SetResource { handle: unsafe {
             hew_redis_smembers(handle, key)
@@ -517,14 +517,14 @@ pub actor Conn {
     /// Test membership in a set.
     receive fn sismember(key: string, member: bytes) -> Result<bool, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let present = match checked_count(unsafe {
             hew_redis_sismember(handle, key, member)
         }) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(present) => present,
+            .Err(error) => return .Err(error),
         };
         .Ok(present == 1)
     }
@@ -532,8 +532,8 @@ pub actor Conn {
     /// Publish a message and return the subscriber count.
     receive fn publish(channel: string, message: bytes) -> Result<i64, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         checked_count(unsafe {
             hew_redis_publish(handle, channel, message)
@@ -543,8 +543,8 @@ pub actor Conn {
     /// Wait up to a positive timeout for one subscription message.
     receive fn subscribe_once(channel: string, timeout_ms: i64) -> Result<bytes, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let result = StringResource { handle: unsafe {
             hew_redis_subscribe_once(handle, channel, timeout_ms)
@@ -564,8 +564,8 @@ pub actor Conn {
     /// Execute a complete command pipeline, releasing its native queue on every path.
     receive fn pipeline_exec(commands: Vec<PipelineCommand>) -> Result<i64, RedisError> {
         let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let pipeline = NativePipeline { handle: unsafe {
             hew_redis_pipeline_new()

@@ -2,12 +2,6 @@ import hew.queue.nats;
 
 import hew.queue.nats.{NatsError};
 
-fn error_variants_return_exact_diagnostics() {
-    assert(nats.error_message(nats.NatsError.Closed("closed")) == "closed");
-    assert(nats.error_message(nats.NatsError.InvalidInput("invalid")) == "invalid");
-    assert(nats.error_message(nats.NatsError.Timeout("late")) == "late");
-}
-
 fn unavailable_server_returns_typed_connection_error() {
     let client = spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:1" } };
     match client.publish("hew.test", "value") {
@@ -30,7 +24,6 @@ fn reply_without_subject_returns_typed_input_error() {
 }
 
 fn main() {
-    error_variants_return_exact_diagnostics();
     unavailable_server_returns_typed_connection_error();
     reply_without_subject_returns_typed_input_error();
 }

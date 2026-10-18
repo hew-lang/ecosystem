@@ -71,7 +71,6 @@ fn transformations_cover_public_surface() {
     }
     stop(image);
     stopped(image);
-    sleep(20ms);
     let reopened = spawn magick.Image { source: Source.File(path) };
     match reopened.format() {
         .Ok(.Ok(value)) => assert(value == "PNG"),
@@ -79,7 +78,6 @@ fn transformations_cover_public_surface() {
     }
     stop(reopened);
     stopped(reopened);
-    sleep(20ms);
     let _ = fs.delete(path);
 }
 
@@ -95,7 +93,6 @@ fn long_unicode_path_round_trips_a_written_image() {
     }
     stop(image);
     stopped(image);
-    sleep(20ms);
     assert(fs.exists(path));
     let reopened = spawn magick.Image { source: Source.File(path) };
     match reopened.width() {
@@ -112,7 +109,6 @@ fn long_unicode_path_round_trips_a_written_image() {
     }
     stop(reopened);
     stopped(reopened);
-    sleep(20ms);
     let _ = fs.delete(path);
 }
 
@@ -129,7 +125,6 @@ fn missing_file_error_carries_the_path() {
     }
     stop(missing);
     stopped(missing);
-    sleep(20ms);
 }
 
 fn invalid_inputs_return_typed_errors() {
@@ -140,7 +135,6 @@ fn invalid_inputs_return_typed_errors() {
     }
     stop(image);
     stopped(image);
-    sleep(20ms);
     let rejected = spawn magick.Image { source: Source.Blank(10, 10, "pas-une-couleur") };
     match rejected.width() {
         .Ok(.Err(.InvalidInput(message))) => {
@@ -150,7 +144,6 @@ fn invalid_inputs_return_typed_errors() {
     }
     stop(rejected);
     stopped(rejected);
-    sleep(20ms);
 }
 
 fn blob_round_trip_preserves_a_real_image() {
@@ -165,7 +158,6 @@ fn blob_round_trip_preserves_a_real_image() {
     assert(encoded.len() > 8);
     stop(source);
     stopped(source);
-    sleep(20ms);
     let decoded = spawn magick.Image { source: Source.Blob(encoded) };
     match decoded.width() {
         .Ok(.Ok(value)) => assert(value as i64 == 37),
@@ -181,7 +173,6 @@ fn blob_round_trip_preserves_a_real_image() {
     }
     stop(decoded);
     stopped(decoded);
-    sleep(20ms);
 }
 
 fn image_without_close(before: i64) -> magick.Image {
@@ -204,13 +195,6 @@ fn actor_stop_releases_relative_registry_count() {
     let image = image_without_close(before);
     stop(image);
     stopped(image);
-    var attempts = 0;
-    while unsafe {
-        hew_magick_image_count()
-    } != before && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_magick_image_count()
     } == before);

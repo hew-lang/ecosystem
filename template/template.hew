@@ -115,7 +115,7 @@ fn parse_context(ctx: string) -> HashMap<string, string> {
     if ctx.is_empty() {
         return vars;
     }
-    // Split only on LF to preserve the legacy contract: CR remains data.
+    // Split only on LF; a CR is part of the value.
     let lines = string.split(ctx, "\n");
     var index = 0;
     while index < lines.len() {

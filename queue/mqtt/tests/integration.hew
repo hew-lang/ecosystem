@@ -23,17 +23,42 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
         .Ok(.Ok(_)) => {}
         _ => assert(false),
     }
-    sleep(100ms);
+    // subscribe returns once the request is queued, before the broker's SUBACK,
+    // so probe until a delivery shows the subscription is live.
+    var live = false;
+    var probes = 0;
+    while !live && probes < 60 {
+        match client.publish("hew/integration", "probe", mqtt.QoS.AtLeastOnce, false) {
+            .Ok(.Ok(_)) => {}
+            _ => assert(false),
+        }
+        match client.next_message(50) {
+            .Ok(.Ok(.Message(_))) => {
+                live = true;
+            }
+            .Ok(.Ok(.Missing)) => {}
+            _ => assert(false),
+        }
+        probes = probes + 1;
+    }
+    assert(live);
     match client.publish("hew/integration", "exact payload — 雪の結晶", mqtt.QoS.AtLeastOnce, false) {
         .Ok(.Ok(_)) => {}
         _ => assert(false),
     }
-    match client.next_message(3000) {
-        .Ok(.Ok(.Message(message))) => {
-            assert(message.topic == "hew/integration");
-            assert(message.payload == "exact payload — 雪の結晶");
+    // The broker keeps per-topic order, so late probes arrive before the payload.
+    var delivered = false;
+    while !delivered {
+        match client.next_message(3000) {
+            .Ok(.Ok(.Message(message))) => {
+                if message.payload != "probe" {
+                    assert(message.topic == "hew/integration");
+                    assert(message.payload == "exact payload — 雪の結晶");
+                    delivered = true;
+                }
+            }
+            _ => assert(false),
         }
-        _ => assert(false),
     }
     assert(unsafe {
         hew_mqtt_message_count()
@@ -44,13 +69,6 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
     }
     stop(client);
     stopped(client);
-    var attempts = 0;
-    while unsafe {
-        hew_mqtt_connection_count()
-    } != previous_connections && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_mqtt_connection_count()
     } == previous_connections);
@@ -73,13 +91,6 @@ fn actor_stop_releases_connection_relative_to_registry() {
     } == previous + 1);
     stop(client);
     stopped(client);
-    attempts = 0;
-    while unsafe {
-        hew_mqtt_connection_count()
-    } != previous && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_mqtt_connection_count()
     } == previous);

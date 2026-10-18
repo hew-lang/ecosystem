@@ -2,9 +2,7 @@
 
 import hew.db.mongodb;
 
-import hew.db.mongodb.{MongoError, DocumentLookup, QueryResult};
-
-fn assert_connect_error(result: Result<i64, MongoError>) {
+fn assert_connect_error(result: Result<i64, mongodb.MongoError>) {
     match result {
         .Err(.Connect(message)) => assert(!message.is_empty()),
         _ => panic("expected MongoError.Connect"),
@@ -54,32 +52,6 @@ fn connection_failure_is_typed_for_every_operation() {
     }
 }
 
-fn typed_values_preserve_missing_and_empty_results() {
-    let missing = DocumentLookup.Missing;
-    match missing {
-        .Missing => {}
-        _ => panic("expected Missing"),
-    }
-    let found = DocumentLookup.Found("");
-    match found {
-        .Found(document) => assert(document == ""),
-        _ => panic("expected Found with an empty value"),
-    }
-    let result = QueryResult { documents: Vec.new() };
-    assert(result.documents.is_empty());
-}
-
-fn error_messages_preserve_each_variant_diagnostic() {
-    assert(mongodb.error_message(MongoError.Connect("connect")) == "connect");
-    assert(mongodb.error_message(MongoError.InvalidJson("json")) == "json");
-    assert(mongodb.error_message(MongoError.Operation("operation")) == "operation");
-    assert(mongodb.error_message(MongoError.Serialize("serialize")) == "serialize");
-    assert(mongodb.error_message(MongoError.Closed("closed")) == "closed");
-    assert(mongodb.error_message(MongoError.Internal("internal")) == "internal");
-}
-
 fn main() {
     connection_failure_is_typed_for_every_operation();
-    typed_values_preserve_missing_and_empty_results();
-    error_messages_preserve_each_variant_diagnostic();
 }

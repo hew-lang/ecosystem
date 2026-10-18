@@ -99,8 +99,8 @@ pub actor Image {
     /// Resize to exact positive dimensions.
     receive fn resize(width: i32, height: i32) -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         if width <= 0 || height <= 0 {
             return .Err(MagickError.InvalidInput("image dimensions must be positive"));
@@ -113,8 +113,8 @@ pub actor Image {
     /// Crop a positive-sized region at the given offset.
     receive fn crop(width: i32, height: i32, x: i32, y: i32) -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         if width <= 0 || height <= 0 {
             return .Err(MagickError.InvalidInput("crop dimensions must be positive"));
@@ -126,8 +126,8 @@ pub actor Image {
 
     receive fn rotate(degrees: f64) -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         operation(unsafe {
             hew_magick_rotate(handle, degrees)
@@ -136,8 +136,8 @@ pub actor Image {
 
     receive fn blur(radius: f64, sigma: f64) -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         operation(unsafe {
             hew_magick_blur(handle, radius, sigma)
@@ -146,8 +146,8 @@ pub actor Image {
 
     receive fn sharpen(radius: f64, sigma: f64) -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         operation(unsafe {
             hew_magick_sharpen(handle, radius, sigma)
@@ -156,8 +156,8 @@ pub actor Image {
 
     receive fn flip() -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         operation(unsafe {
             hew_magick_flip(handle)
@@ -166,8 +166,8 @@ pub actor Image {
 
     receive fn flop() -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         operation(unsafe {
             hew_magick_flop(handle)
@@ -176,8 +176,8 @@ pub actor Image {
 
     receive fn width() -> Result<i32, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let value = unsafe {
             hew_magick_width(handle)
@@ -191,8 +191,8 @@ pub actor Image {
 
     receive fn height() -> Result<i32, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let value = unsafe {
             hew_magick_height(handle)
@@ -206,8 +206,8 @@ pub actor Image {
 
     receive fn format() -> Result<string, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let value = unsafe {
             hew_magick_format(handle)
@@ -221,8 +221,8 @@ pub actor Image {
 
     receive fn write(path: string) -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         operation(unsafe {
             hew_magick_write(handle, path)
@@ -232,8 +232,8 @@ pub actor Image {
     /// Encode the current image into an owned in-memory image blob.
     receive fn write_blob(format: string) -> Result<bytes, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         if format.is_empty() {
             return .Err(MagickError.InvalidInput("image format must not be empty"));
@@ -250,8 +250,8 @@ pub actor Image {
 
     receive fn thumbnail(max_width: i32, max_height: i32) -> Result<i64, MagickError> {
         let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         if max_width <= 0 || max_height <= 0 {
             return .Err(MagickError.InvalidInput("thumbnail bounds must be positive"));

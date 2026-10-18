@@ -29,7 +29,7 @@ hew run --pkg-path "$PWD" \
   image/magick/examples/basic.hew
 ```
 
-From the ecosystem checkout, `make magick-example` runs exactly that. Any
+From the ecosystem checkout, `scripts/corpus-gate.sh native` runs exactly that. Any
 program importing `hew.image.magick` needs the same flags. Without them the
 link fails with `undefined symbol: MagickWandGenesis` and a few dozen siblings.
 

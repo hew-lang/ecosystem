@@ -1,8 +1,4 @@
-// Run via `hew run --pkg-path <repo root> tests/integration.hew` (see
-// .github/workflows/ci.yml), not `hew test`: main()-dispatch keeps this
-// package's test entry points uniform across tests/public_api.hew and
-// tests/integration.hew. This file also needs a live S3-compatible
-// endpoint (e.g. MinIO on 127.0.0.1:9000).
+// Needs a live S3-compatible endpoint (e.g. MinIO on 127.0.0.1:9000).
 
 import std.encoding.utf8;
 
@@ -55,7 +51,6 @@ fn binary_round_trip_and_missing_are_distinct() {
     }
     stop(client);
     stopped(client);
-    sleep(20ms);
 }
 
 fn put_then_get_and_list_round_trip_unicode_key() {
@@ -88,7 +83,6 @@ fn put_then_get_and_list_round_trip_unicode_key() {
     }
     stop(client);
     stopped(client);
-    sleep(20ms);
 }
 
 fn get_missing_key_is_distinct_from_present() {
@@ -99,7 +93,6 @@ fn get_missing_key_is_distinct_from_present() {
     }
     stop(client);
     stopped(client);
-    sleep(20ms);
 }
 
 fn bad_access_key_fails_typed() {
@@ -110,7 +103,6 @@ fn bad_access_key_fails_typed() {
     }
     stop(client);
     stopped(client);
-    sleep(20ms);
 }
 
 fn actor_stop_releases_relative_bucket_count() {
@@ -127,13 +119,6 @@ fn actor_stop_releases_relative_bucket_count() {
     } == before + 1);
     stop(client);
     stopped(client);
-    var attempts = 0;
-    while unsafe {
-        hew_s3_bucket_count()
-    } != before && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_s3_bucket_count()
     } == before);
@@ -147,7 +132,6 @@ fn invalid_presign_fails_typed() {
     }
     stop(client);
     stopped(client);
-    sleep(20ms);
 }
 
 fn main() {

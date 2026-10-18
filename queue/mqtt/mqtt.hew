@@ -186,8 +186,8 @@ pub actor Conn {
     /// Publish a UTF-8 payload to a topic.
     receive fn publish(topic: string, payload: string, qos: QoS, retain: bool) -> Result<(), MqttError> {
         let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let retain_flag: i32 = if retain {
             1
@@ -207,8 +207,8 @@ pub actor Conn {
     /// Subscribe to a topic filter, including MQTT `+` and `#` wildcards.
     receive fn subscribe(topic_filter: string, qos: QoS) -> Result<(), MqttError> {
         let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let status = unsafe {
             hew_mqtt_subscribe(handle, topic_filter, qos_level(qos))
@@ -223,8 +223,8 @@ pub actor Conn {
     /// Wait for one delivery, preserving timeout as `Receive.Missing`.
     receive fn next_message(timeout_ms: i64) -> Result<Receive, MqttError> {
         let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
+            .Ok(handle) => handle,
+            .Err(error) => return .Err(error),
         };
         let result = NativeMessage { handle: unsafe {
             hew_mqtt_next_result(handle, timeout_ms)
