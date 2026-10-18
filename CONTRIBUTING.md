@@ -3,30 +3,25 @@
 ## Before you push
 
 ```sh
-make verify            # toolchain pins and the package metadata contract
+make lint                                         # cargo fmt, clippy, shellcheck
+docker compose up --detach --wait                 # the services the suites and examples use
+scripts/corpus-gate.sh all                        # hew fmt, check, every suite and example
+cargo test --locked --workspace --all-features    # the native crates
 ```
 
-```sh
-docker compose up -d               # the services the suites and examples use
-scripts/corpus-gate.sh all         # the corpus gate, the same script CI runs
-cargo test --locked --workspace    # the native crates
-```
-
-`scripts/corpus-gate.sh` type-checks every tracked `.hew` source and then runs
-every suite and every example. CI invokes that same script, so there is no
-second list to keep in step with it. [`docs/toolchain.md`](docs/toolchain.md)
-describes its stages and the system dependencies each one needs.
+[`docs/toolchain.md`](docs/toolchain.md) describes the corpus gate's stages and
+the system dependencies each one needs.
 
 Everything must be warning-free under the pinned compiler, not just
-error-free. `hew fmt --check` and `cargo fmt --check` must pass; a `lefthook`
-pre-commit hook formats staged files for you if you have it installed.
+error-free. A `lefthook` pre-commit hook formats staged files for you if you
+have it installed.
 
 ## Adding a package
 
 1. Create the directory matching the dotted name (`hew.queue.kafka` →
    `queue/kafka`) with a `hew.toml`, a module named after the final segment
    (`kafka.hew`), a `README.md`, `examples/`, and `tests/`.
-2. If the top-level segment is new, add the mirror symlink under `hew/`.
+2. Follow the [layout rules](docs/packaging.md#layout).
 3. If the package wraps a Rust library, add the crate to the workspace
    `Cargo.toml` and follow the native-crate contract in
    [`docs/packaging.md`](docs/packaging.md).

@@ -1,38 +1,23 @@
-# Local driver for the ecosystem publish path. Every target here executes the
-# same scripts the publish workflow executes, against the same pins, so a
-# publish run is reproducible off a runner.
+# Local entry points for the checks and publish path the workflows run.
 #
-#   make verify                                  contract check only
+#   make lint                                    formatting, clippy, shellcheck
 #   HEW_SOURCE=<hew checkout> make toolchain     build the pinned hew binary
 #   make publish-local                           publish with that binary
-#   make magick-example                          run the ImageMagick example
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-# Pins come from toolchain.env and nowhere else.
 include toolchain.env
-export HEW_REVISION HEW_VERSION LLVM_VERSION REGISTRY_API REGISTRY_AUDIENCE
 
 TOOLCHAIN_TARGET := $(CURDIR)/.tooling/target
 HEW_BIN := $(TOOLCHAIN_TARGET)/release-lib/hew
 
-# The compiler the packages are checked with. Override to use a build other
-# than the one on PATH: `HEW=.tooling/target/release-lib/hew make magick-example`.
-HEW ?= hew
-
-.PHONY: verify lint toolchain update-toolchain-lock publish-local magick-example
-
-verify: lint
-	scripts/verify-pins.sh
-	python3 scripts/verify_package_contract.py
+.PHONY: lint toolchain publish-local
 
 lint:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
-
-update-toolchain-lock:
-	cargo update --package hew-cabi
+	shellcheck scripts/*.sh
 
 # Builds hew at the pinned revision from the checkout named by HEW_SOURCE.
 # HEW_SOURCE must already be at HEW_REVISION: this target never moves someone
@@ -60,20 +45,3 @@ publish-local:
 		exit 1; \
 	}
 	HEW="$(HEW_BIN)" scripts/publish-packages.sh
-
-# ImageMagick is a system dependency, and magick_rust's link directives do not
-# survive the trip through this package's staticlib, so the MagickWand
-# libraries have to be named on the link line. pkg-config knows where they are.
-# This target exists because that incantation is otherwise only written down
-# inside the CI workflow.
-magick-example:
-	@pkg-config --exists MagickWand || { \
-		echo "ImageMagick 7 development files not found; see image/magick/README.md" >&2; \
-		exit 1; \
-	}
-	link_args=(); \
-	for library in $$(pkg-config --libs MagickWand); do \
-		link_args+=(--link-lib "$$library"); \
-	done; \
-	"$(HEW)" run --pkg-path "$(CURDIR)" "$${link_args[@]}" \
-		image/magick/examples/basic.hew

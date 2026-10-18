@@ -31,11 +31,9 @@ lib = "hew_hew_db_postgres"
 kind = "staticlib"
 ```
 
-`lib` is the library `Cargo.toml` builds, so the two manifests have to agree;
-`verify_package_contract.py` compares them rather than leaving the mismatch to
-surface as a link error in someone else's build. Every package spells `crate`
-as `"."`: one crate per package, in one place, never a second manifest for the
-same sources.
+`lib` is the library `Cargo.toml` builds, and `kind` is one of its crate types,
+so the two manifests have to agree. Every package spells `crate` as `"."`: one
+crate per package, in one place, never a second manifest for the same sources.
 
 The crate is a member of the workspace `Cargo.toml`, inherits its version from
 `[workspace.package]`, exposes a C ABI over `hew-cabi` pinned at the same
@@ -46,25 +44,15 @@ error, it does not use freed memory.
 
 ## Package workflow
 
-Use Hew 0.6.1 with the current `0.3.0` packages. The
-[getting-started example](../README.md#two-minutes-of-hew) shows both a clone
-and a registry-backed project.
+The [getting-started example](../README.md#two-minutes-of-hew) shows both a
+clone and a registry-backed project.
 
 ```sh
-hew add hew.math.stats --version 0.3.0      # select the compatible published version
-hew install                               # resolve and fetch
-hew publish                               # publish this package after installing its dependencies
+hew add hew.math.stats    # add a published package
+hew install               # resolve and fetch
+hew publish               # publish this package after installing its dependencies
 ```
 
 Within a package directory, `hew build` builds a declared `[native]` crate,
 `hew check` validates a manifest or a source file, and `hew test` runs Hew
 tests.
-
-## Contract checks
-
-`scripts/verify_package_contract.py` checks each manifest's name and version
-(the version must match the workspace) and the agreement between a package's
-`hew.toml` and its Cargo crate: same library name, same crate type. It runs
-from `make verify` and again as the first action of `scripts/publish-packages.sh`,
-so a local publish and a CI publish ask the same question. The publish script
-also uses it for the dependency-first publish order and the package-name check.

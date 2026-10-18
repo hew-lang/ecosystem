@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
 #
-# The corpus gate: every Hew source checked, every suite run, every example
-# actually executed. CI calls this script and docs/toolchain.md points at it,
-# so "what CI runs" and "what to run before opening a pull request" cannot
-# drift apart into two lists.
+# The corpus gate: every Hew source formatted and checked, every suite run,
+# every example executed. CI runs this script; run it before pushing.
 #
 # Usage: [HEW=<compiler>] scripts/corpus-gate.sh [check|hew|native|all]
 #
-#   check   type-check every tracked .hew file
+#   check   format-check and type-check every tracked .hew file
 #   hew     the suites and examples that need no ImageMagick and no S3
 #   native  the suites and examples that need ImageMagick or S3
 #   all     all three, in that order (the default)
 #
-# Services come from docker-compose.yml; `docker compose up -d` starts them.
-# `hew` and `native` need those services running. ImageMagick 7 development
-# files and pkg-config are the `native` stage's system dependency.
+# `hew` and `native` need the docker-compose.yml services running
+# (`docker compose up --detach --wait`). ImageMagick 7 development files and
+# pkg-config are the `native` stage's system dependency.
 
 set -euo pipefail
 
@@ -26,15 +24,18 @@ stage="${1:-all}"
 build_dir="$(mktemp -d)"
 trap 'rm -rf "$build_dir"' EXIT
 
-# Every file is checked on its own, so `dead_code` would fire on every exported
-# function whose only callers live in a sibling example, test, or downstream
-# program. Hew has no library manifest to mark a public surface as used by
-# design, so the lint is switched off for this sweep rather than suppressed one
-# function at a time. Every other lint stays on, and this sweep must stay
-# warning-free.
 run_check() {
-    echo "== check: every tracked Hew source"
+    echo "== fmt: every tracked Hew source"
     local status=0
+    git ls-files -z '*.hew' | xargs -0 "$HEW" fmt --check || status=1
+
+    # Every file is checked on its own, so `dead_code` would fire on every
+    # exported function whose only callers live in a sibling example, test, or
+    # downstream program. Hew has no library manifest to mark a public surface
+    # as used by design, so the lint is switched off for this sweep rather than
+    # suppressed one function at a time. Every other lint stays on, and this
+    # sweep must stay warning-free.
+    echo "== check: every tracked Hew source"
     while IFS= read -r file; do
         "$HEW" check -A dead_code --pkg-path "$repo_root" "$repo_root/$file" || status=1
     done < <(git ls-files '*.hew')
@@ -50,10 +51,8 @@ run_program() {
     timeout "${seconds}s" "$build_dir/program"
 }
 
-# Serve one request through the HTTP example. The example exits after the first
-# request, so the request has to come from somewhere: sending it here is what
-# proves the happy path. Without it the gate would only ever observe the
-# accept timeout, which is exactly how the example's silence went unnoticed.
+# Serve one request through the HTTP example and check both sides of it. The
+# example exits after the first request, so the gate sends that request.
 run_http_example() {
     echo "== run: net/http/examples/hello.hew (with a real request)"
     local log body pid
@@ -80,6 +79,7 @@ run_http_example() {
 run_hew() {
     echo "== test: pure-Hew suites"
     "$HEW" test dag/dag.hew
+    "$HEW" test auth/oauth/oauth.hew
     "$HEW" test math/stats/stats.hew
     "$HEW" test template/template.hew
 

@@ -1,111 +1,69 @@
 # Toolchain pin
 
 Every package in this repository is validated against one exact Hew compiler
-build: `v0.6.1`, at revision
-`6a446f773391f45d2c0ce0a799240b8b9afef54e`. CI builds that revision from source
-before it checks anything here, so a green run means the packages work against
-that compiler and not merely against whatever the runner happened to have.
-
-## Where the pin lives
-
-`toolchain.env` is the only place the pins are written. It is sourced, never
-executed, and each consumer reads the subset it needs:
-
-| Variable | Read by | Purpose |
-| --- | --- | --- |
-| `HEW_REVISION` | CI, `make toolchain` | Compiler commit to build and check against |
-| `HEW_VERSION` | CI, `make toolchain` | Version string the built binary must report |
-| `LLVM_VERSION` | CI | LLVM toolchain the compiler build needs |
-| `REGISTRY_API` | `scripts/publish-packages.sh` | Registry endpoint to publish to |
-| `REGISTRY_AUDIENCE` | `scripts/publish-packages.sh` | OIDC audience for trusted publishing |
-
-Three consumers cannot read `toolchain.env`: a workflow `uses:` ref and a Cargo
-git `rev` must both be literals, and this document states the pin in prose.
-`scripts/verify-pins.sh` asserts each of those copies against `toolchain.env`
-rather than trusting them, so a repin that misses one fails closed instead of
-shipping a split toolchain.
+build, pinned in [`toolchain.env`](../toolchain.env) together with the LLVM
+release and registry endpoint; that file's header says what each pin means.
+CI builds the pinned revision from source before it checks anything here, so a
+green run means the packages work against that compiler and not merely against
+whatever the runner happened to have.
 
 ## Bumping the pin
 
-1. Edit `toolchain.env` — `HEW_REVISION`, `HEW_VERSION`, and `LLVM_VERSION` if
+1. Edit `toolchain.env`: `HEW_REVISION`, `HEW_VERSION`, and `LLVM_VERSION` if
    the compiler's LLVM requirement moved.
-2. Update the literal copies: the `uses: hew-lang/hew/.github/actions/setup-llvm@<sha>`
-   line in `.github/workflows/ci.yml` and `.github/workflows/publish.yml`, the
-   `hew-cabi` `rev` in the workspace `Cargo.toml`, and the revision and version
-   named at the top of this file.
-3. Run `make update-toolchain-lock` and `make verify` to refresh the native ABI
-   dependency and check all pins.
-4. Rebuild and re-check: `HEW_SOURCE=<hew checkout> make toolchain`, then the
+2. Set the `hew-cabi` `rev` in the workspace `Cargo.toml` to the new
+   `HEW_REVISION`, then run `cargo update --package hew-cabi`.
+3. Rebuild and re-check: `HEW_SOURCE=<hew checkout> make toolchain`, then the
    corpus gate below.
-
-Workflow filenames carry no version, so a repin never renames a file.
 
 ## The Rust dependency closure
 
 `Cargo.lock` is tracked. The compiler is pinned to one revision, so the native
 crates' dependency graph is pinned the same way rather than being resolved
-afresh on every machine. Every `cargo` invocation in the gate, the Makefile and
-the workflows passes `--locked`, which fails when the lockfile would have to
-change instead of silently changing it. Updating a dependency is therefore a
-reviewed edit to `Cargo.lock`, not a side effect of running a test.
+afresh on every machine. Every `cargo` build, test and clippy run in the
+Makefile, the docs and the workflows passes `--locked`, which fails when the
+lockfile would have to change instead of silently changing it. Updating a
+dependency is therefore a reviewed edit to `Cargo.lock`, not a side effect of
+running a test.
 
 ## Compatibility
 
-Every package declares:
-
-```toml
-hew = ">=0.6.1, <0.7.0"
-```
-
-The minimum supported compiler is 0.6.1. The range excludes older compilers
-and the next breaking minor release; CI validates the exact revision above.
-Native crates pin `hew-cabi` to that same revision, keeping their C ABI aligned
-with the compiler.
+Every package's `hew.toml` declares a `hew` compatibility range that starts at
+the pinned compiler's version and excludes the next breaking minor release. CI
+validates the exact pinned revision.
 
 ## The corpus gate
 
-`scripts/corpus-gate.sh` is the gate. CI runs that script and nothing else
-Hew-side, so this document does not restate the command list — it would drift
-from the workflow within a release.
+`scripts/corpus-gate.sh` is the corpus gate.
 
 ```sh
 # Build the pinned compiler from source.
+. ./toolchain.env
 git clone https://github.com/hew-lang/hew.git /tmp/hew
-git -C /tmp/hew checkout 6a446f773391f45d2c0ce0a799240b8b9afef54e
+git -C /tmp/hew checkout "$HEW_REVISION"
 HEW_SOURCE=/tmp/hew make toolchain
 
 # Start the services the suites and examples connect to.
-docker compose up -d
+docker compose up --detach --wait
 
 # Run the gate.
-HEW=.tooling/target/release-lib/hew scripts/corpus-gate.sh all
+HEW="$PWD/.tooling/target/release-lib/hew" scripts/corpus-gate.sh all
 
 # Native crate tests.
-cargo test --locked --workspace
+cargo test --locked --workspace --all-features
 ```
 
 The script has three stages, and `all` runs them in order:
 
 | Stage | What it does | Needs |
 | --- | --- | --- |
-| `check` | `hew check -A dead_code` over every tracked `.hew` file | nothing |
-| `hew` | the pure-Hew suites, every package test suite, and every example, each one *run* rather than only checked | `docker compose up -d` |
+| `check` | `hew fmt --check` and `hew check -A dead_code` over every tracked `.hew` file | nothing |
+| `hew` | the pure-Hew suites, every package test suite, and every example, each one *run* rather than only checked | the `docker-compose.yml` services |
 | `native` | the ImageMagick and S3 suites and examples | the above, plus ImageMagick 7 development files and `pkg-config` |
 
-Running the examples, not merely checking them, is deliberate: an example that
-type-checks and then prints nothing, or that times out before a person can
-reach it, is a defect the gate has to see. The metrics example is asserted on
-its output and the HTTP example is sent a real request for that reason.
-
-`-A dead_code` is on the sweep because every file is checked on its own, so the
-lint would otherwise fire on every exported function whose callers live in a
-sibling example, test, or downstream program.
-
-CI additionally does what only a runner can: it builds the pinned compiler,
-installs the system libraries, builds ImageMagick from a pinned source archive,
-starts the service containers, and runs `cargo test` split across the
-integration-gated crates. Those steps live in
+CI also installs the system libraries, builds ImageMagick from a pinned source
+archive, and runs `make lint`. Those steps live in
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
-`make toolchain` builds the same binary into `.tooling/` and refuses to build
+`make toolchain` builds the pinned binary into `.tooling/` and refuses to build
 if the checkout named by `HEW_SOURCE` is not at `HEW_REVISION` or is dirty.

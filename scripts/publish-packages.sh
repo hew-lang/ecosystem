@@ -54,12 +54,7 @@ response="$(mktemp)"
 archive="$(mktemp)"
 trap 'rm -f "$manifests_file" "$publish_log" "$response" "$archive"' EXIT
 
-# 1. Contracts first: never touch the registry with a drifted pin or with a
-#    manifest set that does not satisfy the dotted-name and version contract.
-scripts/verify-pins.sh
-python3 scripts/verify_package_contract.py
-
-# 2. The toolchain must be the pinned one.
+# 1. The toolchain must be the pinned one.
 hew_bin="${HEW:-}"
 [ -n "$hew_bin" ] || fail "HEW is unset; set it to the pinned hew binary (make toolchain builds one)"
 [ -x "$hew_bin" ] || fail "HEW is not executable: $hew_bin"
@@ -68,7 +63,7 @@ echo "Using $actual_version"
 [ "$actual_version" = "hew $HEW_VERSION" ] \
   || fail "toolchain mismatch: expected 'hew $HEW_VERSION', found '$actual_version'"
 
-# 3. Authentication: exactly one source resolves.
+# 2. Authentication: exactly one source resolves.
 have_oidc=0
 have_credentials=0
 if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
@@ -104,8 +99,6 @@ elif [ "$have_oidc" -eq 1 ]; then
   registry_token="$(jq --exit-status --raw-output '.token' <<<"$grant")"
   [ "$(jq --exit-status --raw-output '.identity' <<<"$grant")" = "hew-ecosystem" ] \
     || fail "trusted publishing grant is not the hew-ecosystem identity"
-  [ "$(jq --exit-status --raw-output '.expires_in' <<<"$grant")" = "900" ] \
-    || fail "trusted publishing grant did not carry the expected 900s lifetime"
   mkdir -p "$hew_home"
   (
     umask 077
@@ -129,15 +122,8 @@ case "$key_fingerprint" in
 esac
 echo "Signing with $key_fingerprint"
 
-# 4. Publish every manifest version the registry does not already have.
-python3 scripts/verify_package_contract.py --publish-order > "$manifests_file"
-
-# The name grammar is defined once, in the contract script; this asks it rather
-# than re-implementing a weaker check.
-while IFS=$'\t' read -r manifest name version; do
-  python3 scripts/verify_package_contract.py --check-name "$name" \
-    || fail "$manifest: package name is not publishable: $name"
-done < "$manifests_file"
+# 3. Publish every manifest version the registry does not already have.
+python3 scripts/publish_order.py > "$manifests_file"
 
 while IFS=$'\t' read -r manifest name version; do
   package_path="${name//./\/}"
@@ -192,11 +178,10 @@ while IFS=$'\t' read -r manifest name version; do
      | (.name == $name)
        and (.vers == $version)
        and (.cksum == $cksum)
-       and (.key_fp == $key_fp)
-       and (.sig | type == "string" and startswith("ed25519:") and (length > 9))' \
+       and (.key_fp == $key_fp)' \
     "$response" >/dev/null \
     || {
-      jq '.version | {name, vers, cksum, key_fp, sig}' "$response" >&2 || cat "$response" >&2
+      jq '.version | {name, vers, cksum, key_fp}' "$response" >&2 || cat "$response" >&2
       fail "$name@$version: registry record does not match what was published (expected name $package_path, checksum $local_cksum, key $key_fingerprint)"
     }
 

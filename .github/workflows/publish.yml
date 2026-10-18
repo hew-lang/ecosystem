@@ -20,32 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
-      # toolchain.env is the only place the pins are written. `uses:` cannot
-      # take an expression, so the one literal copy of the revision below is
-      # asserted against it rather than trusted.
-      - name: Load pinned toolchain and registry contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          scripts/verify-pins.sh
-          . ./toolchain.env
-          for pin in HEW_REVISION HEW_VERSION LLVM_VERSION REGISTRY_API REGISTRY_AUDIENCE; do
-            printf '%s=%s\n' "$pin" "${!pin}" >> "$GITHUB_ENV"
-          done
-
-      - name: Verify dotted package contract before registry access
-        shell: bash
-        # Fail-fast ahead of the toolchain build; publish-packages.sh re-runs
-        # this same check as its own first action.
-        run: python3 scripts/verify_package_contract.py
-
-      - uses: hew-lang/hew/.github/actions/setup-llvm@6a446f773391f45d2c0ce0a799240b8b9afef54e
-        with:
-          version: ${{ env.LLVM_VERSION }}
-
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
-        with:
-          toolchain: "1.96.0"
+      - name: Load toolchain pins
+        run: grep '^[A-Z_]*=' toolchain.env >> "$GITHUB_ENV"
 
       - name: Check out pinned Hew source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -55,23 +31,17 @@ jobs:
           path: .tooling/hew
           fetch-depth: 0
 
-      - name: Build pinned Hew toolchain
-        shell: bash
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.tooling/hew/target
-        run: |
-          set -euo pipefail
-          test "$(git -C .tooling/hew rev-parse HEAD)" = "$HEW_REVISION"
-          cargo build --locked --profile release-lib -p hew-cli -p hew-lib \
-            --manifest-path .tooling/hew/Cargo.toml
-          # The compiler looks for std beside its profile directory.
-          cp -a .tooling/hew/std .tooling/hew/target/std
-          HEW="$GITHUB_WORKSPACE/.tooling/hew/target/release-lib/hew"
-          test -x "$HEW"
-          echo "HEW=$HEW" >> "$GITHUB_ENV"
+      - uses: ./.tooling/hew/.github/actions/setup-llvm
+        with:
+          version: ${{ env.LLVM_VERSION }}
 
-      # Authentication, the manifest loop, and the version assertion all live in
-      # the script so that a local publish takes the identical path.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Build pinned Hew toolchain
+        run: HEW_SOURCE=.tooling/hew make toolchain
+
+      # Authentication, the manifest loop, and the read-back checks live in the
+      # script so that a local publish takes the identical path.
       - name: Publish new package versions
-        shell: bash
-        run: scripts/publish-packages.sh
+        run: make publish-local

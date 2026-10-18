@@ -33,9 +33,7 @@ that matches it. The current source release is `0.3.0`, compatible with Hew
 
 ## Two minutes of Hew
 
-Use the compiler pinned in the [toolchain guide](docs/toolchain.md) for these
-packages: Hew 0.6.1. This is the pinned compiler for validating the packages'
-explicit wire variant tags and codec API.
+Use the compiler pinned in the [toolchain guide](docs/toolchain.md).
 
 `hew.math.stats` is pure Hew with no service behind it, so it is the shortest
 thing here that runs. Clone this repository, make a directory beside the clone,
@@ -69,14 +67,14 @@ mean = 3
 ```
 
 `--pkg-path` points the compiler at the clone, where the `hew/` mirror tree
-described under [Layout](#layout) resolves `import hew.math.stats` without
-anything being installed. For a registry-backed project, use the published
-`0.3.0` package:
+described in [packaging](docs/packaging.md#layout) resolves
+`import hew.math.stats` without anything being installed. For a
+registry-backed project, add the published package:
 
 ```sh
 hew init hello-registry
 cd hello-registry
-hew add hew.math.stats --version 0.3.0
+hew add hew.math.stats
 hew install
 ```
 
@@ -107,56 +105,24 @@ stop(conn);
 stopped(conn);
 ```
 
-Every example in this repository writes that pair the same way: one `match` per
-`Result`, the inner one nested in the outer `.Ok` arm. Nesting the two patterns
-into a single `.Ok(.Ok(...))` arm also compiles, but mixing the two forms across
-a corpus teaches nothing, so the packages here pick one and keep it.
-
 Those credentials are the ones `docker-compose.yml` starts PostgreSQL with, so
-the snippet runs as written after `docker compose up -d postgres`.
+the snippet runs as written after `docker compose up --detach --wait postgres`.
 
 Each package's `README.md` opens with a runnable example of exactly this shape,
 and `examples/` holds the same program as a file you can run.
 
 ## Build, check, publish
 
-```sh
-make verify                                   # toolchain pins + package contract
-HEW_SOURCE=<hew checkout> make toolchain      # build the pinned compiler
-docker compose up -d                          # services the examples and tests need
-hew check -A dead_code --pkg-path "$PWD" math/stats/examples/basic.hew
-hew run --pkg-path "$PWD" math/stats/examples/basic.hew
-hew test dag/dag.hew                          # pure-Hew suites
-cargo test --locked --workspace               # native crates
-make magick-example                           # the one example needing link flags
-make publish-local                            # publish with the pinned compiler
-```
-
-`-A dead_code` is not optional decoration. Each file is checked on its own, so
-without it the lint fires on every exported function whose only callers live in
-a sibling example, test, or downstream program — 127 warnings across this
-corpus. The alternative the compiler suggests, a `// hew:allow(dead_code)` line
-per function, buries the same fact in 127 places instead of one.
-
-`make verify` is the cheap gate to run first: it checks the toolchain pins and
-the package metadata contract, the same two scripts CI runs before it builds
-anything. The full corpus check CI performs, the compiler revision this
-repository is pinned to, and how to move that pin are in [`docs/toolchain.md`](docs/toolchain.md);
-package layout and the native-crate contract are in
-[`docs/packaging.md`](docs/packaging.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) lists what to run before pushing.
+[`docs/toolchain.md`](docs/toolchain.md) covers the pinned compiler, how to
+move the pin, and the corpus gate; [`docs/packaging.md`](docs/packaging.md)
+covers package layout and the native-crate contract.
 
 `hew.image.magick` is the one package whose example needs more than `hew run`:
 ImageMagick is a system library, and its link directives do not survive the trip
-through the package's staticlib. `make magick-example` supplies the flags; see
+through the package's staticlib. `scripts/corpus-gate.sh native` runs its suite
+and example with the MagickWand link flags; see
 [`image/magick/README.md`](image/magick/README.md).
-
-## Layout
-
-Packages live at their dotted path (`db/postgres`), and `hew/` mirrors each
-top-level segment back with a symlink (`hew/db -> ../db`) so that
-`import hew.db.postgres` resolves inside this repository without installing
-anything. A new package needs both: its own directory and, for a new top-level
-segment, a matching symlink under `hew/`.
 
 ## Documentation
 
