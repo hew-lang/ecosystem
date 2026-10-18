@@ -1,13 +1,8 @@
 //! OAuth 2.0 client for authentication and authorization flows.
 //!
 //! Supports client credentials (machine-to-machine), PKCE-protected
-//! authorization code URL generation, token exchange, and token refresh. Uses
-//! direct HTTP calls to token endpoints.
-//!
-//! Note: Uses `ureq` directly in the FFI layer rather than `std.net.http_client`
-//! because the stdlib HTTP client does not yet expose response status codes, headers,
-//! or body text. When the stdlib `Response` type gains those capabilities, this
-//! library can be simplified.
+//! authorization code URL generation, token exchange, and token refresh.
+//! Token requests are form-encoded POSTs sent with `std.net.http.http_client`.
 //!
 //! # Examples
 //!
@@ -16,69 +11,62 @@
 //!
 //! fn main() {
 //!     // Machine-to-machine: get a token using client credentials
-//!     let client = spawn oauth.Client(
-//!         client_id: "my-service",
-//!         client_secret: "secret123",
-//!     );
+//!     let client = spawn oauth.Client { client_id: "my-service", client_secret: "secret123" };
 //!
-//!     let token = match client.client_credentials(
-//!         token_url: "https://auth.example.com/token",
-//!         oauth_scope: "read write",
-//!     ) {
+//!     let token = match client.client_credentials("https://auth.example.com/token", "read write") {
 //!         .Ok(result) => match result {
 //!             .Ok(value) => value,
 //!             .Err(error) => panic(oauth.error_message(error)),
-//!         },
+//!         }
 //!         .Err(_) => panic("OAuth actor stopped"),
 //!     };
-//!     let bearer = token.access_token();
-//!     println(bearer);
-//!     token.free();
+//!     println(token.access_token());
 //!
 //!     // Authorization code: generate a PKCE-protected redirect URL for user login.
 //!     // Passing empty state makes the client generate a CSPRNG state.
-//!     let url = match client.auth_url(
-//!         auth_url: "https://auth.example.com/authorize",
-//!         redirect_uri: "https://myapp.com/callback",
-//!         oauth_scope: "openid profile",
-//!         state: "",
-//!     ) {
+//!     let url = match client.auth_url("https://auth.example.com/authorize", "https://myapp.com/callback", "openid profile", "") {
 //!         .Ok(result) => match result {
 //!             .Ok(value) => value,
 //!             .Err(error) => panic(oauth.error_message(error)),
-//!         },
+//!         }
 //!         .Err(_) => panic("OAuth actor stopped"),
 //!     };
 //!     println(url);
-//!     let expected_state = match client.current_state() {
-//!         .Ok(result) => match result {
-//!             .Ok(value) => value,
-//!             .Err(error) => panic(oauth.error_message(error)),
-//!         },
-//!         .Err(_) => panic("OAuth actor stopped"),
-//!     };
-//!     // Compare callback `state` to expected_state before exchanging the code.
-//!     let _ = expected_state;
 //!
-//!     // Exchange authorization code for token; sends the stored PKCE verifier.
-//!     let token2 = match client.exchange_code(
-//!         token_url: "https://auth.example.com/token",
-//!         code: "auth-code-from-redirect",
-//!         redirect_uri: "https://myapp.com/callback",
-//!     ) {
+//!     // Compare the callback `state` with validate_state, then exchange the
+//!     // code; the stored PKCE verifier is sent with it.
+//!     let token2 = match client.exchange_code("https://auth.example.com/token", "auth-code-from-redirect", "https://myapp.com/callback") {
 //!         .Ok(result) => match result {
 //!             .Ok(value) => value,
 //!             .Err(error) => panic(oauth.error_message(error)),
-//!         },
+//!         }
 //!         .Err(_) => panic("OAuth actor stopped"),
 //!     };
-//!     token2.free();
+//!     println(token2.token_type());
+//!     stop(client);
+//!     stopped(client);
 //! }
 //! ```
 
+import std.crypto.crypto;
+
+import std.encoding.base64;
+
+import std.encoding.json;
+
+import std.net.http.http_client;
+
+import std.net.url;
+
+/// A token issued by an authorization server. Read it through
+/// `TokenMethods`; absent optional values are stored as -1 or empty strings.
 #[wire]
 pub type Token {
-    handle: i64 @1;
+    access: string @1;
+    kind: string @2;
+    expires_secs: i64 @3;
+    refresh: string @4;
+    granted_scope: string @5;
 }
 
 #[wire]
@@ -89,10 +77,9 @@ pub enum OAuthError {
     Transport(string) @1;
     /// The token endpoint rejected the request or returned an invalid body.
     TokenEndpoint(i64, string) @2;
-    /// The client has already been closed.
-    Closed(string) @3;
-    /// The native layer could not complete the operation.
-    Internal(string) @4;
+    /// The client could not complete the operation locally, such as when the
+    /// system entropy source is unavailable.
+    Internal(string) @3;
 }
 
 /// Return the diagnostic carried by an `OAuthError`.
@@ -101,7 +88,6 @@ pub fn error_message(error: OAuthError) -> string {
         .InvalidInput(message) => message,
         .Transport(message) => message,
         .TokenEndpoint(_, message) => message,
-        .Closed(message) => message,
         .Internal(message) => message,
     }
 }
@@ -122,252 +108,274 @@ trait TokenMethods {
 
     /// Token scope, when provided.
     fn get_scope(self) -> Option<string>;
-
-    /// Free the token.
-    fn free(self);
 }
 
 impl TokenMethods for Token {
     fn access_token(self) -> string {
-        unsafe {
-            hew_oauth_token_access_token(self)
-        }
+        self.access
     }
     fn token_type(self) -> string {
-        unsafe {
-            hew_oauth_token_type(self)
-        }
+        self.kind
     }
     fn expires_in(self) -> Option<i64> {
-        let value = unsafe {
-            hew_oauth_token_expires_in(self)
-        };
-        if value < 0 {
+        if self.expires_secs < 0 {
             .None
         } else {
-            .Some(value)
+            .Some(self.expires_secs)
         }
     }
     fn refresh_token(self) -> Option<string> {
-        let value = unsafe {
-            hew_oauth_token_refresh_token(self)
-        };
-        if value.is_empty() {
-            .None
-        } else {
-            .Some(value)
-        }
+        present(self.refresh)
     }
     fn get_scope(self) -> Option<string> {
-        let value = unsafe {
-            hew_oauth_token_scope(self)
-        };
-        if value.is_empty() {
-            .None
-        } else {
-            .Some(value)
+        present(self.granted_scope)
+    }
+}
+
+fn present(value: string) -> Option<string> {
+    if value.is_empty() {
+        .None
+    } else {
+        .Some(value)
+    }
+}
+
+// ── PKCE and state values ─────────────────────────────────────────────
+// Unpadded base64url (RFC 4648 §5), the alphabet RFC 7636 requires for the
+// verifier and challenge. `=` appears only as padding, so removing it is exact.
+fn base64url_unpadded(data: bytes) -> string {
+    base64.encode_url(data).replace("=", "")
+}
+
+// 32 CSPRNG bytes encode to 43 characters: a state value, or a verifier at the
+// lower bound of RFC 7636's 43..128 range.
+fn random_urlsafe() -> Result<string, OAuthError> {
+    match crypto.random_bytes(32) {
+        .Ok(data) => .Ok(base64url_unpadded(data)),
+        .Err(_) => .Err(OAuthError.Internal("system entropy source is unavailable")),
+    }
+}
+
+// The S256 code challenge for a verifier (RFC 7636 §4.2).
+fn code_challenge(verifier: string) -> string {
+    base64url_unpadded(crypto.sha256(verifier.to_bytes()))
+}
+
+// ── Token endpoint ────────────────────────────────────────────────────
+// A string field of a JSON object. A missing field, a field of another kind,
+// and a body that is not an object all read as absent.
+fn string_field(body: json.Value, key: string) -> Option<string> {
+    match body.get_field(key) {
+        .Ok(.Some(value)) => match value.get_string() {
+            .Ok(text) => .Some(text),
+            .Err(_) => .None,
+        }
+        _ => .None,
+    }
+}
+
+fn string_field_or(body: json.Value, key: string, fallback: string) -> string {
+    match string_field(body, key) {
+        .Some(text) => text,
+        .None => fallback,
+    }
+}
+
+// An integer field, or -1 when it is missing or not an integer.
+fn int_field_or_absent(body: json.Value, key: string) -> i64 {
+    match body.get_field(key) {
+        .Ok(.Some(value)) => match value.get_int() {
+            .Ok(number) => number,
+            .Err(_) => -1,
+        }
+        _ => -1,
+    }
+}
+
+// The RFC 6749 §5.2 error, as `error` or `error: error_description`.
+fn endpoint_message(body: json.Value, fallback: string) -> string {
+    match string_field(body, "error") {
+        .None => fallback,
+        .Some(code) => match string_field(body, "error_description") {
+            .Some(description) => if description.is_empty() {
+                code
+            } else {
+                f"{code}: {description}"
+            }
+            .None => code,
         }
     }
-    fn free(self) {
-        unsafe {
-            hew_oauth_token_free(self);
-        }
+}
+
+fn parse_token(status: i64, text: string) -> Result<Token, OAuthError> {
+    let body = match json.parse(text) {
+        .Ok(value) => value,
+        .Err(error) => return .Err(OAuthError.TokenEndpoint(status, f"invalid_json: {error}")),
+    };
+    if status < 200 || status >= 300 {
+        return .Err(OAuthError.TokenEndpoint(status, endpoint_message(body, "http_error")));
     }
+    if string_field(body, "error").is_some() {
+        return .Err(OAuthError.TokenEndpoint(status, endpoint_message(body, "oauth_error")));
+    }
+    let access = match string_field(body, "access_token") {
+        .Some(value) => value,
+        .None => return .Err(OAuthError.TokenEndpoint(status, "missing access_token in token response")),
+    };
+    .Ok(Token { access: access, kind: string_field_or(body, "token_type", "Bearer"), expires_secs: int_field_or_absent(body, "expires_in"), refresh: string_field_or(body, "refresh_token", ""), granted_scope: string_field_or(body, "scope", "") })
+}
+
+// POST a form-encoded grant. A status of -1 is a transport failure, and the
+// client then carries its diagnostic in the body.
+fn post_token(token_url: string, form: string) -> Result<Token, OAuthError> {
+    if token_url.is_empty() {
+        return .Err(OAuthError.InvalidInput("token URL must not be empty"));
+    }
+    var headers: Vec<(string, string)> = Vec.new();
+    headers.push(("Content-Type", "application/x-www-form-urlencoded"));
+    let response = http_client.request("POST", token_url, form, headers);
+    let status = response.status();
+    let text = response.body();
+    response.close();
+    if status < 0 {
+        return .Err(OAuthError.Transport(f"transport_error: {text}"));
+    }
+    parse_token(status, text)
+}
+
+fn authorization_code_form(code: string, redirect_uri: string, client_id: string, client_secret: string, code_verifier: string) -> string {
+    f"grant_type=authorization_code&code={url.encode(code)}&redirect_uri={url.encode(redirect_uri)}&client_id={url.encode(client_id)}&client_secret={url.encode(client_secret)}&code_verifier={url.encode(code_verifier)}"
 }
 
 // ── Actor ─────────────────────────────────────────────────────────────
-fn token_result(token: Token) -> Result<Token, OAuthError> {
-    if token.handle == 0 {
-        return .Err(OAuthError.Internal("OAuth operation returned no token"));
-    }
-    if unsafe {
-        hew_oauth_token_is_ok(token)
-    } == 1 {
-        return .Ok(token);
-    }
-    let status = unsafe {
-        hew_oauth_token_error_status(token)
-    };
-    let message = unsafe {
-        hew_oauth_token_error_message(token)
-    };
-    token.free();
-    if status == 0 {
-        .Err(OAuthError.Transport(message))
-    } else {
-        .Err(OAuthError.TokenEndpoint(status, message))
-    }
-}
-
-fn live_handle(handle: i64) -> Result<i64, OAuthError> {
-    if handle == 0 {
-        .Err(OAuthError.Closed("OAuth client is closed"))
-    } else {
-        .Ok(handle)
-    }
-}
-
 pub actor Client {
-    var handle: i64 = 0;
-    init(client_id: string, client_secret: string) {
-        handle = unsafe {
-            hew_oauth_new(client_id, client_secret)
-        };
-    }
+    let client_id: string;
+    let client_secret: string;
+    var pending_state: string = "";
+    var pending_code_verifier: string = "";
 
-    // Obtain a token using the client credentials grant.
-    // oauth_scope may be empty. On failure, the returned Token has is_ok() == 0
-    // and exposes status/message diagnostics.
+    // Obtain a token using the client credentials grant. oauth_scope may be
+    // empty, in which case no scope is requested.
     receive fn client_credentials(token_url: string, oauth_scope: string) -> Result<Token, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
-        if token_url.is_empty() {
-            return .Err(OAuthError.InvalidInput("token URL must not be empty"));
+        var form = f"grant_type=client_credentials&client_id={url.encode(client_id)}&client_secret={url.encode(client_secret)}";
+        if !oauth_scope.is_empty() {
+            form = form + f"&scope={url.encode(oauth_scope)}";
         }
-        token_result(unsafe {
-            hew_oauth_client_credentials(client, token_url, oauth_scope)
-        })
+        post_token(token_url, form)
     }
 
     // Generate an authorization URL for the authorization code grant.
     // Always includes PKCE S256 parameters. If state is empty, a CSPRNG state is
     // generated. The state and PKCE verifier are retained on this client.
     receive fn auth_url(auth_url: string, redirect_uri: string, oauth_scope: string, state: string) -> Result<string, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
         if auth_url.is_empty() || redirect_uri.is_empty() {
             return .Err(OAuthError.InvalidInput("authorization and redirect URLs must not be empty"));
         }
-        let value = unsafe {
-            hew_oauth_auth_url(client, auth_url, redirect_uri, oauth_scope, state)
-        };
-        if value.is_empty() {
-            .Err(OAuthError.Internal("authorization URL generation failed"))
+        let chosen_state = if state.is_empty() {
+            match random_urlsafe() {
+                .Ok(value) => value,
+                .Err(error) => return .Err(error),
+            }
         } else {
-            .Ok(value)
-        }
+            state
+        };
+        let verifier = match random_urlsafe() {
+            .Ok(value) => value,
+            .Err(error) => return .Err(error),
+        };
+        pending_state = chosen_state;
+        pending_code_verifier = verifier;
+        .Ok(f"{auth_url}?response_type=code&client_id={url.encode(client_id)}&redirect_uri={url.encode(redirect_uri)}&scope={url.encode(oauth_scope)}&state={url.encode(chosen_state)}&code_challenge={code_challenge(verifier)}&code_challenge_method=S256")
     }
 
     // Return the current authorization-code state generated or accepted by auth_url.
     receive fn current_state() -> Result<Option<string>, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
-        let value = unsafe {
-            hew_oauth_current_state(client)
-        };
-        if value.is_empty() {
-            .Ok(.None)
-        } else {
-            .Ok(.Some(value))
-        }
+        .Ok(present(pending_state))
     }
 
     // Return the current PKCE code verifier for external encrypted/session storage.
     receive fn current_code_verifier() -> Result<Option<string>, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
-        let value = unsafe {
-            hew_oauth_current_code_verifier(client)
-        };
-        if value.is_empty() {
-            .Ok(.None)
-        } else {
-            .Ok(.Some(value))
-        }
+        .Ok(present(pending_code_verifier))
     }
 
-    // Validate a callback state against the current state. Returns 1 on match.
+    // Validate a callback state against the current state in constant time.
+    // A client with no current state matches nothing.
     receive fn validate_state(callback_state: string) -> Result<bool, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
         if callback_state.is_empty() {
             return .Err(OAuthError.InvalidInput("callback state must not be empty"));
         }
-        .Ok(unsafe {
-            hew_oauth_validate_state(client, callback_state)
-        } == 1)
+        .Ok(!pending_state.is_empty() && crypto.constant_time_eq(pending_state.to_bytes(), callback_state.to_bytes()))
     }
 
     // Exchange an authorization code for a token using the verifier from auth_url.
     receive fn exchange_code(token_url: string, code: string, redirect_uri: string) -> Result<Token, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
-        token_result(unsafe {
-            hew_oauth_exchange_code(client, token_url, code, redirect_uri)
-        })
+        if pending_code_verifier.is_empty() {
+            return .Err(OAuthError.InvalidInput("missing_code_verifier: call auth_url before exchange_code or use exchange_code_with_verifier"));
+        }
+        post_token(token_url, authorization_code_form(code, redirect_uri, client_id, client_secret, pending_code_verifier))
     }
 
     // Exchange an authorization code with an explicitly supplied PKCE verifier.
     receive fn exchange_code_with_verifier(token_url: string, code: string, redirect_uri: string, code_verifier: string) -> Result<Token, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
         if code_verifier.is_empty() {
             return .Err(OAuthError.InvalidInput("PKCE verifier must not be empty"));
         }
-        token_result(unsafe {
-            hew_oauth_exchange_code_with_verifier(client, token_url, code, redirect_uri, code_verifier)
-        })
+        post_token(token_url, authorization_code_form(code, redirect_uri, client_id, client_secret, code_verifier))
     }
 
     // Refresh a token using a refresh token string.
     receive fn refresh(token_url: string, refresh_token: string) -> Result<Token, OAuthError> {
-        let client = match live_handle(handle) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
         if refresh_token.is_empty() {
             return .Err(OAuthError.InvalidInput("refresh token must not be empty"));
         }
-        token_result(unsafe {
-            hew_oauth_refresh(client, token_url, refresh_token)
-        })
-    }
-
-    // Release the client when the actor stops.
-    #[on(stop)]
-    fn release_client() {
-        if handle != 0 {
-            unsafe {
-                hew_oauth_close(handle);
-            };
-            handle = 0;
-        }
+        post_token(token_url, f"grant_type=refresh_token&refresh_token={url.encode(refresh_token)}&client_id={url.encode(client_id)}&client_secret={url.encode(client_secret)}")
     }
 }
 
-// ── FFI bindings (implementation detail) ──────────────────────────────
-extern "C" {
-    fn hew_oauth_new(client_id: string, client_secret: string) -> i64;
-    fn hew_oauth_client_credentials(client: i64, token_url: string, oauth_scope: string) -> Token;
-    fn hew_oauth_auth_url(client: i64, auth_url: string, redirect_uri: string, oauth_scope: string, state: string) -> string;
-    fn hew_oauth_current_state(client: i64) -> string;
-    fn hew_oauth_current_code_verifier(client: i64) -> string;
-    fn hew_oauth_validate_state(client: i64, callback_state: string) -> i32;
-    fn hew_oauth_exchange_code(client: i64, token_url: string, code: string, redirect_uri: string) -> Token;
-    fn hew_oauth_exchange_code_with_verifier(client: i64, token_url: string, code: string, redirect_uri: string, code_verifier: string) -> Token;
-    fn hew_oauth_refresh(client: i64, token_url: string, refresh_token: string) -> Token;
-    fn hew_oauth_token_access_token(token: Token) -> string;
-    fn hew_oauth_token_is_ok(token: Token) -> i32;
-    fn hew_oauth_token_error_status(token: Token) -> i64;
-    fn hew_oauth_token_error_message(token: Token) -> string;
-    fn hew_oauth_token_type(token: Token) -> string;
-    fn hew_oauth_token_expires_in(token: Token) -> i64;
-    fn hew_oauth_token_refresh_token(token: Token) -> string;
-    fn hew_oauth_token_scope(token: Token) -> string;
-    fn hew_oauth_token_free(token: Token);
-    fn hew_oauth_close(client: i64);
+#[test]
+fn code_challenge_matches_rfc_7636_appendix_b() {
+    assert(code_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+}
+
+#[test]
+fn generated_values_are_unpadded_43_character_base64url() {
+    let value = match random_urlsafe() {
+        .Ok(value) => value,
+        .Err(error) => panic(error_message(error)),
+    };
+    assert(value.len() == 43);
+    assert(!value.contains("="));
+    assert(!value.contains("+"));
+    assert(!value.contains("/"));
+}
+
+#[test]
+fn token_body_defaults_absent_and_wrong_kind_fields() {
+    let token = match parse_token(200, "{\"access_token\":\"abc\",\"expires_in\":\"soon\",\"token_type\":7}") {
+        .Ok(token) => token,
+        .Err(error) => panic(error_message(error)),
+    };
+    assert(token.access_token() == "abc");
+    assert(token.token_type() == "Bearer");
+    assert(token.expires_in().is_none());
+    assert(token.refresh_token().is_none());
+    assert(token.get_scope().is_none());
+}
+
+#[test]
+fn endpoint_error_without_description_reports_the_code() {
+    match parse_token(401, "{\"error\":\"invalid_client\",\"error_description\":\"\"}") {
+        .Err(.TokenEndpoint(status, message)) => {
+            assert(status == 401);
+            assert(message == "invalid_client");
+        }
+        _ => panic("expected a token-endpoint error"),
+    }
+    match parse_token(502, "[]") {
+        .Err(.TokenEndpoint(status, message)) => {
+            assert(status == 502);
+            assert(message == "http_error");
+        }
+        _ => panic("expected a token-endpoint error"),
+    }
 }

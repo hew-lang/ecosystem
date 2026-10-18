@@ -8,8 +8,3 @@ authors = ["Hew Contributors"]
 license = "MIT OR Apache-2.0"
 keywords = ["oauth", "pkce", "authentication", "authorization"]
 repository = "https://github.com/hew-lang/ecosystem"
-
-[native]
-crate = "."
-lib = "hew_hew_auth_oauth"
-kind = "staticlib"
