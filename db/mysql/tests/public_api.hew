@@ -1,5 +1,7 @@
 import hew.db.mysql;
 
+#[test]
+#[real_time]
 fn invalid_url_and_explicit_close_return_typed_errors() {
     let db = spawn mysql.Conn { url: "not-a-mysql-url" };
     match db.query("SELECT 1") {
@@ -12,8 +14,4 @@ fn invalid_url_and_explicit_close_return_typed_errors() {
         .Err(.Dead) => {}
         _ => assert(false),
     }
-}
-
-fn main() {
-    invalid_url_and_explicit_close_return_typed_errors();
 }

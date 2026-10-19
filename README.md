@@ -109,13 +109,14 @@ Those credentials are the ones `docker-compose.yml` starts PostgreSQL with, so
 the snippet runs as written after `docker compose up --detach --wait postgres`.
 
 Each package's `README.md` opens with a runnable example of exactly this shape,
-and `examples/` holds the same program as a file you can run.
+and `examples/` holds the same program as a file you can run, with a test
+that `make test` runs.
 
 ## Build, check, publish
 
 [CONTRIBUTING.md](CONTRIBUTING.md) lists what to run before pushing.
 [`docs/toolchain.md`](docs/toolchain.md) covers the pinned compiler, how to
-move the pin, and the corpus gate; [`docs/packaging.md`](docs/packaging.md)
+move the pin, and the checks; [`docs/packaging.md`](docs/packaging.md)
 covers package layout and the native-crate contract.
 
 `hew.image.magick` needs the ImageMagick 7 development files installed; see

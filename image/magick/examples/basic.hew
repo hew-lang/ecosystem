@@ -25,3 +25,9 @@ fn main() {
     stop(written);
     stopped(written);
 }
+
+#[test]
+#[real_time]
+fn runs_to_completion() {
+    main();
+}

@@ -38,3 +38,9 @@ fn main() {
     stop(client);
     stopped(client);
 }
+
+#[test]
+#[real_time]
+fn runs_to_completion() {
+    main();
+}

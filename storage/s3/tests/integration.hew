@@ -12,6 +12,8 @@ fn store() -> s3.Bucket {
     spawn s3.Bucket { options: s3.Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "minioadmin", secret_key: "minioadmin" } }
 }
 
+#[test]
+#[real_time]
 fn binary_round_trip_and_missing_are_distinct() {
     let client = store();
     var body: bytes = bytes.new();
@@ -53,6 +55,8 @@ fn binary_round_trip_and_missing_are_distinct() {
     stopped(client);
 }
 
+#[test]
+#[real_time]
 fn put_then_get_and_list_round_trip_unicode_key() {
     let client = store();
     let key = "hew/naïve-résumé-日本語-object.txt";
@@ -85,6 +89,8 @@ fn put_then_get_and_list_round_trip_unicode_key() {
     stopped(client);
 }
 
+#[test]
+#[real_time]
 fn get_missing_key_is_distinct_from_present() {
     let client = store();
     match client.get("hew/does-not-exist-at-all") {
@@ -95,6 +101,8 @@ fn get_missing_key_is_distinct_from_present() {
     stopped(client);
 }
 
+#[test]
+#[real_time]
 fn bad_access_key_fails_typed() {
     let client = spawn s3.Bucket { options: s3.Options { endpoint: "http://127.0.0.1:9000", region: "us-east-1", bucket: "hew-test", access_key: "not-the-real-key", secret_key: "not-the-real-secret" } };
     match client.get("hew/integration.bin") {
@@ -105,6 +113,8 @@ fn bad_access_key_fails_typed() {
     stopped(client);
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_relative_bucket_count() {
     let before = unsafe {
         hew_s3_bucket_count()
@@ -124,6 +134,8 @@ fn actor_stop_releases_relative_bucket_count() {
     } == before);
 }
 
+#[test]
+#[real_time]
 fn invalid_presign_fails_typed() {
     let client = store();
     match client.presign("key", "POST", 60) {
@@ -132,13 +144,4 @@ fn invalid_presign_fails_typed() {
     }
     stop(client);
     stopped(client);
-}
-
-fn main() {
-    binary_round_trip_and_missing_are_distinct();
-    put_then_get_and_list_round_trip_unicode_key();
-    get_missing_key_is_distinct_from_present();
-    bad_access_key_fails_typed();
-    invalid_presign_fails_typed();
-    actor_stop_releases_relative_bucket_count();
 }

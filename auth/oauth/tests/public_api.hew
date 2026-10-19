@@ -77,6 +77,12 @@ fn expect_invalid_input(reply: Result<Result<oauth.Token, oauth.OAuthError>, Act
 }
 
 fn new_client() -> oauth.Client {
+    // A broken loopback exchange fails within seconds rather than at the
+    // client's 30 s default.
+    match http_client.set_timeout(5000) {
+        .Ok(_) => {}
+        .Err(_) => panic("set_timeout rejected 5000 ms"),
+    }
     spawn oauth.Client { client_id: "client", client_secret: "s3cret&more" }
 }
 
@@ -85,6 +91,8 @@ fn finish(client: oauth.Client) {
     stopped(client);
 }
 
+#[test]
+#[real_time]
 fn client_credentials_posts_form_and_reads_every_token_field() {
     let server = listen();
     let client = new_client();
@@ -112,6 +120,8 @@ fn client_credentials_posts_form_and_reads_every_token_field() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn client_credentials_without_scope_omits_it_and_defaults_optional_fields() {
     let server = listen();
     let client = new_client();
@@ -128,6 +138,8 @@ fn client_credentials_without_scope_omits_it_and_defaults_optional_fields() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn rejected_request_reports_status_and_endpoint_error() {
     let server = listen();
     let client = new_client();
@@ -138,6 +150,8 @@ fn rejected_request_reports_status_and_endpoint_error() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn success_status_with_oauth_error_body_is_rejected() {
     let server = listen();
     let client = new_client();
@@ -148,6 +162,8 @@ fn success_status_with_oauth_error_body_is_rejected() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn non_json_body_reports_invalid_json() {
     let server = listen();
     let client = new_client();
@@ -167,6 +183,8 @@ fn non_json_body_reports_invalid_json() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn missing_access_token_is_rejected() {
     let server = listen();
     let client = new_client();
@@ -177,6 +195,8 @@ fn missing_access_token_is_rejected() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn refused_connection_reports_transport_error() {
     // Bind and release a port so nothing is listening on it.
     let server = listen();
@@ -193,6 +213,8 @@ fn refused_connection_reports_transport_error() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn exchange_code_sends_the_verifier_auth_url_committed_to() {
     let server = listen();
     let client = new_client();
@@ -219,6 +241,8 @@ fn exchange_code_sends_the_verifier_auth_url_committed_to() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn exchange_code_with_verifier_sends_the_supplied_verifier() {
     let server = listen();
     let client = new_client();
@@ -231,6 +255,8 @@ fn exchange_code_with_verifier_sends_the_supplied_verifier() {
     finish(client);
 }
 
+#[test]
+#[real_time]
 fn refresh_posts_refresh_grant() {
     let server = listen();
     let client = new_client();
@@ -248,6 +274,8 @@ fn refresh_posts_refresh_grant() {
 }
 
 // Each of these is refused before any request is sent.
+#[test]
+#[real_time]
 fn local_preconditions_return_invalid_input() {
     let client = new_client();
     expect_invalid_input(client.exchange_code("http://127.0.0.1:9/token", "code", "https://app.example/cb"), "missing_code_verifier: call auth_url before exchange_code or use exchange_code_with_verifier");
@@ -265,6 +293,7 @@ fn local_preconditions_return_invalid_input() {
     finish(client);
 }
 
+#[test]
 fn fresh_client_has_no_state_and_matches_nothing() {
     let client = new_client();
     match client.current_state() {
@@ -285,6 +314,7 @@ fn fresh_client_has_no_state_and_matches_nothing() {
 // The authorization URL is built entirely in process: long non-ASCII values
 // and an embedded NUL are percent-encoded byte for byte, and the caller's
 // state is retained.
+#[test]
 fn auth_url_encodes_non_ascii_and_nul_values() {
     let client = spawn oauth.Client { client_id: "identité\0du-client-2026", client_secret: "secret" };
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "lecture écriture profil élargi", "état-de-rappel-vérifié-42") {
@@ -303,6 +333,7 @@ fn auth_url_encodes_non_ascii_and_nul_values() {
     finish(client);
 }
 
+#[test]
 fn generated_state_validates_and_each_auth_url_rotates_it() {
     let client = new_client();
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
@@ -329,28 +360,4 @@ fn generated_state_validates_and_each_auth_url_rotates_it() {
         _ => panic("expected the previous state to be replaced"),
     }
     finish(client);
-}
-
-fn main() {
-    // A broken loopback exchange fails within seconds rather than at the
-    // client's 30 s default.
-    match http_client.set_timeout(5000) {
-        .Ok(_) => {}
-        .Err(_) => panic("set_timeout rejected 5000 ms"),
-    }
-    client_credentials_posts_form_and_reads_every_token_field();
-    client_credentials_without_scope_omits_it_and_defaults_optional_fields();
-    rejected_request_reports_status_and_endpoint_error();
-    success_status_with_oauth_error_body_is_rejected();
-    non_json_body_reports_invalid_json();
-    missing_access_token_is_rejected();
-    refused_connection_reports_transport_error();
-    exchange_code_sends_the_verifier_auth_url_committed_to();
-    exchange_code_with_verifier_sends_the_supplied_verifier();
-    refresh_posts_refresh_grant();
-    local_preconditions_return_invalid_input();
-    fresh_client_has_no_state_and_matches_nothing();
-    auth_url_encodes_non_ascii_and_nul_values();
-    generated_state_validates_and_each_auth_url_rotates_it();
-    println("oauth public API: ok");
 }

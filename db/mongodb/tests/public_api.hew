@@ -9,6 +9,8 @@ fn assert_connect_error(result: Result<i64, mongodb.MongoError>) {
     }
 }
 
+#[test]
+#[real_time]
 fn connection_failure_is_typed_for_every_operation() {
     let db = spawn mongodb.Conn { uri: "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=10&connectTimeoutMS=10", database: "hew_offline_test" };
     match db.insert_one("items", "{\"value\":1}") {
@@ -50,8 +52,4 @@ fn connection_failure_is_typed_for_every_operation() {
         .Err(.Dead) => {}
         _ => panic("expected Dead after stop"),
     }
-}
-
-fn main() {
-    connection_failure_is_typed_for_every_operation();
 }

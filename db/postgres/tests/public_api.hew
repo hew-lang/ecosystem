@@ -1,5 +1,7 @@
 import hew.db.postgres;
 
+#[test]
+#[real_time]
 fn invalid_connection_and_explicit_close_return_typed_errors() {
     let db = spawn postgres.Conn { connstr: "not a postgres connection string" };
     match db.query("SELECT 1") {
@@ -12,8 +14,4 @@ fn invalid_connection_and_explicit_close_return_typed_errors() {
         .Err(.Dead) => {}
         _ => assert(false),
     }
-}
-
-fn main() {
-    invalid_connection_and_explicit_close_return_typed_errors();
 }

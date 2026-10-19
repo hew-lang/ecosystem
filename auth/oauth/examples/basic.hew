@@ -54,3 +54,8 @@ fn main() {
     stop(client);
     stopped(client);
 }
+
+#[test]
+fn runs_to_completion() {
+    main();
+}

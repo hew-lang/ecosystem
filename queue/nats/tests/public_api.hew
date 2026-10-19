@@ -2,6 +2,8 @@ import hew.queue.nats;
 
 import hew.queue.nats.{NatsError};
 
+#[test]
+#[real_time]
 fn unavailable_server_returns_typed_connection_error() {
     let client = spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:1" } };
     match client.publish("hew.test", "value") {
@@ -12,6 +14,8 @@ fn unavailable_server_returns_typed_connection_error() {
     stopped(client);
 }
 
+#[test]
+#[real_time]
 fn reply_without_subject_returns_typed_input_error() {
     let client = spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:1" } };
     let message = nats.Delivery { subject: "events", data: "value", reply_to: nats.ReplyTo.Missing };
@@ -21,9 +25,4 @@ fn reply_without_subject_returns_typed_input_error() {
     }
     stop(client);
     stopped(client);
-}
-
-fn main() {
-    unavailable_server_returns_typed_connection_error();
-    reply_without_subject_returns_typed_input_error();
 }

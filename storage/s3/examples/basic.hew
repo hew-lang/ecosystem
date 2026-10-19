@@ -29,3 +29,9 @@ fn main() {
     stop(store);
     stopped(store);
 }
+
+#[test]
+#[real_time]
+fn runs_to_completion() {
+    main();
+}

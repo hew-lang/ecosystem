@@ -1,13 +1,10 @@
 import hew.db.sqlite;
 
+#[test]
 fn error_variants_preserve_diagnostics() {
     assert(sqlite.error_message(sqlite.SqliteError.Open("open")) == "open");
     assert(sqlite.error_message(sqlite.SqliteError.InvalidInput("input")) == "input");
     assert(sqlite.error_message(sqlite.SqliteError.Query("query")) == "query");
     assert(sqlite.error_message(sqlite.SqliteError.Closed("closed")) == "closed");
     assert(sqlite.error_message(sqlite.SqliteError.Internal("internal")) == "internal");
-}
-
-fn main() {
-    error_variants_preserve_diagnostics();
 }

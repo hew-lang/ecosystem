@@ -48,3 +48,8 @@ fn main() {
         .Err(e) => println(dag.describe(e)),
     }
 }
+
+#[test]
+fn runs_to_completion() {
+    main();
+}

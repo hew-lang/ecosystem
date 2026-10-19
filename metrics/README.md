@@ -11,31 +11,42 @@ tuple return `MetricsError.SeriesLimit`.
 ```hew
 import hew.metrics;
 
-fn main() {
+fn export_requests() -> string {
     let registry = spawn metrics.Registry;
-    match registry.counter("requests_total", "Handled requests") {
+    let text = match registry.counter("requests_total", "Handled requests") {
         .Ok(result) => match result {
             .Ok(counter) => {
                 let _ = registry.counter_inc(counter);
                 let _ = registry.counter_add(counter, 2.0);
                 match registry.export() {
                     .Ok(export_result) => match export_result {
-                        .Ok(text) => println(text),
-                        .Err(error) => println(metrics.error_message(error)),
+                        .Ok(text) => text,
+                        .Err(error) => metrics.error_message(error),
                     }
-                    .Err(_) => println("metrics actor stopped before replying"),
+                    .Err(_) => "metrics actor stopped before replying",
                 }
             }
-            .Err(error) => println(metrics.error_message(error)),
+            .Err(error) => metrics.error_message(error),
         }
-        .Err(_) => println("metrics actor stopped before replying"),
-    }
+        .Err(_) => "metrics actor stopped before replying",
+    };
     stop(registry);
     stopped(registry);
+    text
+}
+
+fn main() {
+    println(export_requests());
+}
+
+#[test]
+#[real_time]
+fn exports_the_incremented_counter() {
+    assert(export_requests().contains("\nrequests_total 3\n"));
 }
 ```
 
-This is the same program as [`examples/basic.hew`](examples/basic.hew). Run it
+This is [`examples/basic.hew`](examples/basic.hew) without its header comment. Run it
 from the ecosystem checkout:
 
 ```sh
@@ -51,4 +62,5 @@ requests_total 3
 ```
 
 `export()` is what makes a registry observable, so the example calls it rather
-than incrementing a counter and exiting silently.
+than incrementing a counter and exiting silently, and its test checks the
+`requests_total 3` line.

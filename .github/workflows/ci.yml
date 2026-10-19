@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   validate:
-    name: Check the corpus against the pinned Hew toolchain
+    name: Check and test every package against the pinned Hew toolchain
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -74,10 +74,10 @@ jobs:
         run: docker compose up --detach --wait
 
       - name: Check every Hew source
-        run: scripts/corpus-gate.sh check
+        run: make check
 
-      - name: Run Hew suites and examples
-        run: scripts/corpus-gate.sh hew
+      - name: Run Hew tests and examples
+        run: make test
 
       - name: Install native system libraries
         run: |
@@ -92,7 +92,6 @@ jobs:
             libtiff-dev \
             libxml2-dev \
             pkg-config \
-            shellcheck \
             zlib1g-dev
 
       - name: Build pinned ImageMagick 7
@@ -120,8 +119,8 @@ jobs:
           sudo make install
           sudo ldconfig
 
-      - name: Run native-backed Hew package suites
-        run: scripts/corpus-gate.sh native
+      - name: Run native-backed Hew tests and examples
+        run: make test-native
 
       # After the ImageMagick build: clippy over --all-targets links the same
       # system libraries the crates do.

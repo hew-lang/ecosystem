@@ -39,7 +39,8 @@ fn main() {
 ```
 
 The checked example at [`examples/basic.hew`](examples/basic.hew) is the same
-program against the Redis service in `docker-compose.yml`. Run it from the
+program, plus a test that runs it, against the Redis service in
+`docker-compose.yml`. Run it from the
 ecosystem checkout:
 
 ```sh

@@ -48,7 +48,8 @@ The outer `Result` on an actor ask reports mailbox/actor failure. The inner
 `Result` reports the S3 operation outcome.
 
 The checked example at [`examples/basic.hew`](examples/basic.hew) is the same
-program against the MinIO service in `docker-compose.yml`. Run it from the
+program, plus a test that runs it, against the MinIO service in
+`docker-compose.yml`. Run it from the
 ecosystem checkout:
 
 ```sh

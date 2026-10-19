@@ -9,9 +9,10 @@ is `db/postgres`, `hew.metrics` is `metrics`. Each package directory holds
 hew.toml          package manifest (dotted name, version, compatibility range)
 <segment>.hew     the module, named after the final path segment
 README.md         one runnable example and the public surface
-examples/         runnable programs, checked by CI like any other source
-tests/            Hew test suites
+examples/         runnable programs, each with a #[test] that runs or checks it
+tests/            #[test] suites
 src/, Cargo.toml  the native crate, when the package has one
+hew.lock          when the package depends on another member
 ```
 
 `hew/` mirrors each top-level segment back with a symlink (`hew/db -> ../db`),

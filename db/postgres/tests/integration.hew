@@ -10,14 +10,6 @@ fn unicode_text() -> string {
     "Répertoire des requêtes traitées — 雪"
 }
 
-fn nul_value() -> bytes {
-    var value: bytes = bytes.new();
-    value.push(65);
-    value.push(0);
-    value.push(66);
-    value
-}
-
 fn invalid_utf8() -> bytes {
     var value: bytes = bytes.new();
     value.push(255);
@@ -62,6 +54,8 @@ fn connection() -> postgres.Conn {
     spawn postgres.Conn { connstr: "host=127.0.0.1 port=5432 user=hew password=hew dbname=hew_test" }
 }
 
+#[test]
+#[real_time]
 fn query_snapshot_preserves_values_null_and_empty() {
     let db = connection();
     match db.execute("DROP TABLE IF EXISTS hew_sql_beta") {
@@ -135,6 +129,8 @@ fn query_snapshot_preserves_values_null_and_empty() {
     stopped(db);
 }
 
+#[test]
+#[real_time]
 fn actual_database_failures_are_typed() {
     let db = connection();
     match db.execute("NOT SQL") {
@@ -177,6 +173,8 @@ fn actor_without_close(previous: i64) -> postgres.Conn {
     db
 }
 
+#[test]
+#[real_time]
 fn explicit_actor_stop_releases_connection() {
     let previous = unsafe {
         hew_pg_connection_count()
@@ -197,6 +195,8 @@ fn explicit_actor_stop_releases_connection() {
     } == previous);
 }
 
+#[test]
+#[real_time]
 fn typed_parameters_preserve_values() {
     let db = connection();
     var binary = invalid_utf8();
@@ -237,11 +237,4 @@ fn typed_parameters_preserve_values() {
     }
     stop(db);
     stopped(db);
-}
-
-fn main() {
-    typed_parameters_preserve_values();
-    query_snapshot_preserves_values_null_and_empty();
-    actual_database_failures_are_typed();
-    explicit_actor_stop_releases_connection();
 }

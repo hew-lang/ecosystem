@@ -12,6 +12,8 @@ fn connection() -> nats.Conn {
     spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:14222" } }
 }
 
+#[test]
+#[real_time]
 fn publish_subscribe_preserves_exact_message_and_timeout() {
     let previous_connections = unsafe {
         hew_nats_connection_count()
@@ -87,6 +89,8 @@ actor ResponderHarness {
     }
 }
 
+#[test]
+#[real_time]
 fn request_reply_preserves_reply_subject_and_payload() {
     let previous_connections = unsafe {
         hew_nats_connection_count()
@@ -131,6 +135,8 @@ fn request_reply_preserves_reply_subject_and_payload() {
     } == previous_connections);
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_connection_and_subscription_relatively() {
     let previous_connections = unsafe {
         hew_nats_connection_count()
@@ -164,10 +170,4 @@ fn actor_stop_releases_connection_and_subscription_relatively() {
     assert(unsafe {
         hew_nats_subscription_count()
     } == previous_subscriptions);
-}
-
-fn main() {
-    publish_subscribe_preserves_exact_message_and_timeout();
-    request_reply_preserves_reply_subject_and_payload();
-    actor_stop_releases_connection_and_subscription_relatively();
 }

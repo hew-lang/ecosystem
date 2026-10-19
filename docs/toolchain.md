@@ -14,7 +14,7 @@ whatever the runner happened to have.
 2. Set the `hew-cabi` `rev` in the workspace `Cargo.toml` to the new
    `HEW_REVISION`, then run `cargo update --package hew-cabi`.
 3. Rebuild and re-check: `HEW_SOURCE=<hew checkout> make toolchain`, then the
-   corpus gate below.
+   checks below.
 
 ## The Rust dependency closure
 
@@ -32,9 +32,7 @@ Every package's `hew.toml` declares a `hew` compatibility range that starts at
 the pinned compiler's version and excludes the next breaking minor release. CI
 validates the exact pinned revision.
 
-## The corpus gate
-
-`scripts/corpus-gate.sh` is the corpus gate.
+## Checks
 
 ```sh
 # Build the pinned compiler from source.
@@ -43,23 +41,31 @@ git clone https://github.com/hew-lang/hew.git /tmp/hew
 git -C /tmp/hew checkout "$HEW_REVISION"
 HEW_SOURCE=/tmp/hew make toolchain
 
-# Start the services the suites and examples connect to.
-docker compose up --detach --wait
+make check
 
-# Run the gate.
-HEW="$PWD/.tooling/target/release-lib/hew" scripts/corpus-gate.sh all
+# Start the services the tests and examples connect to.
+docker compose up --detach --wait
+make test test-native
 
 # Native crate tests.
 cargo test --locked --workspace --all-features
 ```
 
-The script has three stages, and `all` runs them in order:
+The Makefile runs `.tooling/target/release-lib/hew`; set `HEW` to use another
+build.
 
-| Stage | What it does | Needs |
+| Target | What it does | Needs |
 | --- | --- | --- |
-| `check` | `hew fmt --check` and `hew check -A dead_code` over every tracked `.hew` file | nothing |
-| `hew` | the pure-Hew suites, every package test suite, and every example, each one *run* rather than only checked | the `docker-compose.yml` services |
-| `native` | the ImageMagick and S3 suites and examples | the above, plus ImageMagick 7 development files and `pkg-config` |
+| `check` | `hew fmt --check` and `hew check --Werror` over every tracked `.hew` file | nothing |
+| `test` | `hew test` over every package directory except `NATIVE_PACKAGES`: inline module tests, `tests/`, and the test in every example | the `docker-compose.yml` services |
+| `test-native` | the same over `NATIVE_PACKAGES` (ImageMagick and S3) | the above, plus ImageMagick 7 development files, `pkg-config` and OpenSSL |
+| `publish-check` | `hew publish --workspace --dry-run` | read access to the registry |
+
+Packages are found by their `hew.toml`, and `hew test` finds every `#[test]`
+below them, so a new package, test file or example needs no list updated.
+Before checking or testing, `make` runs `hew install --locked` in each package
+that tracks a `hew.lock`, which links the members it depends on into its
+`.hew/packages`.
 
 CI also installs the system libraries, builds ImageMagick from a pinned source
 archive, and runs `make lint`. Those steps live in

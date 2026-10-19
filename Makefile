@@ -1,9 +1,17 @@
 # Local entry points for the checks and publish path the workflows run.
 #
-#   make lint                                    formatting, clippy, shellcheck
+#   make lint                                    Rust formatting and clippy
 #   HEW_SOURCE=<hew checkout> make toolchain     build the pinned hew binary
+#   make check                                   hew fmt and hew check, every source
+#   make test                                    every package's Hew tests and examples
+#   make test-native                             the same for NATIVE_PACKAGES
 #   make publish-check                           dry-run the workspace publish
 #   make publish                                 publish every new member version
+#
+# `make test` and `make test-native` need the docker-compose.yml services:
+# `docker compose up --detach --wait`. `make test-native` also needs the
+# system libraries its packages link: ImageMagick 7 development files with
+# pkg-config, and OpenSSL.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -18,12 +26,45 @@ HEW ?= $(HEW_BIN)
 # generate) or `github-actions` (trusted publishing from publish.yml).
 PUBLISH_AUTH ?= credentials
 
-.PHONY: lint toolchain publish-check publish
+# Tracked Hew sources. The hew/ mirror is symlinks, so nothing under it is
+# listed twice.
+HEW_SOURCES = $(shell git ls-files '*.hew')
+# Every package: each directory holding a hew.toml, outside the hew/ mirror.
+PACKAGES := $(filter-out hew/%,$(patsubst %/hew.toml,%,$(wildcard */hew.toml */*/hew.toml)))
+# Packages whose native crates link system libraries beyond the base image.
+NATIVE_PACKAGES := image/magick storage/s3
+# Packages that depend on another member. `hew install` links that member into
+# the package's .hew/packages, following the tracked hew.lock.
+LOCKED_PACKAGES := $(filter-out hew/%,$(patsubst %/hew.lock,%,$(wildcard */hew.lock */*/hew.lock)))
+
+.PHONY: lint toolchain deps check test test-native publish-check publish
 
 lint:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
-	shellcheck scripts/*.sh
+
+deps:
+	for package in $(LOCKED_PACKAGES); do \
+		(cd "$$package" && "$(HEW)" install --locked); \
+	done
+
+# `hew check` takes one input, so every source is checked in turn and every
+# failure is reported before the target fails.
+check: deps
+	"$(HEW)" fmt --check $(HEW_SOURCES)
+	status=0; \
+	for source in $(HEW_SOURCES); do \
+		"$(HEW)" check --Werror "$$source" || status=1; \
+	done; \
+	exit "$$status"
+
+# `hew test` finds every #[test] below each package: inline module tests,
+# tests/, and the test in each example that runs it.
+test: deps
+	"$(HEW)" test $(filter-out $(NATIVE_PACKAGES),$(PACKAGES))
+
+test-native: deps
+	"$(HEW)" test $(NATIVE_PACKAGES)
 
 # Builds hew at the pinned revision from the checkout named by HEW_SOURCE.
 # HEW_SOURCE must already be at HEW_REVISION: this target never moves someone

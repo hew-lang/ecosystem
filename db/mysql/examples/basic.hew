@@ -17,3 +17,9 @@ fn main() {
     stop(db);
     stopped(db);
 }
+
+#[test]
+#[real_time]
+fn runs_to_completion() {
+    main();
+}

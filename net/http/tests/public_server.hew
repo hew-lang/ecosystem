@@ -39,6 +39,8 @@ fn expect_client_response(client: i64, case_id: i32) {
     assert(matched == 1);
 }
 
+#[test]
+#[real_time]
 fn reports_no_pending_busy_and_closed_states() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
@@ -112,6 +114,8 @@ fn reports_no_pending_busy_and_closed_states() {
     };
 }
 
+#[test]
+#[real_time]
 fn validation_errors_release_pending_connections() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
@@ -231,6 +235,8 @@ fn validation_errors_release_pending_connections() {
     };
 }
 
+#[test]
+#[real_time]
 fn validates_targets_and_completes_expect_handshake() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
@@ -295,6 +301,8 @@ fn validates_targets_and_completes_expect_handshake() {
     };
 }
 
+#[test]
+#[real_time]
 fn carries_nul_bytes_without_truncation() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
@@ -363,6 +371,8 @@ fn carries_nul_bytes_without_truncation() {
 
 /// Round-trip long, non-ASCII text through the native boundary in both
 /// directions, and check that a decode failure keeps its native message.
+#[test]
+#[real_time]
 fn round_trips_long_percent_encoded_text() {
     let fixture = test_fixture();
     let addr = test_addr(fixture);
@@ -424,6 +434,8 @@ fn round_trips_long_percent_encoded_text() {
 
 /// An unusable listen address must surface the native diagnostic, which
 /// quotes the address the actor was given.
+#[test]
+#[real_time]
 fn reports_the_native_listen_failure() {
     let server = spawn http.Server { addr: "hew-http-not-an-address" };
     match server.accept_one() {
@@ -435,13 +447,4 @@ fn reports_the_native_listen_failure() {
     }
     stop(server);
     stopped(server);
-}
-
-fn main() {
-    reports_no_pending_busy_and_closed_states();
-    validation_errors_release_pending_connections();
-    validates_targets_and_completes_expect_handshake();
-    carries_nul_bytes_without_truncation();
-    round_trips_long_percent_encoded_text();
-    reports_the_native_listen_failure();
 }

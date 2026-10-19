@@ -11,6 +11,8 @@ fn options(client_id: string) -> Options {
     Options { host: "127.0.0.1", port: 11883, client_id: client_id, keepalive_seconds: 30 }
 }
 
+#[test]
+#[real_time]
 fn publish_subscribe_preserves_exact_message_and_timeout() {
     let previous_connections = unsafe {
         hew_mqtt_connection_count()
@@ -74,6 +76,8 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
     } == previous_connections);
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_connection_relative_to_registry() {
     let previous = unsafe {
         hew_mqtt_connection_count()
@@ -94,9 +98,4 @@ fn actor_stop_releases_connection_relative_to_registry() {
     assert(unsafe {
         hew_mqtt_connection_count()
     } == previous);
-}
-
-fn main() {
-    publish_subscribe_preserves_exact_message_and_timeout();
-    actor_stop_releases_connection_relative_to_registry();
 }

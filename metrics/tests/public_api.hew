@@ -17,6 +17,8 @@ fn registry_without_close(before: i64) -> metrics.Registry {
     registry
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_relative_registry_count() {
     let before = unsafe {
         hew_metrics_registry_count()
@@ -29,6 +31,8 @@ fn actor_stop_releases_relative_registry_count() {
     } == before);
 }
 
+#[test]
+#[real_time]
 fn invalid_registration_returns_typed_error() {
     let registry = spawn metrics.Registry;
     match registry.counter("bad name", "invalid") {
@@ -39,6 +43,8 @@ fn invalid_registration_returns_typed_error() {
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn counter_and_export_return_exact_values() {
     let registry = spawn metrics.Registry;
     match registry.counter("requests_handled_by_the_server_total", "Requêtes traitées — 雪") {
@@ -58,6 +64,8 @@ fn counter_and_export_return_exact_values() {
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn empty_export_is_the_empty_string() {
     let registry = spawn metrics.Registry;
     match registry.export() {
@@ -68,6 +76,8 @@ fn empty_export_is_the_empty_string() {
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn empty_label_list_returns_a_typed_error() {
     let registry = spawn metrics.Registry;
     match registry.counter_vec("unlabelled_requests_total", "Missing labels", "") {
@@ -78,6 +88,8 @@ fn empty_label_list_returns_a_typed_error() {
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn labeled_metric_returns_typed_error_at_series_limit() {
     let registry = spawn metrics.Registry;
     match registry.counter_vec("bounded_requests_total", "Bounded requests", "route") {
@@ -99,6 +111,8 @@ fn labeled_metric_returns_typed_error_at_series_limit() {
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn wrong_metric_kind_returns_typed_error() {
     let registry = spawn metrics.Registry;
     match registry.counter("kind_counter_total", "Kind counter") {
@@ -112,14 +126,4 @@ fn wrong_metric_kind_returns_typed_error() {
     }
     stop(registry);
     stopped(registry);
-}
-
-fn main() {
-    actor_stop_releases_relative_registry_count();
-    invalid_registration_returns_typed_error();
-    counter_and_export_return_exact_values();
-    empty_export_is_the_empty_string();
-    empty_label_list_returns_a_typed_error();
-    labeled_metric_returns_typed_error_at_series_limit();
-    wrong_metric_kind_returns_typed_error();
 }

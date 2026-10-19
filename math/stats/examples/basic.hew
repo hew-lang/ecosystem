@@ -17,3 +17,8 @@ fn main() {
         .Err(error) => panic(stats.error_message(error)),
     }
 }
+
+#[test]
+fn runs_to_completion() {
+    main();
+}

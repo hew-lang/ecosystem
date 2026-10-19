@@ -21,6 +21,8 @@ fn assert_ok_i64(result: Result<i64, magick.MagickError>) {
     }
 }
 
+#[test]
+#[real_time]
 fn transformations_cover_public_surface() {
     let path = scratch_path("magick-public-api.png");
     let _ = fs.delete(path);
@@ -83,6 +85,8 @@ fn transformations_cover_public_surface() {
 
 /// A path carrying non-ASCII text and more than sixteen bytes has to reach
 /// ImageMagick exactly as written, and the format has to come back out.
+#[test]
+#[real_time]
 fn long_unicode_path_round_trips_a_written_image() {
     let path = scratch_path("magick-héllo-wörld-très-longue-imagé.png");
     let _ = fs.delete(path);
@@ -114,6 +118,8 @@ fn long_unicode_path_round_trips_a_written_image() {
 
 /// ImageMagick names the file it could not open, so the diagnostic proves the
 /// path travelled in and the message travelled back out intact.
+#[test]
+#[real_time]
 fn missing_file_error_carries_the_path() {
     let path = scratch_path("magick-manquant-wörld-très-longue.png");
     let _ = fs.delete(path);
@@ -127,6 +133,8 @@ fn missing_file_error_carries_the_path() {
     stopped(missing);
 }
 
+#[test]
+#[real_time]
 fn invalid_inputs_return_typed_errors() {
     let image = spawn magick.Image { source: Source.Blank(10, 10, "white") };
     match image.resize(0, 1) {
@@ -146,6 +154,8 @@ fn invalid_inputs_return_typed_errors() {
     stopped(rejected);
 }
 
+#[test]
+#[real_time]
 fn blob_round_trip_preserves_a_real_image() {
     let source = spawn magick.Image { source: Source.Blank(37, 19, "#2f80ed") };
     let encoded = match source.write_blob("PNG") {
@@ -187,6 +197,8 @@ fn image_without_close(before: i64) -> magick.Image {
     image
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_relative_registry_count() {
     let before = unsafe {
         hew_magick_image_count()
@@ -198,13 +210,4 @@ fn actor_stop_releases_relative_registry_count() {
     assert(unsafe {
         hew_magick_image_count()
     } == before);
-}
-
-fn main() {
-    transformations_cover_public_surface();
-    long_unicode_path_round_trips_a_written_image();
-    missing_file_error_carries_the_path();
-    invalid_inputs_return_typed_errors();
-    blob_round_trip_preserves_a_real_image();
-    actor_stop_releases_relative_registry_count();
 }

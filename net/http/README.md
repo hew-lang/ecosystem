@@ -51,8 +51,12 @@ before anyone can send a request, so the only outcome a reader could ever
 observe is the `Accept` error.
 
 The checked example at [`examples/hello.hew`](examples/hello.hew) is this
-program with the listening banner and a message for the case where the thirty
-seconds elapse unused. Run it from the ecosystem checkout:
+program with the loop moved into `serve_one`, which returns the request line,
+plus the listening banner and a message for the case where the thirty seconds
+elapse unused. Its test serves one request while
+`std.net.http.http_client` sends `GET /hello`, then checks the body the client
+received and the request line the server saw. Run it from the ecosystem
+checkout:
 
 ```sh
 hew run --pkg-path . net/http/examples/hello.hew

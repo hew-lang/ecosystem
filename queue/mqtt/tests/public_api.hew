@@ -2,6 +2,7 @@ import hew.queue.mqtt;
 
 import hew.queue.mqtt.{MqttError, QoS};
 
+#[test]
 fn qos_levels_are_exact_and_invalid_values_fail_closed() {
     match mqtt.qos_from_level(0) {
         .Ok(.AtMostOnce) => {}
@@ -21,6 +22,8 @@ fn qos_levels_are_exact_and_invalid_values_fail_closed() {
     }
 }
 
+#[test]
+#[real_time]
 fn unavailable_broker_returns_typed_connection_error() {
     let client = spawn mqtt.Conn { options: mqtt.Options { host: "127.0.0.1", port: 1, client_id: "hew-mqtt-unavailable", keepalive_seconds: 30 } };
     match client.publish("hew/test", "value", mqtt.QoS.AtMostOnce, false) {
@@ -29,9 +32,4 @@ fn unavailable_broker_returns_typed_connection_error() {
     }
     stop(client);
     stopped(client);
-}
-
-fn main() {
-    qos_levels_are_exact_and_invalid_values_fail_closed();
-    unavailable_broker_returns_typed_connection_error();
 }

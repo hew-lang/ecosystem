@@ -55,6 +55,8 @@ fn database() -> sqlite.Db {
     spawn sqlite.Db { path: ":memory:" }
 }
 
+#[test]
+#[real_time]
 fn query_snapshot_preserves_values_null_empty_and_nul() {
     let db = database();
     match db.execute("CREATE TABLE values_table (id INTEGER PRIMARY KEY, value TEXT NULL)") {
@@ -114,6 +116,8 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
     stopped(db);
 }
 
+#[test]
+#[real_time]
 fn actual_database_failures_are_typed() {
     let db = database();
     match db.execute("NOT SQL") {
@@ -136,6 +140,8 @@ fn actual_database_failures_are_typed() {
     }
 }
 
+#[test]
+#[real_time]
 fn open_failure_is_typed() {
     let db = spawn sqlite.Db { path: "/hew-sql-beta-missing/parent/database.sqlite" };
     match db.query("SELECT 1") {
@@ -158,6 +164,8 @@ fn actor_without_close(previous: i64) -> sqlite.Db {
     db
 }
 
+#[test]
+#[real_time]
 fn explicit_actor_stop_releases_connection() {
     let previous = unsafe {
         hew_sqlite_connection_count()
@@ -178,6 +186,8 @@ fn explicit_actor_stop_releases_connection() {
     } == previous);
 }
 
+#[test]
+#[real_time]
 fn typed_parameters_preserve_values() {
     let db = database();
     var binary = invalid_utf8();
@@ -218,12 +228,4 @@ fn typed_parameters_preserve_values() {
     }
     stop(db);
     stopped(db);
-}
-
-fn main() {
-    typed_parameters_preserve_values();
-    query_snapshot_preserves_values_null_empty_and_nul();
-    actual_database_failures_are_typed();
-    open_failure_is_typed();
-    explicit_actor_stop_releases_connection();
 }
