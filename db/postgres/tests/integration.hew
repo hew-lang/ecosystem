@@ -1,6 +1,6 @@
 import hew.db.sql.{Param};
 
-import hew.db.postgres.{PostgresError, CellValue};
+import hew.db.postgres.{PostgresError};
 
 extern "C" {
     fn hew_pg_connection_count() -> i64;

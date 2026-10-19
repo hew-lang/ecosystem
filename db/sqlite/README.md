@@ -2,7 +2,8 @@
 
 `hew.db.sqlite` is an actor-owned embedded SQL client. Operations return
 typed `Result` values, query replies are immutable wire-safe snapshots, and SQL
-`NULL` is represented by `CellValue.Null`.
+`NULL` is represented by `CellValue.Null`. The query result types come from
+[`hew.db.sql`](../sql/README.md), shared with MySQL and PostgreSQL.
 
 Because an actor call can fail (the actor may have stopped), every reply is
 `Result<Result<T, SqliteError>, ActorError>` — match the outer `Result` for ask
@@ -60,7 +61,7 @@ call below is made with `db.<method>(...)`.
 | `query_params(sql: string, params: Vec<Param>)` | `Result<QueryResult, SqliteError>` | Same as `query`, with typed `?` bindings. |
 | `stop(db); stopped(db);` | — | Gracefully stops the actor and waits for native connection cleanup. |
 
-Public types:
+Public types, with `QueryResult`, `Row` and `CellValue` from `hew.db.sql`:
 
 - `QueryResult { columns: Vec<string>; rows: Vec<Row>; }`
 - `Row { values: Vec<CellValue>; }`

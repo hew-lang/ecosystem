@@ -2,7 +2,9 @@
 
 `hew.db.postgres` owns each PostgreSQL connection in an actor. Operations
 return typed `Result` values, query replies are immutable wire-safe snapshots,
-and SQL `NULL` is represented by `CellValue.Null`.
+and SQL `NULL` is represented by `CellValue.Null`. `QueryResult`, `Row` and
+`CellValue` come from [`hew.db.sql`](../sql/README.md), shared with SQLite and
+MySQL.
 
 The package wraps the native Rust `postgres` crate over a C ABI: cell values
 cross that boundary as UTF-8 `bytes` text snapshots, not typed columns.

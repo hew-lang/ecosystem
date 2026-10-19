@@ -3,6 +3,8 @@
 `hew.db.mysql` owns each MySQL connection in an actor. Operations return
 typed `Result` values, query replies are immutable wire-safe snapshots, and SQL
 `NULL` is represented by `CellValue.Null` rather than an empty-string sentinel.
+`QueryResult`, `Row` and `CellValue` come from [`hew.db.sql`](../sql/README.md),
+shared with SQLite and PostgreSQL.
 
 ```hew
 import hew.db.mysql;

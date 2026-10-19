@@ -1,6 +1,6 @@
 import hew.db.sql.{Param};
 
-import hew.db.sqlite.{SqliteError, CellValue};
+import hew.db.sqlite.{SqliteError};
 
 extern "C" {
     fn hew_sqlite_connection_count() -> i64;

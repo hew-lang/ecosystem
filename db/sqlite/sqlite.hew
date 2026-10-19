@@ -4,7 +4,7 @@ import std.encoding.utf8;
 
 import std.encoding.cbor;
 
-import hew.db.sql.{Param};
+import hew.db.sql.{Param, CellValue, Row, QueryResult};
 
 #[wire]
 pub enum SqliteError {
@@ -23,23 +23,6 @@ pub fn error_message(error: SqliteError) -> string {
         .Closed(message) => message,
         .Internal(message) => message,
     }
-}
-
-#[wire]
-pub enum CellValue {
-    Null @0;
-    Text(bytes) @1;
-}
-
-#[wire]
-pub type Row {
-    values: Vec<CellValue> @1;
-}
-
-#[wire]
-pub type QueryResult {
-    columns: Vec<string> @1;
-    rows: Vec<Row> @2;
 }
 
 fn native_error() -> SqliteError {

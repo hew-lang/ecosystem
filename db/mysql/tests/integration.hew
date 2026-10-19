@@ -1,6 +1,6 @@
 import hew.db.sql.{Param};
 
-import hew.db.mysql.{MysqlError, CellValue};
+import hew.db.mysql.{MysqlError};
 
 extern "C" {
     fn hew_mysql_connection_count() -> i64;
