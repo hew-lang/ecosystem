@@ -14,7 +14,7 @@ fn scratch_path(name: string) -> string {
     os.temp_dir() + "/" + name
 }
 
-fn assert_ok_i64(result: Result<i64, ActorError<magick.MagickError>>) {
+fn assert_ok(result: Result<(), ActorError<magick.MagickError>>) {
     match result {
         .Ok(_) => {}
         .Err(_) => assert(false),
@@ -35,15 +35,15 @@ fn transformations_cover_public_surface() {
         .Ok(value) => assert(value as i64 == 40),
         _ => assert(false),
     }
-    assert_ok_i64(image.resize(40, 20));
-    assert_ok_i64(image.crop(20, 10, 0, 0));
-    assert_ok_i64(image.rotate(90.0));
-    assert_ok_i64(image.blur(0.0, 1.0));
-    assert_ok_i64(image.sharpen(0.0, 0.5));
-    assert_ok_i64(image.flip());
-    assert_ok_i64(image.flop());
-    assert_ok_i64(image.thumbnail(5, 5));
-    assert_ok_i64(image.write(path));
+    assert_ok(image.resize(40, 20));
+    assert_ok(image.crop(20, 10, 0, 0));
+    assert_ok(image.rotate(90.0));
+    assert_ok(image.blur(0.0, 1.0));
+    assert_ok(image.sharpen(0.0, 0.5));
+    assert_ok(image.flip());
+    assert_ok(image.flop());
+    assert_ok(image.thumbnail(5, 5));
+    assert_ok(image.write(path));
     stop(image);
     stopped(image);
     let reopened = spawn magick.Image { source: Source.File(path) };
@@ -64,7 +64,7 @@ fn long_unicode_path_round_trips_a_written_image() {
     let path = scratch_path("magick-héllo-wörld-très-longue-imagé.png");
     let _ = fs.delete(path);
     let image = spawn magick.Image { source: Source.Blank(48, 32, "#3366cc") };
-    assert_ok_i64(image.write(path));
+    assert_ok(image.write(path));
     stop(image);
     stopped(image);
     assert(fs.exists(path));

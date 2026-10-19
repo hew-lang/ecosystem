@@ -50,6 +50,13 @@ fn assert_i64(result: Result<i64, ActorError<redis.RedisError>>, expected: i64) 
     }
 }
 
+fn assert_done(result: Result<(), ActorError<redis.RedisError>>) {
+    match result {
+        .Ok(()) => {}
+        _ => assert(false),
+    }
+}
+
 fn assert_bool(result: Result<bool, ActorError<redis.RedisError>>, expected: bool) {
     match result {
         .Ok(value) => assert(value == expected),
@@ -115,10 +122,10 @@ fn string_commands_preserve_missing_empty_and_nul() {
     let client = client_actor();
     let prefix = "hew:redis:beta:string";
     let _ = client.del(f"{prefix}:value");
-    assert_i64(client.set(f"{prefix}:value", nul_value()), 0);
+    assert_done(client.set(f"{prefix}:value", nul_value()));
     assert_value(client.get(f"{prefix}:value"), nul_value());
     assert_missing(client.get(f"{prefix}:missing"));
-    assert_i64(client.set(f"{prefix}:empty", bytes.new()), 0);
+    assert_done(client.set(f"{prefix}:empty", bytes.new()));
     assert_value(client.get(f"{prefix}:empty"), bytes.new());
     assert_i64(client.del(f"{prefix}:empty"), 1);
     stop(client);
@@ -130,7 +137,7 @@ fn string_commands_preserve_missing_empty_and_nul() {
 fn expiration_commands_return_typed_outcomes() {
     let client = client_actor();
     let key = "hew:redis:beta:expiration";
-    assert_i64(client.set_ex(key, binary("ttl"), 10), 0);
+    assert_done(client.set_ex(key, binary("ttl"), 10));
     assert_bool(client.expire(key, 20), true);
     match client.ttl(key) {
         .Ok(.Seconds(seconds)) => assert(seconds > 0),
@@ -150,7 +157,7 @@ fn expiration_commands_return_typed_outcomes() {
 fn increment_returns_exact_new_value() {
     let client = client_actor();
     let key = "hew:redis:beta:counter";
-    assert_i64(client.set(key, binary("40")), 0);
+    assert_done(client.set(key, binary("40")));
     assert_i64(client.incr(key), 41);
     stop(client);
     stopped(client);
@@ -280,7 +287,7 @@ fn calls_to_a_stopped_client_report_dead() {
 
 fn create_actor_without_explicit_close(previous_count: i64) -> redis.Conn {
     let client = client_actor();
-    assert_i64(client.set("hew:redis:beta:abandoned", binary("released")), 0);
+    assert_done(client.set("hew:redis:beta:abandoned", binary("released")));
     assert(unsafe {
         hew_redis_connection_count()
     } == previous_count + 1);

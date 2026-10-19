@@ -63,14 +63,14 @@ It prints `uploaded example/hello.txt` and then `hello`.
 (all `string`).
 
 Every operation below is `receive fn`, called as `store.<name>(...)`,
-and is declared `-> T fails S3Error`:
+and declares `fails S3Error`:
 
-- `put(key: string, body: bytes, content_type: string) -> i64 fails S3Error`
+- `put(key: string, body: bytes, content_type: string) fails S3Error`
   — upload exact bytes under `key`.
 - `get(key: string) -> ObjectLookup fails S3Error` — download exact bytes.
   `ObjectLookup` is `.Missing` or `.Found(bytes)`; a missing object is distinct
   from a present empty one.
-- `delete(key: string) -> i64 fails S3Error` — deleting an absent key is
+- `delete(key: string) fails S3Error` — deleting an absent key is
   successful S3 behaviour, not an error.
 - `list(prefix: string) -> Vec<ObjectInfo> fails S3Error` — every object
   under `prefix`, following continuation tokens. `ObjectInfo` has `key:

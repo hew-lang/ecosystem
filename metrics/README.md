@@ -1,10 +1,12 @@
 # hew.metrics
 
 Actor-owned Prometheus counters, gauges, histograms, labels, and text export.
-Every registration, mutation and export handler is declared `-> T fails
+Every registration, mutation and export handler declares `fails
 MetricsError`, so a call replies `Result<T, ActorError<MetricsError>>`: match
 `.Ok(value)`, `.Err(.Failed(error))` for a metrics error, and `.Err(_)` for a
-registry that could not answer. Stopping the actor releases its native registry.
+registry that could not answer. Registration replies the metric handle,
+`export` the text, and every mutation `()`. Stopping the actor releases its
+native registry.
 
 Each labeled metric retains at most 1024 distinct label-value tuples. Once the
 limit is reached, existing tuples remain mutable and operations with a new

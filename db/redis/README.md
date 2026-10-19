@@ -46,7 +46,7 @@ hew run --pkg-path . db/redis/examples/basic.hew
 
 It prints `hello`.
 
-Every command is declared `-> T fails RedisError`, so a call replies with
+Every command declares `fails RedisError`, so a call replies with
 `Result<T, ActorError<RedisError>>`: `.Ok(value)` on success,
 `.Err(.Failed(error))` when Redis reports a failure, and another `ActorError`
 variant, such as `.Dead`, when the actor could not answer. Redis payloads use
@@ -86,10 +86,10 @@ where `T` is the return listed:
 
 | Method | Returns |
 | --- | --- |
-| `set(key, value: bytes)` | number of keys set |
+| `set(key, value: bytes)` | `()` |
 | `get(key)` | `Lookup` |
 | `del(key)` | number of keys removed |
-| `set_ex(key, value: bytes, ttl_seconds)` | number of keys set |
+| `set_ex(key, value: bytes, ttl_seconds)` | `()` |
 | `expire(key, ttl_seconds)` | `bool` — whether the key existed |
 | `ttl(key)` | `KeyTtl` |
 | `incr(key)` | the incremented `i64` |

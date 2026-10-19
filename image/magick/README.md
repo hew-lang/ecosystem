@@ -62,10 +62,13 @@ fn main() {
 The checked example lives at [`examples/basic.hew`](examples/basic.hew); it
 writes `magick-example.png` beside you and prints `magick-example.png is PNG`.
 
-Every `Image` method is declared `-> T fails MagickError`, so a call replies
+Every `Image` method declares `fails MagickError`, so a call replies
 `Result<T, ActorError<MagickError>>`: `.Ok(value)` on success,
 `.Err(.Failed(error))` for an image error, and another `.Err` variant when the
-actor could not answer (for example `.Dead` after it stopped).
+actor could not answer (for example `.Dead` after it stopped). The transforms
+(`resize`, `crop`, `rotate`, `blur`, `sharpen`, `flip`, `flop`, `thumbnail`)
+and `write` reply `()` on success; `width`, `height`, `format` and
+`write_blob` reply the value.
 
 `write_blob` explicitly selects the encoded format. File output remains
 available through `write`, where ImageMagick infers the format from the path.

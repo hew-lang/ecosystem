@@ -276,11 +276,11 @@ pub actor Conn {
     }
 
     /// Set an exact binary value.
-    receive fn set(key: string, value: bytes) -> i64 fails RedisError {
+    receive fn set(key: string, value: bytes) fails RedisError {
         let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
             hew_redis_set(handle, key, value)
-        })?
+        })?;
     }
 
     /// Get an exact binary value, preserving missing versus present-empty.
@@ -300,11 +300,11 @@ pub actor Conn {
     }
 
     /// Set a value with a positive expiration in seconds.
-    receive fn set_ex(key: string, value: bytes, ttl_seconds: i64) -> i64 fails RedisError {
+    receive fn set_ex(key: string, value: bytes, ttl_seconds: i64) fails RedisError {
         let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
             hew_redis_set_ex(handle, key, value, ttl_seconds)
-        })?
+        })?;
     }
 
     /// Set a positive expiration and return whether the key existed.

@@ -60,9 +60,9 @@ fn image_handle(handle: i64, kind: i32, message: string) -> Result<i64, MagickEr
     }
 }
 
-fn operation(status: i32) -> Result<i64, MagickError> {
+fn operation(status: i32) -> Result<(), MagickError> {
     if status == 0 {
-        .Ok(0)
+        .Ok(())
     } else {
         .Err(native_error())
     }
@@ -97,7 +97,7 @@ pub actor Image {
     }
 
     /// Resize to exact positive dimensions.
-    receive fn resize(width: i32, height: i32) -> i64 fails MagickError {
+    receive fn resize(width: i32, height: i32) fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         if width <= 0 || height <= 0 {
             return error MagickError.InvalidInput("image dimensions must be positive");
@@ -108,7 +108,7 @@ pub actor Image {
     }
 
     /// Crop a positive-sized region at the given offset.
-    receive fn crop(width: i32, height: i32, x: i32, y: i32) -> i64 fails MagickError {
+    receive fn crop(width: i32, height: i32, x: i32, y: i32) fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         if width <= 0 || height <= 0 {
             return error MagickError.InvalidInput("crop dimensions must be positive");
@@ -118,35 +118,35 @@ pub actor Image {
         })?
     }
 
-    receive fn rotate(degrees: f64) -> i64 fails MagickError {
+    receive fn rotate(degrees: f64) fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_rotate(handle, degrees)
         })?
     }
 
-    receive fn blur(radius: f64, sigma: f64) -> i64 fails MagickError {
+    receive fn blur(radius: f64, sigma: f64) fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_blur(handle, radius, sigma)
         })?
     }
 
-    receive fn sharpen(radius: f64, sigma: f64) -> i64 fails MagickError {
+    receive fn sharpen(radius: f64, sigma: f64) fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_sharpen(handle, radius, sigma)
         })?
     }
 
-    receive fn flip() -> i64 fails MagickError {
+    receive fn flip() fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_flip(handle)
         })?
     }
 
-    receive fn flop() -> i64 fails MagickError {
+    receive fn flop() fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_flop(handle)
@@ -186,7 +186,7 @@ pub actor Image {
         value
     }
 
-    receive fn write(path: string) -> i64 fails MagickError {
+    receive fn write(path: string) fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_write(handle, path)
@@ -208,7 +208,7 @@ pub actor Image {
         value
     }
 
-    receive fn thumbnail(max_width: i32, max_height: i32) -> i64 fails MagickError {
+    receive fn thumbnail(max_width: i32, max_height: i32) fails MagickError {
         let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         if max_width <= 0 || max_height <= 0 {
             return error MagickError.InvalidInput("thumbnail bounds must be positive");

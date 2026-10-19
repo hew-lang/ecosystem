@@ -92,9 +92,9 @@ fn bucket_handle(handle: i64, kind: i32, status: i32, message: string) -> Result
     }
 }
 
-fn unit_result(status: i32) -> Result<i64, S3Error> {
+fn unit_result(status: i32) -> Result<(), S3Error> {
     if status == 0 {
-        .Ok(0)
+        .Ok(())
     } else {
         .Err(native_error())
     }
@@ -182,7 +182,7 @@ pub actor Bucket {
     }
 
     /// Upload exact bytes under `key`.
-    receive fn put(key: string, body: bytes, content_type: string) -> i64 fails S3Error {
+    receive fn put(key: string, body: bytes, content_type: string) fails S3Error {
         let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         unit_result(unsafe {
             hew_s3_put(handle, key, body, content_type)
@@ -214,7 +214,7 @@ pub actor Bucket {
     }
 
     /// Delete an object. Deleting an absent key is successful S3 behavior.
-    receive fn delete(key: string) -> i64 fails S3Error {
+    receive fn delete(key: string) fails S3Error {
         let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         unit_result(unsafe {
             hew_s3_delete(handle, key)
