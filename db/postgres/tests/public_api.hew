@@ -1,6 +1,4 @@
-import hew.db.postgres;
-
-import hew.db.postgres.{PostgresError, CellValue, Row, QueryResult};
+import hew.db.postgres.{CellValue, Row, QueryResult};
 
 fn error_variants_preserve_diagnostics() {
     assert(postgres.error_message(.Connect("connect")) == "connect");
