@@ -17,21 +17,14 @@ sudo apt-get install libmagickwand-dev pkg-config   # Debian/Ubuntu
 
 ## Linking
 
-`magick_rust` emits its link directives when it builds, but those directives do
-not survive the trip through this package's staticlib into the final link line,
-and a `hew.toml` `[native]` section has no way to name a system library that
-the current compiler acts on. Until it does, the MagickWand libraries are named
-on the command line:
+`magick_rust`'s link directives do not survive the trip through this package's
+staticlib, so `hew.toml` names the libraries itself with
+`pkg-config = ["MagickWand"]` in `[native]`. Every program that imports
+`hew.image.magick` links MagickWand without extra flags:
 
 ```sh
-hew run --pkg-path "$PWD" \
-  $(pkg-config --libs MagickWand | sed 's/\([^ ][^ ]*\)/--link-lib \1/g') \
-  image/magick/examples/basic.hew
+hew run --pkg-path . image/magick/examples/basic.hew
 ```
-
-From the ecosystem checkout, `scripts/corpus-gate.sh native` runs exactly that. Any
-program importing `hew.image.magick` needs the same flags. Without them the
-link fails with `undefined symbol: MagickWandGenesis` and a few dozen siblings.
 
 ## Example
 

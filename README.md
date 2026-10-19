@@ -118,10 +118,7 @@ and `examples/` holds the same program as a file you can run.
 move the pin, and the corpus gate; [`docs/packaging.md`](docs/packaging.md)
 covers package layout and the native-crate contract.
 
-`hew.image.magick` is the one package whose example needs more than `hew run`:
-ImageMagick is a system library, and its link directives do not survive the trip
-through the package's staticlib. `scripts/corpus-gate.sh native` runs its suite
-and example with the MagickWand link flags; see
+`hew.image.magick` needs the ImageMagick 7 development files installed; see
 [`image/magick/README.md`](image/magick/README.md).
 
 ## Documentation

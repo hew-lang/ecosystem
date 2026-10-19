@@ -11,3 +11,4 @@ repository = "https://github.com/hew-lang/ecosystem"
 
 [native]
 crate = "."
+pkg-config = ["MagickWand"]
