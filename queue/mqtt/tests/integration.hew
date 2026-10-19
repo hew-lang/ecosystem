@@ -1,3 +1,7 @@
+import std.os;
+
+import std.string;
+
 import hew.queue.mqtt;
 
 import hew.queue.mqtt.{Options, Receive};
@@ -7,8 +11,19 @@ extern "C" {
     fn hew_mqtt_message_count() -> i64;
 }
 
+// The test broker's host port. `make test` exports it from docker-compose.yml.
+fn broker_port() -> i64 {
+    match os.env("HEW_MQTT_PORT") {
+        .Some(text) => match string.to_int(text) {
+            .Ok(port) => port,
+            .Err(_) => panic(f"HEW_MQTT_PORT is not a port number: {text}"),
+        }
+        .None => panic("HEW_MQTT_PORT is unset; run the tests through make, which reads it from docker-compose.yml"),
+    }
+}
+
 fn options(client_id: string) -> Options {
-    Options { host: "127.0.0.1", port: 11883, client_id: client_id, keepalive_seconds: 30 }
+    Options { host: "127.0.0.1", port: broker_port(), client_id: client_id, keepalive_seconds: 30 }
 }
 
 #[test]

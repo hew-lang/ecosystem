@@ -52,7 +52,9 @@ services:
   mqtt:
     image: eclipse-mosquitto:2.0.22
     ports:
-      - "11883:1883"
+      # HEW_MQTT_PORT picks the host port; the Makefile reads this default
+      # and exports it to the tests.
+      - "${HEW_MQTT_PORT:-21883}:1883"
     # mosquitto 2.x denies anonymous clients by default; the image ships an
     # anonymous-listener config for this case.
     command: mosquitto -c /mosquitto-no-auth.conf

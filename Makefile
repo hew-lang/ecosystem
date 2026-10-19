@@ -5,11 +5,12 @@
 #   make check                                   hew fmt and hew check, every source
 #   make test                                    every package's Hew tests and examples
 #   make test-native                             the same for NATIVE_PACKAGES
+#   make test-crates                             the native crates' Rust tests
 #   make publish-check                           dry-run the workspace publish
 #   make publish                                 publish every new member version
 #
-# `make test` and `make test-native` need the docker-compose.yml services:
-# `docker compose up --detach --wait`. `make test-native` also needs the
+# `make test`, `make test-native` and `make test-crates` need the
+# docker-compose.yml services: `docker compose up --detach --wait`. `make test-native` also needs the
 # system libraries its packages link: ImageMagick 7 development files with
 # pkg-config, and OpenSSL.
 
@@ -22,6 +23,10 @@ TOOLCHAIN_TARGET := $(CURDIR)/.tooling/target
 HEW_BIN := $(TOOLCHAIN_TARGET)/release-lib/hew
 # The compiler every Hew target runs; set HEW to use another build.
 HEW ?= $(HEW_BIN)
+# The MQTT test broker's host port. docker-compose.yml holds the default; set
+# HEW_MQTT_PORT for both `docker compose up` and make to use another port.
+HEW_MQTT_PORT ?= $(shell sed -n 's/.*HEW_MQTT_PORT:-\([0-9]*\)}.*/\1/p' docker-compose.yml)
+export HEW_MQTT_PORT
 # Where publish credentials come from: `credentials` (hew login and hew key
 # generate) or `github-actions` (trusted publishing from publish.yml).
 PUBLISH_AUTH ?= credentials
@@ -37,7 +42,7 @@ NATIVE_PACKAGES := image/magick storage/s3
 # the package's .hew/packages, following the tracked hew.lock.
 LOCKED_PACKAGES := $(filter-out hew/%,$(patsubst %/hew.lock,%,$(wildcard */hew.lock */*/hew.lock)))
 
-.PHONY: lint toolchain deps check test test-native publish-check publish
+.PHONY: lint toolchain deps check test test-native test-crates publish-check publish
 
 lint:
 	cargo fmt --all -- --check
@@ -65,6 +70,9 @@ test: deps
 
 test-native: deps
 	"$(HEW)" test $(NATIVE_PACKAGES)
+
+test-crates:
+	cargo test --locked --workspace --all-features
 
 # Builds hew at the pinned revision from the checkout named by HEW_SOURCE.
 # HEW_SOURCE must already be at HEW_REVISION: this target never moves someone

@@ -7,7 +7,7 @@ make lint                                         # cargo fmt and clippy
 make check                                        # hew fmt and hew check, every source
 docker compose up --detach --wait                 # the services the tests and examples use
 make test test-native                             # every Hew test and example
-cargo test --locked --workspace --all-features    # the native crates
+make test-crates                                  # the native crates' Rust tests
 ```
 
 [`docs/toolchain.md`](docs/toolchain.md) describes these targets and the system

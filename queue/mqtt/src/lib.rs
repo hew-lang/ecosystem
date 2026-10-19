@@ -487,8 +487,13 @@ mod tests {
             "hew-mqtt-test-{}",
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
         ));
+        // `make test-crates` exports the compose broker's port.
+        let port = std::env::var("HEW_MQTT_PORT")
+            .expect("HEW_MQTT_PORT is unset; run the tests through make")
+            .parse()
+            .expect("HEW_MQTT_PORT is not a port number");
         // SAFETY: `host` and `client_id` are live managed strings for the call.
-        let handle = unsafe { hew_mqtt_connect(host, 11883, id, 30) };
+        let handle = unsafe { hew_mqtt_connect(host, port, id, 30) };
         // SAFETY: this test owns both handles.
         unsafe {
             string_release(host);

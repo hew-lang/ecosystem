@@ -48,7 +48,7 @@ docker compose up --detach --wait
 make test test-native
 
 # Native crate tests.
-cargo test --locked --workspace --all-features
+make test-crates
 ```
 
 The Makefile runs `.tooling/target/release-lib/hew`; set `HEW` to use another
@@ -59,7 +59,14 @@ build.
 | `check` | `hew fmt --check` and `hew check --Werror` over every tracked `.hew` file | nothing |
 | `test` | `hew test` over every package directory except `NATIVE_PACKAGES`: inline module tests, `tests/`, and the test in every example | the `docker-compose.yml` services |
 | `test-native` | the same over `NATIVE_PACKAGES` (ImageMagick and S3) | the above, plus ImageMagick 7 development files, `pkg-config` and OpenSSL |
+| `test-crates` | `cargo test` over every native crate, with the integration tests | the `docker-compose.yml` services and the `test-native` libraries |
 | `publish-check` | `hew publish --workspace --dry-run` | read access to the registry |
+
+The MQTT broker listens on the host port `HEW_MQTT_PORT` names, with its
+default in `docker-compose.yml`. The Makefile reads that default and exports
+`HEW_MQTT_PORT` to the tests, so set the variable for both
+`docker compose up` and `make` to move the broker. Running `hew test
+queue/mqtt` directly needs `HEW_MQTT_PORT` set.
 
 Packages are found by their `hew.toml`, and `hew test` finds every `#[test]`
 below them, so a new package, test file or example needs no list updated.

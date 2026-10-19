@@ -7,7 +7,7 @@ by `Receive.Missing`.
 Run a broker and the example from the repository root:
 
 ```sh
-docker run --rm -d --name hew-mqtt -p 11883:1883 eclipse-mosquitto:2.0.22 \
+docker run --rm -d --name hew-mqtt -p 1883:1883 eclipse-mosquitto:2.0.22 \
   mosquitto -c /mosquitto-no-auth.conf
 hew run --pkg-path . queue/mqtt/examples/pubsub.hew
 ```
@@ -22,7 +22,7 @@ import hew.queue.mqtt;
 
 fn main() {
     let client = spawn mqtt.Conn { options: mqtt.Options {
-        host: "127.0.0.1", port: 11883,
+        host: "127.0.0.1", port: 1883,
         client_id: "hew-readme", keepalive_seconds: 30,
     } };
     let _ = client.subscribe("hew/readme", mqtt.QoS.AtLeastOnce);

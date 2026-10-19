@@ -1,16 +1,28 @@
 //! Publish one message and receive it back over an MQTT subscription.
 //!
-//! Start the broker from the ecosystem checkout with
+//! The broker port comes from `HEW_MQTT_PORT`, and is the standard 1883 when
+//! that is unset. Start the compose broker from the ecosystem checkout with
 //! `docker compose up -d mqtt`, then run:
-//! `hew run --pkg-path . queue/mqtt/examples/pubsub.hew`
+//! `HEW_MQTT_PORT=21883 hew run --pkg-path . queue/mqtt/examples/pubsub.hew`
 //!
 //! With no broker listening the example prints the connection error and exits
 //! successfully; it does not pretend the round trip happened.
 
+import std.os;
+
+import std.string;
+
 import hew.queue.mqtt;
 
+fn broker_port() -> i64 {
+    match os.env("HEW_MQTT_PORT") {
+        .Some(text) => string.to_int(text) handle _ { 1883 },
+        .None => 1883,
+    }
+}
+
 fn main() {
-    let client = spawn mqtt.Conn { options: mqtt.Options { host: "127.0.0.1", port: 11883, client_id: "hew-mqtt-example", keepalive_seconds: 30 } };
+    let client = spawn mqtt.Conn { options: mqtt.Options { host: "127.0.0.1", port: broker_port(), client_id: "hew-mqtt-example", keepalive_seconds: 30 } };
     match client.subscribe("hew/example", mqtt.QoS.AtLeastOnce) {
         .Ok(()) => {
             match client.publish("hew/example", "hello from Hew", mqtt.QoS.AtLeastOnce, false) {

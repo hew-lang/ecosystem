@@ -12,7 +12,7 @@
 //!
 //! fn main() {
 //!     let client = spawn mqtt.Conn {
-//!         options: mqtt.Options { host: "127.0.0.1", port: 11883, client_id: "hew-example", keepalive_seconds: 30 },
+//!         options: mqtt.Options { host: "127.0.0.1", port: 1883, client_id: "hew-example", keepalive_seconds: 30 },
 //!     };
 //!     let _ = client.subscribe("hew/example", mqtt.QoS.AtLeastOnce);
 //!     let _ = client.publish("hew/example", "hello", mqtt.QoS.AtLeastOnce, false);

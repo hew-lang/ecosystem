@@ -128,7 +128,9 @@ jobs:
         run: make lint
 
       - name: Run native crate tests
-        run: cargo test --locked --workspace --all-features --jobs 2
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: make test-crates
 
       - name: Stop integration services
         if: ${{ always() }}
