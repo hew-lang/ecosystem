@@ -44,8 +44,9 @@ root for a complete example.
 
 - `run_text(text, initial) -> Result<RunReport, RunFailure>` — parse and
   route in one call, using the library's own `apply_op` kernel.
-- `route_with(spec, initial, dispatch: fn(i64, i64) -> i64) -> Result<RunReport, RunFailure>` —
-  route through a caller-supplied per-node dispatch function.
+- `route_with(spec, initial, dispatch: fn[suspends](i64, i64) -> i64) -> Result<RunReport, RunFailure>` —
+  route through a caller-supplied per-node dispatch, called once per node in
+  topological order. The dispatch may suspend, so it can ask an actor.
 - `apply_op(op, x, operand) -> i64` — the per-node operation kernel
   (`add`/`multiply`/`square`/`identity`).
 - `topo_order(spec) -> Result<Vec<i64>, DagError>` / `validate(spec) -> Result<i64, DagError>` /
@@ -62,7 +63,5 @@ root for a complete example.
 - `lifecycle_for(spec) -> LifecycleState`, `state_name(state) -> string` —
   a spec's lifecycle state before routing.
 
-For routing through one live actor per node instead of a plain dispatch
-function, see `dag/examples/actor_pipeline.hew` — the driver is open-coded
-in the consumer, because `route_with` takes a non-suspending dispatch `fn` and
-asking an actor suspends.
+`dag/examples/actor_pipeline.hew` routes through one live actor per node: its
+`route_with` dispatch asks the node's actor and returns the reply.

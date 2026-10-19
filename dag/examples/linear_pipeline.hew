@@ -1,8 +1,8 @@
 // linear_pipeline.hew — load a DAG spec at runtime and route a value through it.
 //
 // The spec is a string parsed AT RUNTIME (not built in code): three nodes in a
-// chain. This example uses `route_with`, the import-friendly seam: each node is
-// driven by a caller-supplied dispatch closure.
+// chain. This example uses `route_with`: each node is driven by a
+// caller-supplied dispatch closure.
 //
 //   node0 (add 1) ──> node1 (multiply 10) ──> node2 (add 100)
 //

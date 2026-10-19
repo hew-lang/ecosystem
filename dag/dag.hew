@@ -40,16 +40,9 @@
 //! - `run_text(text, initial)` — parse a spec string and route `initial`
 //!   through it, applying each node's own bound operation. The one-call path.
 //! - `route_with(spec, initial, dispatch)` — route through a caller-supplied
-//!   `fn(node_id, input) -> output`. A plain `fn` dispatch lowers across the
-//!   module boundary, so an importing consumer drives routing through their own
-//!   per-node logic.
-//! - **Live actors** — to route through one live actor per node, open-code the
-//!   driver in the consumer's compilation unit (spawn a `Vec<...>`,
-//!   ask each in `topo_order`, feed results forward). The library supplies the
-//!   spec loading, validation, and topological sort; the consumer supplies the
-//!   actors. See `examples/actor_pipeline.hew`. A `route_with` dispatch is a
-//!   non-suspending `fn`, so it cannot ask an actor; the compiler rejects a
-//!   dispatch closure that suspends.
+//!   `fn[suspends](node_id, input) -> output`. The dispatch may suspend, so it
+//!   can ask a live actor per node and return its reply; see
+//!   `examples/actor_pipeline.hew`. A non-suspending closure works too.
 //!
 //! # Examples
 //!
@@ -184,9 +177,8 @@ fn code_of_name(name: string, token: i64) -> Result<i64, DagError> {
 
 // ── The per-node operation kernel ───────────────────────────────────────────
 /// Apply a node's operation to the value flowing through it. This is the kernel
-/// a routing dispatch calls for each node; a consumer's actor-backed dispatch
-/// can wrap it (see `examples/actor_pipeline.hew`), or `route_with` can call it
-/// directly; it is pure, so a non-suspending dispatch can call it.
+/// a routing dispatch calls for each node, directly or inside a node actor (see
+/// `examples/actor_pipeline.hew`).
 pub fn apply_op(op: NodeOp, x: i64, operand: i64) -> i64 {
     match op {
         .Add => x + operand,
@@ -484,15 +476,10 @@ fn gather_input(spec: DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> Re
 
 /// Route `initial` through a caller-supplied per-node `dispatch(node_id, input)`
 /// in dependency order, feeding each node the merged output of its predecessors.
-/// This is the **import-friendly** routing entry point: a plain `fn(i64, i64)`
-/// dispatch lowers across the module boundary, so a consumer that imports this
-/// library can drive routing through their own logic. Refuses a cyclic/empty
-/// spec (fail closed).
-///
-/// `dispatch` is a non-suspending `fn`, so it cannot ask an actor. An
-/// actor-backed driver is open-coded in the consumer's compilation unit instead
-/// (see `examples/actor_pipeline.hew`).
-pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn(i64, i64) -> i64) -> Result<RunReport, RunFailure> {
+/// `dispatch` runs once per node, in topological order, and may suspend: it can
+/// ask an actor for the node's output (see `examples/actor_pipeline.hew`).
+/// Refuses a cyclic/empty spec (fail closed) before calling `dispatch`.
+pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn[suspends](i64, i64) -> i64) -> Result<RunReport, RunFailure> {
     match validate(spec) {
         .Ok(_) => {}
         .Err(e) => {
@@ -975,8 +962,8 @@ fn test_run_text_diamond_fans_in() {
 
 #[test]
 fn test_route_with_inline_closure_dispatch() {
-    // The import-friendly seam: same chain as the actor route, driven by a
-    // plain dispatch closure. node0: 5+1=6 ; node1: 6*10=60 ; node2: 60+100=160.
+    // A non-suspending dispatch closure.
+    // node0: 5+1=6 ; node1: 6*10=60 ; node2: 60+100=160.
     match parse_spec("add:1 multiply:10 add:100 | 0->1 ; 1->2") {
         .Ok(spec) => {
             let report = route_with(spec, 5, |node: i64, input: i64| -> i64 {
