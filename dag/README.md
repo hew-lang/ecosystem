@@ -28,7 +28,7 @@ root for a complete example.
 - `DagSpec { num_nodes, nodes, edges }` — a compiled graph.
 - `RunReport { outputs, order, num_nodes }` — the outcome of a run.
 - `RunFailure { err, stopped_at }` — a run failure with the node it stopped at.
-- `DagError` — `Empty | Cyclic | UnknownNode(i64) | Malformed(i64) | UnknownOperation(i64)`.
+- `DagError` — `Empty | Cyclic | UnknownNode(i64) | Malformed(i64) | UnknownOperation(i64) | Dispatch(i64)`.
 - `LifecycleState` — the spec's readiness (`lifecycle_for`/`state_name`).
 
 **Building and parsing specs**
@@ -44,9 +44,12 @@ root for a complete example.
 
 - `run_text(text, initial) -> Result<RunReport, RunFailure>` — parse and
   route in one call, using the library's own `apply_op` kernel.
-- `route_with(spec, initial, dispatch: fn[suspends](i64, i64) -> i64) -> Result<RunReport, RunFailure>` —
+- `route_with(spec, initial, dispatch: fn[suspends](i64, i64) -> i64 fails DagError) -> Result<RunReport, RunFailure>` —
   route through a caller-supplied per-node dispatch, called once per node in
-  topological order. The dispatch may suspend, so it can ask an actor.
+  topological order. The dispatch may suspend, so it can ask an actor, and it
+  fails with `DagError.Dispatch(node)` when a node cannot produce an output;
+  the run then stops with `stopped_at` set to that node. `route_with` always
+  suspends, so a caller that cannot suspend uses `run_text` instead.
 - `apply_op(op, x, operand) -> i64` — the per-node operation kernel
   (`add`/`multiply`/`square`/`identity`).
 - `topo_order(spec) -> Result<Vec<i64>, DagError>` / `validate(spec) -> Result<i64, DagError>` /
@@ -64,4 +67,5 @@ root for a complete example.
   a spec's lifecycle state before routing.
 
 `dag/examples/actor_pipeline.hew` routes through one live actor per node: its
-`route_with` dispatch asks the node's actor and returns the reply.
+`route_with` dispatch asks the node's actor and returns the reply, or fails
+with `DagError.Dispatch(node)` when the actor does not answer.

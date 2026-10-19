@@ -40,9 +40,12 @@
 //! - `run_text(text, initial)` — parse a spec string and route `initial`
 //!   through it, applying each node's own bound operation. The one-call path.
 //! - `route_with(spec, initial, dispatch)` — route through a caller-supplied
-//!   `fn[suspends](node_id, input) -> output`. The dispatch may suspend, so it
-//!   can ask a live actor per node and return its reply; see
-//!   `examples/actor_pipeline.hew`. A non-suspending closure works too.
+//!   `fn[suspends](node_id, input) -> output fails DagError`. The dispatch may
+//!   suspend, so it can ask a live actor per node and return its reply (see
+//!   `examples/actor_pipeline.hew`), and it fails with `DagError.Dispatch(node)`
+//!   when a node cannot produce an output. Because its dispatch may suspend,
+//!   `route_with` always suspends, even with a non-suspending closure: a caller
+//!   that cannot suspend cannot use it, and uses `run_text` instead.
 //!
 //! # Examples
 //!
@@ -53,7 +56,7 @@
 //!     match dag.parse_spec("add:1 multiply:10 | 0->1") {
 //!         .Ok(spec) => {
 //!             // Drive each node through caller-supplied logic.
-//!             let report = dag.route_with(spec, 3, |node: i64, x: i64| -> i64 {
+//!             let report = dag.route_with(spec, 3, |node: i64, x: i64| -> i64 fails dag.DagError {
 //!                 if node == 0 { x + 1 } else { x * 10 }
 //!             });
 //!             match report {
@@ -128,6 +131,8 @@ pub enum DagError {
     Malformed(i64) @3;
     /// A programmatic node carried an operation discriminant this version does not know.
     UnknownOperation(i64) @4;
+    /// A `route_with` dispatch could not produce an output for this node.
+    Dispatch(i64) @5;
 }
 
 /// A run failure that also reports how far the run got. Wrapping the `DagError`
@@ -477,9 +482,15 @@ fn gather_input(spec: DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> Re
 /// Route `initial` through a caller-supplied per-node `dispatch(node_id, input)`
 /// in dependency order, feeding each node the merged output of its predecessors.
 /// `dispatch` runs once per node, in topological order, and may suspend: it can
-/// ask an actor for the node's output (see `examples/actor_pipeline.hew`).
-/// Refuses a cyclic/empty spec (fail closed) before calling `dispatch`.
-pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn[suspends](i64, i64) -> i64) -> Result<RunReport, RunFailure> {
+/// ask an actor for the node's output (see `examples/actor_pipeline.hew`). When
+/// it fails, routing stops there and the failure carries its error with
+/// `stopped_at` set to that node; `DagError.Dispatch(node)` is the error a
+/// dispatch reports for itself. Refuses a cyclic/empty spec (fail closed) before
+/// calling `dispatch`.
+///
+/// `route_with` always suspends, because its dispatch may: a caller in a context
+/// that cannot suspend cannot call it, even with a non-suspending closure.
+pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn[suspends](i64, i64) -> i64 fails DagError) -> Result<RunReport, RunFailure> {
     match validate(spec) {
         .Ok(_) => {}
         .Err(e) => {
@@ -501,7 +512,10 @@ pub fn route_with(spec: DagSpec, initial: i64, dispatch: fn[suspends](i64, i64) 
             .Ok(input) => input,
             .Err(e) => return .Err(RunFailure { err: e, stopped_at: node }),
         };
-        outputs.set(node, dispatch(node, input));
+        let output = dispatch(node, input) handle e {
+            return .Err(RunFailure { err: e, stopped_at: node });
+        };
+        outputs.set(node, output);
     }
     .Ok(RunReport { outputs: outputs, order: order, num_nodes: spec.num_nodes })
 }
@@ -604,6 +618,7 @@ pub fn describe(e: DagError) -> string {
         .UnknownNode(n) => f"edge references unknown node id {n}",
         .Malformed(i) => f"malformed spec at token {i}",
         .UnknownOperation(code) => f"unknown node operation code {code}",
+        .Dispatch(node) => f"dispatch failed at node {node}",
     }
 }
 
@@ -966,7 +981,7 @@ fn test_route_with_inline_closure_dispatch() {
     // node0: 5+1=6 ; node1: 6*10=60 ; node2: 60+100=160.
     match parse_spec("add:1 multiply:10 add:100 | 0->1 ; 1->2") {
         .Ok(spec) => {
-            let report = route_with(spec, 5, |node: i64, input: i64| -> i64 {
+            let report = route_with(spec, 5, |node: i64, input: i64| -> i64 fails DagError {
                 if node == 0 {
                     input + 1
                 } else if node == 1 {
@@ -988,13 +1003,43 @@ fn test_route_with_inline_closure_dispatch() {
 }
 
 #[test]
+fn test_route_with_stops_at_a_failing_dispatch() {
+    // node0 -> node1 -> node2; the dispatch fails at node1, so node2 never runs.
+    match parse_spec("add:1 add:1 add:1 | 0->1 ; 1->2") {
+        .Ok(spec) => {
+            let report = route_with(spec, 0, |node: i64, input: i64| -> i64 fails DagError {
+                if node == 1 {
+                    return error DagError.Dispatch(node);
+                }
+                if node == 2 {
+                    assert(false);
+                }
+                input + 1
+            });
+            match report {
+                .Ok(_) => assert(false),
+                .Err(f) => {
+                    assert(f.stopped_at == 1);
+                    match error_of(f) {
+                        .Dispatch(node) => assert(node == 1),
+                        _ => assert(false),
+                    }
+                    assert(describe(error_of(f)) == "dispatch failed at node 1");
+                }
+            }
+        }
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
 fn test_route_with_refuses_cyclic() {
     var spec = new_spec();
     spec = add_node(spec, NodeOp.Add, 1);
     spec = add_node(spec, NodeOp.Add, 1);
     spec = test_edge(spec, 0, 1);
     spec = test_edge(spec, 1, 0);
-    let report = route_with(spec, 1, |_node: i64, input: i64| -> i64 {
+    let report = route_with(spec, 1, |_node: i64, input: i64| -> i64 fails DagError {
         input
     });
     match report {

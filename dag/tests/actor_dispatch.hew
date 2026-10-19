@@ -44,8 +44,8 @@ fn stop_recorders(recorders: Vec<Recorder>) {
 }
 
 fn route_through(spec: dag.DagSpec, recorders: Vec<Recorder>, initial: i64) -> Result<dag.RunReport, dag.RunFailure> {
-    dag.route_with(spec, initial, |node: i64, input: i64| -> i64 {
-        recorders[node].process(input).expect("recorder replies")
+    dag.route_with(spec, initial, |node: i64, input: i64| -> i64 fails dag.DagError {
+        recorders[node].process(input).map_err(|_| dag.DagError.Dispatch(node))?
     })
 }
 
@@ -101,6 +101,35 @@ fn refused_spec_never_asks_an_actor() {
                     .Ok(calls) => assert(calls == 0),
                     .Err(_) => assert(false),
                 }
+            }
+            stop_recorders(recorders);
+        }
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn unanswered_ask_stops_the_run_at_that_node() {
+    // node0 -> node1 -> node2, with node1's actor stopped before routing.
+    match dag.parse_spec("add:1 multiply:10 add:100 | 0->1 ; 1->2") {
+        .Ok(spec) => {
+            let recorders = spawn_recorders(spec);
+            stop(recorders[1]);
+            stopped(recorders[1]);
+            match route_through(spec, recorders, 5) {
+                .Ok(_) => assert(false),
+                .Err(failure) => {
+                    assert(failure.stopped_at == 1);
+                    match dag.error_of(failure) {
+                        .Dispatch(node) => assert(node == 1),
+                        _ => assert(false),
+                    }
+                }
+            }
+            assert_asked_once_with(recorders[0], 5);
+            match recorders[2].call_count() {
+                .Ok(calls) => assert(calls == 0),
+                .Err(_) => assert(false),
             }
             stop_recorders(recorders);
         }

@@ -22,12 +22,8 @@ fn main() {
         .Ok(spec) => {
             // Route input 5; the dispatch reads each node's bound op + operand
             // from the spec and applies it via the library's pure kernel.
-            let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 {
-                let ns = dag.node_at(spec, node);
-                match dag.op_of_code(ns.op_code) {
-                    .Ok(op) => dag.apply_op(op, input, ns.operand),
-                    .Err(_) => input,
-                }
+            let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 fails dag.DagError {
+                dag.apply_spec_node(spec, node, input)?
             });
             match report {
                 .Ok(r) => {

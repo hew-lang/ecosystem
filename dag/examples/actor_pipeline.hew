@@ -53,11 +53,10 @@ fn main() {
         .Ok(spec) => {
             match spawn_stages(spec) {
                 .Ok(stages) => {
-                    // Each node's output is its own actor's reply. A `Stage`
-                    // has no declared failure, so an ask fails only when the
-                    // actor is gone, which is a bug in this program.
-                    let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 {
-                        let output = stages[node].process(input).expect("stage actor replies");
+                    // Each node's output is its own actor's reply. An ask that
+                    // gets no reply stops the run at that node.
+                    let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 fails dag.DagError {
+                        let output = stages[node].process(input).map_err(|_| dag.DagError.Dispatch(node))?;
                         println(f"node {node}: in={input} -> out={output}");
                         output
                     });
