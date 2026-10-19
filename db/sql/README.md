@@ -1,7 +1,57 @@
 # hew.db.sql
 
-`hew.db.sql` holds the types SQLite, MySQL and PostgreSQL share. `Param` is the
-parameter type:
+`hew.db.sql` holds the types SQLite, MySQL and PostgreSQL share: `Param` for
+query parameters, and `QueryResult`, `Row` and `CellValue` for replies. Because
+every driver replies with the same `QueryResult`, one function handles results
+from any of them:
+
+```hew
+import std.encoding.utf8;
+
+import hew.db.sql.{Param, CellValue, Row, QueryResult};
+
+// One line per row, columns separated by ` | `, SQL NULL shown as `NULL` and
+// an empty value shown as `''` so the two cannot be confused.
+fn render(result: QueryResult) -> string {
+    var out = result.columns.join(" | ");
+    for row in result.rows {
+        var cells: Vec<string> = Vec.new();
+        for value in row.values {
+            match value {
+                .Null => cells.push("NULL"),
+                .Text(text) => {
+                    if text.len() == 0 {
+                        cells.push("''");
+                    } else {
+                        cells.push(utf8.decode_lossy(text));
+                    }
+                }
+            }
+        }
+        out = out + "\n" + cells.join(" | ");
+    }
+    out
+}
+
+// The reply a driver gives for `SELECT id, name, note FROM people WHERE id IN
+// (?, ?)` with the parameters in `main`.
+fn people() -> QueryResult {
+    let ada = Row { values: [CellValue.Text("1".to_bytes()), CellValue.Text("Ada".to_bytes()), CellValue.Null] };
+    let grace = Row { values: [CellValue.Text("2".to_bytes()), CellValue.Text("Grace".to_bytes()), CellValue.Text(bytes.new())] };
+    QueryResult { columns: ["id", "name", "note"], rows: [ada, grace] }
+}
+
+fn main() {
+    let params = [Param.Int(1), Param.Int(2)];
+    println(f"bound {params.len()} parameters");
+    println(render(people()));
+}
+```
+
+The same program is [`examples/render_rows.hew`](examples/render_rows.hew); run
+it from the ecosystem checkout with `hew run db/sql/examples/render_rows.hew`.
+
+## Parameters
 
 ```hew
 import hew.db.sql.{Param};
@@ -30,9 +80,6 @@ Every driver's `query` and `query_params` reply with the same `QueryResult`:
 - `Row { values: Vec<CellValue>; }`, one value per column
 - `CellValue` — `.Null` for SQL NULL, or `.Text(bytes)` with the database's
   text form of the value, which need not be UTF-8
-
-A program can handle results from any of the three drivers with one function
-over `sql.QueryResult`.
 
 The clients encode parameters using Hew's shared wire codec. The binary format
 is an internal native boundary, not an application serialization API.

@@ -1,0 +1,50 @@
+// render_rows.hew — one function that renders a query result from any of the
+// SQLite, MySQL and PostgreSQL clients, since all three reply with
+// `sql.QueryResult`.
+//
+// Run from the ecosystem root:  hew run db/sql/examples/render_rows.hew
+import std.encoding.utf8;
+
+import hew.db.sql.{Param, CellValue, Row, QueryResult};
+
+// One line per row, columns separated by ` | `, SQL NULL shown as `NULL` and
+// an empty value shown as `''` so the two cannot be confused.
+fn render(result: QueryResult) -> string {
+    var out = result.columns.join(" | ");
+    for row in result.rows {
+        var cells: Vec<string> = Vec.new();
+        for value in row.values {
+            match value {
+                .Null => cells.push("NULL"),
+                .Text(text) => {
+                    if text.len() == 0 {
+                        cells.push("''");
+                    } else {
+                        cells.push(utf8.decode_lossy(text));
+                    }
+                }
+            }
+        }
+        out = out + "\n" + cells.join(" | ");
+    }
+    out
+}
+
+// The reply a driver gives for `SELECT id, name, note FROM people WHERE id IN
+// (?, ?)` with the parameters in `main`.
+fn people() -> QueryResult {
+    let ada = Row { values: [CellValue.Text("1".to_bytes()), CellValue.Text("Ada".to_bytes()), CellValue.Null] };
+    let grace = Row { values: [CellValue.Text("2".to_bytes()), CellValue.Text("Grace".to_bytes()), CellValue.Text(bytes.new())] };
+    QueryResult { columns: ["id", "name", "note"], rows: [ada, grace] }
+}
+
+fn main() {
+    let params = [Param.Int(1), Param.Int(2)];
+    println(f"bound {params.len()} parameters");
+    println(render(people()));
+}
+
+#[test]
+fn renders_null_and_empty_cells_differently() {
+    assert(render(people()) == "id | name | note\n1 | Ada | NULL\n2 | Grace | ''");
+}
