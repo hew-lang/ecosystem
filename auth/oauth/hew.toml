@@ -1,6 +1,6 @@
 [package]
 name = "hew.auth.oauth"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2026"
 hew = ">=0.6.1, <0.7.0"
 description = "Typed OAuth 2.0 client for Hew — PKCE authorization code, state validation, client credentials, and refresh"

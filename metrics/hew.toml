@@ -1,6 +1,6 @@
 [package]
 name = "hew.metrics"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2026"
 hew = ">=0.6.1, <0.7.0"
 description = "Actor-owned Prometheus metrics for Hew — typed counters, gauges, histograms, labels, and export"
@@ -11,5 +11,3 @@ repository = "https://github.com/hew-lang/ecosystem"
 
 [native]
 crate = "."
-lib = "hew_hew_metrics"
-kind = "staticlib"

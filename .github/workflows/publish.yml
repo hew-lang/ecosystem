@@ -41,7 +41,9 @@ jobs:
       - name: Build pinned Hew toolchain
         run: HEW_SOURCE=.tooling/hew make toolchain
 
-      # Authentication, the manifest loop, and the read-back checks live in the
-      # script so that a local publish takes the identical path.
+      # hew orders the members, skips versions the registry already holds
+      # unchanged, fails on a changed tree under an existing version, and
+      # reads every upload back. A local `make publish` takes the same path
+      # with stored credentials.
       - name: Publish new package versions
-        run: make publish-local
+        run: make publish PUBLISH_AUTH=github-actions

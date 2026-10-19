@@ -1,6 +1,6 @@
 [package]
 name = "hew.net.http"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2026"
 hew = ">=0.6.1, <0.7.0"
 description = "Actor-owned HTTP/1.1 server with typed errors and one-request handling"
@@ -11,5 +11,3 @@ repository = "https://github.com/hew-lang/ecosystem"
 
 [native]
 crate = "."
-lib = "hew_hew_net_http"
-kind = "staticlib"

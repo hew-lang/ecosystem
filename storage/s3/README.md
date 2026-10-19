@@ -7,7 +7,7 @@ automatic native cleanup.
 ## Example
 
 Start an S3-compatible service and create `hew-example`, then save this as
-`main.hew` in a project depending on `hew.storage.s3 = "0.3.0"`:
+`main.hew` in a project depending on `hew.storage.s3 = "0.4.0"`:
 
 ```hew
 import hew.storage.s3;

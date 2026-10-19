@@ -2,7 +2,8 @@
 #
 #   make lint                                    formatting, clippy, shellcheck
 #   HEW_SOURCE=<hew checkout> make toolchain     build the pinned hew binary
-#   make publish-local                           publish with that binary
+#   make publish-check                           dry-run the workspace publish
+#   make publish                                 publish every new member version
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -11,8 +12,13 @@ include toolchain.env
 
 TOOLCHAIN_TARGET := $(CURDIR)/.tooling/target
 HEW_BIN := $(TOOLCHAIN_TARGET)/release-lib/hew
+# The compiler every Hew target runs; set HEW to use another build.
+HEW ?= $(HEW_BIN)
+# Where publish credentials come from: `credentials` (hew login and hew key
+# generate) or `github-actions` (trusted publishing from publish.yml).
+PUBLISH_AUTH ?= credentials
 
-.PHONY: lint toolchain publish-local
+.PHONY: lint toolchain publish-check publish
 
 lint:
 	cargo fmt --all -- --check
@@ -39,9 +45,10 @@ toolchain:
 	test "$$("$(HEW_BIN)" --version)" = "hew $(HEW_VERSION)"
 	@echo "pinned toolchain: $(HEW_BIN)"
 
-publish-local:
-	@test -x "$(HEW_BIN)" || { \
-		echo "no pinned toolchain at $(HEW_BIN); run: HEW_SOURCE=<hew checkout> make toolchain" >&2; \
-		exit 1; \
-	}
-	HEW="$(HEW_BIN)" scripts/publish-packages.sh
+# Validation, checking, packing and the registry query happen offline or
+# read-only; nothing uploads.
+publish-check:
+	"$(HEW)" publish --workspace --dry-run
+
+publish:
+	"$(HEW)" publish --workspace --auth $(PUBLISH_AUTH)

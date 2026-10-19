@@ -1,0 +1,22 @@
+# Every package in this repository. `hew publish --workspace` validates, checks
+# and publishes these in dependency order, and a member's requirement on
+# another member resolves to that member's directory.
+[workspace]
+members = [
+    "auth/oauth",
+    "dag",
+    "db/mongodb",
+    "db/mysql",
+    "db/postgres",
+    "db/redis",
+    "db/sql",
+    "db/sqlite",
+    "image/magick",
+    "math/stats",
+    "metrics",
+    "net/http",
+    "queue/mqtt",
+    "queue/nats",
+    "storage/s3",
+    "template",
+]

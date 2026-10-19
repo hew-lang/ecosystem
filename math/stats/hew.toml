@@ -1,6 +1,6 @@
 [package]
 name = "hew.math.stats"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2026"
 hew = ">=0.6.1, <0.7.0"
 description = "Statistical functions for Hew — descriptive stats, correlation, regression, streaming"

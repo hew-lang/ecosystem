@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-db-mongodb"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "mongodb",
@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-db-mysql"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "hew-ecosystem-db-sql",
@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-db-postgres"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "hew-cabi",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-db-redis"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "redis",
@@ -1149,14 +1149,14 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-db-sql"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ciborium",
 ]
 
 [[package]]
 name = "hew-ecosystem-db-sqlite"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "hew-ecosystem-db-sql",
@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-image-magick"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "magick_rust",
@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-metrics"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "prometheus",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-net-http"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "httparse",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-queue-mqtt"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "rumqttc",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-queue-nats"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "nats",
@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "hew-ecosystem-storage-s3"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hew-cabi",
  "rusty-s3",

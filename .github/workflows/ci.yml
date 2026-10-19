@@ -65,6 +65,11 @@ jobs:
             ! -name hew ! -name libhew.a -exec rm -rf {} +
           echo "HEW=$GITHUB_WORKSPACE/.tooling/target/release-lib/hew" >> "$GITHUB_ENV"
 
+      # Validates and checks every member and compares it with the registry,
+      # so a changed package that kept its published version fails here.
+      - name: Dry-run the workspace publish
+        run: make publish-check
+
       - name: Start integration services
         run: docker compose up --detach --wait
 

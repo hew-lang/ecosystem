@@ -36,7 +36,7 @@ link fails with `undefined symbol: MagickWandGenesis` and a few dozen siblings.
 ## Example
 
 Save this as `main.hew` in a project depending on
-`hew.image.magick = "0.3.0"`:
+`hew.image.magick = "0.4.0"`:
 
 ```hew
 import hew.image.magick;

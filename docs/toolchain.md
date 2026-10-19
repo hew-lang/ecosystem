@@ -2,7 +2,7 @@
 
 Every package in this repository is validated against one exact Hew compiler
 build, pinned in [`toolchain.env`](../toolchain.env) together with the LLVM
-release and registry endpoint; that file's header says what each pin means.
+release; that file's header says what each pin means.
 CI builds the pinned revision from source before it checks anything here, so a
 green run means the packages work against that compiler and not merely against
 whatever the runner happened to have.
