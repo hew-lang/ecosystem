@@ -37,21 +37,17 @@
 //! }
 //! ```
 
-import std.string;
-
-import std.encoding.utf8;
-
 /// HTML-escape a string so it is safe to embed in HTML content or attributes.
 ///
 /// Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
 /// This is the right function to call before interpolating user input into
 /// an f-string template.
 pub fn escape(s: string) -> string {
-    var t = string.replace(s, "&", "&amp;");
-    t = string.replace(t, "<", "&lt;");
-    t = string.replace(t, ">", "&gt;");
-    t = string.replace(t, "\"", "&quot;");
-    string.replace(t, "'", "&#39;")
+    var t = s.replace("&", "&amp;");
+    t = t.replace("<", "&lt;");
+    t = t.replace(">", "&gt;");
+    t = t.replace("\"", "&quot;");
+    t.replace("'", "&#39;")
 }
 
 /// Render a Mustache-lite template against a context.
@@ -64,19 +60,19 @@ pub fn escape(s: string) -> string {
 /// Unknown keys are replaced with an empty string.
 pub fn render(tmpl: string, ctx: string) -> string {
     let vars = parse_context(ctx);
-    var rendered: bytes = bytes.new();
+    var rendered = "";
     let template_len = tmpl.len();
     var cursor = 0;
     while cursor < template_len {
         let opening = match find_marker(tmpl, cursor, '{', 2) {
             .Some(index) => index,
             .None => {
-                rendered.append(tmpl.slice(cursor, template_len).to_bytes());
-                return utf8.decode_lossy(rendered);
+                rendered += tmpl[cursor..template_len];
+                return rendered;
             }
         };
-        rendered.append(tmpl.slice(cursor, opening).to_bytes());
-        let raw = opening + 2 < template_len && (tmpl.char_at(opening + 2) ?? '\0') == '{';
+        rendered += tmpl[cursor..opening];
+        let raw = opening + 2 < template_len && (tmpl.get(opening + 2) ?? '\0') == '{';
         let key_start = if raw {
             opening + 3
         } else {
@@ -90,11 +86,11 @@ pub fn render(tmpl: string, ctx: string) -> string {
         let closing = match find_marker(tmpl, key_start, '}', closing_len) {
             .Some(index) => index,
             .None => {
-                rendered.append(tmpl.slice(opening, template_len).to_bytes());
-                return utf8.decode_lossy(rendered);
+                rendered += tmpl[opening..template_len];
+                return rendered;
             }
         };
-        let key = tmpl.slice(key_start, closing);
+        let key = tmpl[key_start..closing];
         let value = match vars.get(key) {
             .Some(found) => found,
             .None => "",
@@ -104,10 +100,10 @@ pub fn render(tmpl: string, ctx: string) -> string {
         } else {
             escape(value)
         };
-        rendered.append(substitution.to_bytes());
+        rendered += substitution;
         cursor = closing + closing_len;
     }
-    utf8.decode_lossy(rendered)
+    rendered
 }
 
 fn parse_context(ctx: string) -> HashMap<string, string> {
@@ -116,7 +112,8 @@ fn parse_context(ctx: string) -> HashMap<string, string> {
         return vars;
     }
     // Split only on LF; a CR is part of the value.
-    let lines = string.split(ctx, "\n");
+    let lines = ctx.split("
+");
     var index = 0;
     while index < lines.len() {
         let value = if index + 1 < lines.len() {
@@ -137,7 +134,7 @@ fn find_marker(s: string, start: i64, marker: char, count: i64) -> Option<i64> {
         var matched = true;
         var offset = 0;
         while offset < count {
-            if (s.char_at(index + offset) ?? '\0') != marker {
+            if (s.get(index + offset) ?? '\0') != marker {
                 matched = false;
                 offset = count;
             } else {
