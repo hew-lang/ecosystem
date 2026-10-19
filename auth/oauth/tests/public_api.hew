@@ -43,36 +43,28 @@ fn answer(server: http.Server, status: i64, body: string) -> Received {
     received
 }
 
-fn expect_token(reply: Result<Result<oauth.Token, oauth.OAuthError>, ActorError>) -> oauth.Token {
+fn expect_token(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>) -> oauth.Token {
     match reply {
-        .Ok(result) => match result {
-            .Ok(token) => token,
-            .Err(error) => panic(f"expected a token, got: {oauth.error_message(error)}"),
-        }
+        .Ok(token) => token,
+        .Err(.Failed(error)) => panic(f"expected a token, got: {oauth.error_message(error)}"),
         .Err(_) => panic("OAuth actor stopped before replying"),
     }
 }
 
-fn expect_endpoint_error(reply: Result<Result<oauth.Token, oauth.OAuthError>, ActorError>, status: i64, message: string) {
+fn expect_endpoint_error(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>, status: i64, message: string) {
     match reply {
-        .Ok(result) => match result {
-            .Err(.TokenEndpoint(got_status, got_message)) => {
-                assert(got_status == status);
-                assert(got_message == message);
-            }
-            _ => panic("expected a token-endpoint error"),
+        .Err(.Failed(.TokenEndpoint(got_status, got_message))) => {
+            assert(got_status == status);
+            assert(got_message == message);
         }
-        .Err(_) => panic("OAuth actor stopped before replying"),
+        _ => panic("expected a token-endpoint error"),
     }
 }
 
-fn expect_invalid_input(reply: Result<Result<oauth.Token, oauth.OAuthError>, ActorError>, message: string) {
+fn expect_invalid_input(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>, message: string) {
     match reply {
-        .Ok(result) => match result {
-            .Err(.InvalidInput(got)) => assert(got == message),
-            _ => panic("expected an InvalidInput error"),
-        }
-        .Err(_) => panic("OAuth actor stopped before replying"),
+        .Err(.Failed(.InvalidInput(got))) => assert(got == message),
+        _ => panic("expected an InvalidInput error"),
     }
 }
 
@@ -171,14 +163,11 @@ fn non_json_body_reports_invalid_json() {
     let _ = answer(server, 200, "<html>not a token</html>");
     server.close();
     match await pending {
-        .Ok(result) => match result {
-            .Err(.TokenEndpoint(status, message)) => {
-                assert(status == 200);
-                assert(message.starts_with("invalid_json: "));
-            }
-            _ => panic("expected a token-endpoint error"),
+        .Err(.Failed(.TokenEndpoint(status, message))) => {
+            assert(status == 200);
+            assert(message.starts_with("invalid_json: "));
         }
-        .Err(_) => panic("OAuth actor stopped before replying"),
+        _ => panic("expected a token-endpoint error"),
     }
     finish(client);
 }
@@ -204,11 +193,8 @@ fn refused_connection_reports_transport_error() {
     server.close();
     let client = new_client();
     match client.client_credentials(url, "") {
-        .Ok(result) => match result {
-            .Err(.Transport(message)) => assert(message.starts_with("transport_error: ") && message.len() > 17),
-            _ => panic("expected a transport error"),
-        }
-        .Err(_) => panic("OAuth actor stopped before replying"),
+        .Err(.Failed(.Transport(message))) => assert(message.starts_with("transport_error: ") && message.len() > 17),
+        _ => panic("expected a transport error"),
     }
     finish(client);
 }
@@ -219,11 +205,11 @@ fn exchange_code_sends_the_verifier_auth_url_committed_to() {
     let server = listen();
     let client = new_client();
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "", "caller-state") {
-        .Ok(.Ok(value)) => value,
+        .Ok(value) => value,
         _ => panic("expected an authorization URL"),
     };
     let verifier = match client.current_code_verifier() {
-        .Ok(.Ok(.Some(value))) => value,
+        .Ok(.Some(value)) => value,
         _ => panic("expected auth_url to retain a PKCE verifier"),
     };
     // RFC 7636: 43 unpadded base64url characters, and the URL carries the
@@ -283,11 +269,11 @@ fn local_preconditions_return_invalid_input() {
     expect_invalid_input(client.refresh("http://127.0.0.1:9/token", ""), "refresh token must not be empty");
     expect_invalid_input(client.client_credentials("", ""), "token URL must not be empty");
     match client.validate_state("") {
-        .Ok(.Err(.InvalidInput(message))) => assert(message == "callback state must not be empty"),
+        .Err(.Failed(.InvalidInput(message))) => assert(message == "callback state must not be empty"),
         _ => panic("expected an InvalidInput error for an empty callback state"),
     }
     match client.auth_url("", "https://app.example/cb", "", "") {
-        .Ok(.Err(.InvalidInput(_))) => {}
+        .Err(.Failed(.InvalidInput(_))) => {}
         _ => panic("expected an InvalidInput error for an empty authorization URL"),
     }
     finish(client);
@@ -297,15 +283,15 @@ fn local_preconditions_return_invalid_input() {
 fn fresh_client_has_no_state_and_matches_nothing() {
     let client = new_client();
     match client.current_state() {
-        .Ok(.Ok(.None)) => {}
+        .Ok(.None) => {}
         _ => panic("expected a fresh client with no state"),
     }
     match client.current_code_verifier() {
-        .Ok(.Ok(.None)) => {}
+        .Ok(.None) => {}
         _ => panic("expected a fresh client with no verifier"),
     }
     match client.validate_state("anything") {
-        .Ok(.Ok(matched)) => assert(!matched),
+        .Ok(matched) => assert(!matched),
         _ => panic("expected a fresh client to reject every state"),
     }
     finish(client);
@@ -318,7 +304,7 @@ fn fresh_client_has_no_state_and_matches_nothing() {
 fn auth_url_encodes_non_ascii_and_nul_values() {
     let client = spawn oauth.Client { client_id: "identité\0du-client-2026", client_secret: "secret" };
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "lecture écriture profil élargi", "état-de-rappel-vérifié-42") {
-        .Ok(.Ok(value)) => value,
+        .Ok(value) => value,
         _ => panic("expected an authorization URL"),
     };
     assert(url.starts_with("https://authorization.example/authorize?response_type=code&"));
@@ -327,7 +313,7 @@ fn auth_url_encodes_non_ascii_and_nul_values() {
     assert(url.contains("state=%C3%A9tat-de-rappel-v%C3%A9rifi%C3%A9-42"));
     assert(url.contains("redirect_uri=https%3A%2F%2Fapp.example%2Fcallback"));
     match client.current_state() {
-        .Ok(.Ok(.Some(value))) => assert(value == "état-de-rappel-vérifié-42"),
+        .Ok(.Some(value)) => assert(value == "état-de-rappel-vérifié-42"),
         _ => panic("expected auth_url to retain the caller's state"),
     }
     finish(client);
@@ -337,26 +323,26 @@ fn auth_url_encodes_non_ascii_and_nul_values() {
 fn generated_state_validates_and_each_auth_url_rotates_it() {
     let client = new_client();
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
-        .Ok(.Ok(value)) => value,
+        .Ok(value) => value,
         _ => panic("expected an authorization URL"),
     };
     let state = match client.current_state() {
-        .Ok(.Ok(.Some(value))) => value,
+        .Ok(.Some(value)) => value,
         _ => panic("expected auth_url to retain a state value"),
     };
     assert(state.len() == 43);
     assert(url.contains(f"&state={state}&"));
     match client.validate_state(state) {
-        .Ok(.Ok(matched)) => assert(matched),
+        .Ok(matched) => assert(matched),
         _ => panic("expected the retained state to validate"),
     }
     match client.validate_state("a state this client never issued") {
-        .Ok(.Ok(matched)) => assert(!matched),
+        .Ok(matched) => assert(!matched),
         _ => panic("expected a mismatched state to be rejected, not to error"),
     }
     let _ = client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "");
     match client.validate_state(state) {
-        .Ok(.Ok(matched)) => assert(!matched),
+        .Ok(matched) => assert(!matched),
         _ => panic("expected the previous state to be replaced"),
     }
     finish(client);

@@ -7,13 +7,11 @@ fn main() {
     let _ = db.execute("CREATE TABLE values_table (value TEXT)");
     let _ = db.execute("INSERT INTO values_table VALUES ('hello')");
     match db.query("SELECT value FROM values_table") {
-        .Ok(result) => match result {
-            .Ok(query) => match query.rows[0].values[0] {
-                .Text(value) => println(utf8.decode_lossy(value)),
-                .Null => println("value is NULL"),
-            }
-            .Err(error) => println(sqlite.error_message(error)),
+        .Ok(query) => match query.rows[0].values[0] {
+            .Text(value) => println(utf8.decode_lossy(value)),
+            .Null => println("value is NULL"),
         }
+        .Err(.Failed(error)) => println(sqlite.error_message(error)),
         .Err(_) => println("SQLite actor stopped before replying"),
     }
     stop(db);

@@ -14,10 +14,8 @@
 //!     let client = spawn oauth.Client { client_id: "my-service", client_secret: "secret123" };
 //!
 //!     let token = match client.client_credentials("https://auth.example.com/token", "read write") {
-//!         .Ok(result) => match result {
-//!             .Ok(value) => value,
-//!             .Err(error) => panic(oauth.error_message(error)),
-//!         }
+//!         .Ok(value) => value,
+//!         .Err(.Failed(error)) => panic(oauth.error_message(error)),
 //!         .Err(_) => panic("OAuth actor stopped"),
 //!     };
 //!     println(token.access_token());
@@ -25,10 +23,8 @@
 //!     // Authorization code: generate a PKCE-protected redirect URL for user login.
 //!     // Passing empty state makes the client generate a CSPRNG state.
 //!     let url = match client.auth_url("https://auth.example.com/authorize", "https://myapp.com/callback", "openid profile", "") {
-//!         .Ok(result) => match result {
-//!             .Ok(value) => value,
-//!             .Err(error) => panic(oauth.error_message(error)),
-//!         }
+//!         .Ok(value) => value,
+//!         .Err(.Failed(error)) => panic(oauth.error_message(error)),
 //!         .Err(_) => panic("OAuth actor stopped"),
 //!     };
 //!     println(url);
@@ -36,10 +32,8 @@
 //!     // Compare the callback `state` with validate_state, then exchange the
 //!     // code; the stored PKCE verifier is sent with it.
 //!     let token2 = match client.exchange_code("https://auth.example.com/token", "auth-code-from-redirect", "https://myapp.com/callback") {
-//!         .Ok(result) => match result {
-//!             .Ok(value) => value,
-//!             .Err(error) => panic(oauth.error_message(error)),
-//!         }
+//!         .Ok(value) => value,
+//!         .Err(.Failed(error)) => panic(oauth.error_message(error)),
 //!         .Err(_) => panic("OAuth actor stopped"),
 //!     };
 //!     println(token2.token_type());
@@ -256,79 +250,73 @@ pub actor Client {
 
     // Obtain a token using the client credentials grant. oauth_scope may be
     // empty, in which case no scope is requested.
-    receive fn client_credentials(token_url: string, oauth_scope: string) -> Result<Token, OAuthError> {
+    receive fn client_credentials(token_url: string, oauth_scope: string) -> Token fails OAuthError {
         var form = f"grant_type=client_credentials&client_id={url.encode(client_id)}&client_secret={url.encode(client_secret)}";
         if !oauth_scope.is_empty() {
             form = form + f"&scope={url.encode(oauth_scope)}";
         }
-        post_token(token_url, form)
+        post_token(token_url, form)?
     }
 
     // Generate an authorization URL for the authorization code grant.
     // Always includes PKCE S256 parameters. If state is empty, a CSPRNG state is
     // generated. The state and PKCE verifier are retained on this client.
-    receive fn auth_url(auth_url: string, redirect_uri: string, oauth_scope: string, state: string) -> Result<string, OAuthError> {
+    receive fn auth_url(auth_url: string, redirect_uri: string, oauth_scope: string, state: string) -> string fails OAuthError {
         if auth_url.is_empty() || redirect_uri.is_empty() {
-            return .Err(OAuthError.InvalidInput("authorization and redirect URLs must not be empty"));
+            return error OAuthError.InvalidInput("authorization and redirect URLs must not be empty");
         }
         let chosen_state = if state.is_empty() {
-            match random_urlsafe() {
-                .Ok(value) => value,
-                .Err(error) => return .Err(error),
-            }
+            random_urlsafe()?
         } else {
             state
         };
-        let verifier = match random_urlsafe() {
-            .Ok(value) => value,
-            .Err(error) => return .Err(error),
-        };
+        let verifier = random_urlsafe()?;
         pending_state = chosen_state;
         pending_code_verifier = verifier;
-        .Ok(f"{auth_url}?response_type=code&client_id={url.encode(client_id)}&redirect_uri={url.encode(redirect_uri)}&scope={url.encode(oauth_scope)}&state={url.encode(chosen_state)}&code_challenge={code_challenge(verifier)}&code_challenge_method=S256")
+        f"{auth_url}?response_type=code&client_id={url.encode(client_id)}&redirect_uri={url.encode(redirect_uri)}&scope={url.encode(oauth_scope)}&state={url.encode(chosen_state)}&code_challenge={code_challenge(verifier)}&code_challenge_method=S256"
     }
 
     // Return the current authorization-code state generated or accepted by auth_url.
-    receive fn current_state() -> Result<Option<string>, OAuthError> {
-        .Ok(present(pending_state))
+    receive fn current_state() -> Option<string> {
+        present(pending_state)
     }
 
     // Return the current PKCE code verifier for external encrypted/session storage.
-    receive fn current_code_verifier() -> Result<Option<string>, OAuthError> {
-        .Ok(present(pending_code_verifier))
+    receive fn current_code_verifier() -> Option<string> {
+        present(pending_code_verifier)
     }
 
     // Validate a callback state against the current state in constant time.
     // A client with no current state matches nothing.
-    receive fn validate_state(callback_state: string) -> Result<bool, OAuthError> {
+    receive fn validate_state(callback_state: string) -> bool fails OAuthError {
         if callback_state.is_empty() {
-            return .Err(OAuthError.InvalidInput("callback state must not be empty"));
+            return error OAuthError.InvalidInput("callback state must not be empty");
         }
-        .Ok(!pending_state.is_empty() && crypto.constant_time_eq(pending_state.to_bytes(), callback_state.to_bytes()))
+        !pending_state.is_empty() && crypto.constant_time_eq(pending_state.to_bytes(), callback_state.to_bytes())
     }
 
     // Exchange an authorization code for a token using the verifier from auth_url.
-    receive fn exchange_code(token_url: string, code: string, redirect_uri: string) -> Result<Token, OAuthError> {
+    receive fn exchange_code(token_url: string, code: string, redirect_uri: string) -> Token fails OAuthError {
         if pending_code_verifier.is_empty() {
-            return .Err(OAuthError.InvalidInput("missing_code_verifier: call auth_url before exchange_code or use exchange_code_with_verifier"));
+            return error OAuthError.InvalidInput("missing_code_verifier: call auth_url before exchange_code or use exchange_code_with_verifier");
         }
-        post_token(token_url, authorization_code_form(code, redirect_uri, client_id, client_secret, pending_code_verifier))
+        post_token(token_url, authorization_code_form(code, redirect_uri, client_id, client_secret, pending_code_verifier))?
     }
 
     // Exchange an authorization code with an explicitly supplied PKCE verifier.
-    receive fn exchange_code_with_verifier(token_url: string, code: string, redirect_uri: string, code_verifier: string) -> Result<Token, OAuthError> {
+    receive fn exchange_code_with_verifier(token_url: string, code: string, redirect_uri: string, code_verifier: string) -> Token fails OAuthError {
         if code_verifier.is_empty() {
-            return .Err(OAuthError.InvalidInput("PKCE verifier must not be empty"));
+            return error OAuthError.InvalidInput("PKCE verifier must not be empty");
         }
-        post_token(token_url, authorization_code_form(code, redirect_uri, client_id, client_secret, code_verifier))
+        post_token(token_url, authorization_code_form(code, redirect_uri, client_id, client_secret, code_verifier))?
     }
 
     // Refresh a token using a refresh token string.
-    receive fn refresh(token_url: string, refresh_token: string) -> Result<Token, OAuthError> {
+    receive fn refresh(token_url: string, refresh_token: string) -> Token fails OAuthError {
         if refresh_token.is_empty() {
-            return .Err(OAuthError.InvalidInput("refresh token must not be empty"));
+            return error OAuthError.InvalidInput("refresh token must not be empty");
         }
-        post_token(token_url, f"grant_type=refresh_token&refresh_token={url.encode(refresh_token)}&client_id={url.encode(client_id)}&client_secret={url.encode(client_secret)}")
+        post_token(token_url, f"grant_type=refresh_token&refresh_token={url.encode(refresh_token)}&client_id={url.encode(client_id)}&client_secret={url.encode(client_secret)}")?
     }
 }
 

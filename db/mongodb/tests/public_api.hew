@@ -2,9 +2,9 @@
 
 import hew.db.mongodb;
 
-fn assert_connect_error(result: Result<i64, mongodb.MongoError>) {
+fn assert_connect_error(result: Result<i64, ActorError<mongodb.MongoError>>) {
     match result {
-        .Err(.Connect(message)) => assert(!message.is_empty()),
+        .Err(.Failed(.Connect(message))) => assert(!message.is_empty()),
         _ => panic("expected MongoError.Connect"),
     }
 }
@@ -14,38 +14,20 @@ fn assert_connect_error(result: Result<i64, mongodb.MongoError>) {
 fn connection_failure_is_typed_for_every_operation() {
     let db = spawn mongodb.Conn { uri: "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=10&connectTimeoutMS=10", database: "hew_offline_test" };
     match db.insert_one("items", "{\"value\":1}") {
-        .Ok(result) => match result {
-            .Err(.Connect(message)) => assert(!message.is_empty()),
-            _ => panic("expected Connect from insert_one"),
-        }
-        .Err(_) => panic("actor stopped during insert_one"),
+        .Err(.Failed(.Connect(message))) => assert(!message.is_empty()),
+        _ => panic("expected Connect from insert_one"),
     }
     match db.find_one("items", "{\"value\":1}") {
-        .Ok(result) => match result {
-            .Err(.Connect(message)) => assert(!message.is_empty()),
-            _ => panic("expected Connect from find_one"),
-        }
-        .Err(_) => panic("actor stopped during find_one"),
+        .Err(.Failed(.Connect(message))) => assert(!message.is_empty()),
+        _ => panic("expected Connect from find_one"),
     }
     match db.find("items", "{}") {
-        .Ok(result) => match result {
-            .Err(.Connect(message)) => assert(!message.is_empty()),
-            _ => panic("expected Connect from find"),
-        }
-        .Err(_) => panic("actor stopped during find"),
+        .Err(.Failed(.Connect(message))) => assert(!message.is_empty()),
+        _ => panic("expected Connect from find"),
     }
-    match db.update_one("items", "{\"value\":1}", "{\"$set\":{\"value\":2}}") {
-        .Ok(result) => assert_connect_error(result),
-        .Err(_) => panic("actor stopped during update_one"),
-    }
-    match db.delete_one("items", "{\"value\":1}") {
-        .Ok(result) => assert_connect_error(result),
-        .Err(_) => panic("actor stopped during delete_one"),
-    }
-    match db.count("items", "{}") {
-        .Ok(result) => assert_connect_error(result),
-        .Err(_) => panic("actor stopped during count"),
-    }
+    assert_connect_error(db.update_one("items", "{\"value\":1}", "{\"$set\":{\"value\":2}}"));
+    assert_connect_error(db.delete_one("items", "{\"value\":1}"));
+    assert_connect_error(db.count("items", "{}"));
     stop(db);
     stopped(db);
     match db.count("items", "{}") {

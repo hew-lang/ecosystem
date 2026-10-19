@@ -8,20 +8,16 @@ import hew.metrics;
 fn export_requests() -> string {
     let registry = spawn metrics.Registry;
     let text = match registry.counter("requests_total", "Handled requests") {
-        .Ok(result) => match result {
-            .Ok(counter) => {
-                let _ = registry.counter_inc(counter);
-                let _ = registry.counter_add(counter, 2.0);
-                match registry.export() {
-                    .Ok(export_result) => match export_result {
-                        .Ok(text) => text,
-                        .Err(error) => metrics.error_message(error),
-                    }
-                    .Err(_) => "metrics actor stopped before replying",
-                }
+        .Ok(counter) => {
+            let _ = registry.counter_inc(counter);
+            let _ = registry.counter_add(counter, 2.0);
+            match registry.export() {
+                .Ok(text) => text,
+                .Err(.Failed(error)) => metrics.error_message(error),
+                .Err(_) => "metrics actor stopped before replying",
             }
-            .Err(error) => metrics.error_message(error),
         }
+        .Err(.Failed(error)) => metrics.error_message(error),
         .Err(_) => "metrics actor stopped before replying",
     };
     stop(registry);

@@ -39,10 +39,7 @@ fn main() {
     let _ = image.thumbnail(160, 120);
     let _ = image.sharpen(0.0, 0.5);
     let png = match image.write_blob("PNG") {
-        .Ok(result) => match result {
-            .Ok(value) => value,
-            .Err(_) => bytes.new(),
-        }
+        .Ok(value) => value,
         .Err(_) => bytes.new(),
     };
     stop(image);
@@ -53,10 +50,8 @@ fn main() {
     // blob rather than on `image` itself.
     let decoded = spawn magick.Image { source: Source.Blob(png) };
     match decoded.format() {
-        .Ok(result) => match result {
-            .Ok(value) => println(value),
-            .Err(error) => println(magick.error_message(error)),
-        }
+        .Ok(value) => println(value),
+        .Err(.Failed(error)) => println(magick.error_message(error)),
         .Err(_) => println("image actor stopped before replying"),
     }
     stop(decoded);
@@ -66,6 +61,11 @@ fn main() {
 
 The checked example lives at [`examples/basic.hew`](examples/basic.hew); it
 writes `magick-example.png` beside you and prints `magick-example.png is PNG`.
+
+Every `Image` method is declared `-> T fails MagickError`, so a call replies
+`Result<T, ActorError<MagickError>>`: `.Ok(value)` on success,
+`.Err(.Failed(error))` for an image error, and another `.Err` variant when the
+actor could not answer (for example `.Dead` after it stopped).
 
 `write_blob` explicitly selects the encoded format. File output remains
 available through `write`, where ImageMagick infers the format from the path.

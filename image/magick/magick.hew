@@ -97,164 +97,121 @@ pub actor Image {
     }
 
     /// Resize to exact positive dimensions.
-    receive fn resize(width: i32, height: i32) -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn resize(width: i32, height: i32) -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         if width <= 0 || height <= 0 {
-            return .Err(MagickError.InvalidInput("image dimensions must be positive"));
+            return error MagickError.InvalidInput("image dimensions must be positive");
         }
         operation(unsafe {
             hew_magick_resize(handle, width, height)
-        })
+        })?
     }
 
     /// Crop a positive-sized region at the given offset.
-    receive fn crop(width: i32, height: i32, x: i32, y: i32) -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn crop(width: i32, height: i32, x: i32, y: i32) -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         if width <= 0 || height <= 0 {
-            return .Err(MagickError.InvalidInput("crop dimensions must be positive"));
+            return error MagickError.InvalidInput("crop dimensions must be positive");
         }
         operation(unsafe {
             hew_magick_crop(handle, width, height, x, y)
-        })
+        })?
     }
 
-    receive fn rotate(degrees: f64) -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn rotate(degrees: f64) -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_rotate(handle, degrees)
-        })
+        })?
     }
 
-    receive fn blur(radius: f64, sigma: f64) -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn blur(radius: f64, sigma: f64) -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_blur(handle, radius, sigma)
-        })
+        })?
     }
 
-    receive fn sharpen(radius: f64, sigma: f64) -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn sharpen(radius: f64, sigma: f64) -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_sharpen(handle, radius, sigma)
-        })
+        })?
     }
 
-    receive fn flip() -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn flip() -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_flip(handle)
-        })
+        })?
     }
 
-    receive fn flop() -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn flop() -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_flop(handle)
-        })
+        })?
     }
 
-    receive fn width() -> Result<i32, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn width() -> i32 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         let value = unsafe {
             hew_magick_width(handle)
         };
-        if value > 0 {
-            .Ok(value)
-        } else {
-            .Err(native_error())
+        if value <= 0 {
+            return error native_error();
         }
+        value
     }
 
-    receive fn height() -> Result<i32, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn height() -> i32 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         let value = unsafe {
             hew_magick_height(handle)
         };
-        if value > 0 {
-            .Ok(value)
-        } else {
-            .Err(native_error())
+        if value <= 0 {
+            return error native_error();
         }
+        value
     }
 
-    receive fn format() -> Result<string, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn format() -> string fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         let value = unsafe {
             hew_magick_format(handle)
         };
         if value.is_empty() {
-            .Err(native_error())
-        } else {
-            .Ok(value)
+            return error native_error();
         }
+        value
     }
 
-    receive fn write(path: string) -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn write(path: string) -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         operation(unsafe {
             hew_magick_write(handle, path)
-        })
+        })?
     }
 
     /// Encode the current image into an owned in-memory image blob.
-    receive fn write_blob(format: string) -> Result<bytes, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn write_blob(format: string) -> bytes fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         if format.is_empty() {
-            return .Err(MagickError.InvalidInput("image format must not be empty"));
+            return error MagickError.InvalidInput("image format must not be empty");
         }
         let value = unsafe {
             hew_magick_write_blob(handle, format)
         };
         if value.is_empty() {
-            .Err(native_error())
-        } else {
-            .Ok(value)
+            return error native_error();
         }
+        value
     }
 
-    receive fn thumbnail(max_width: i32, max_height: i32) -> Result<i64, MagickError> {
-        let handle = match image_handle(native_handle, init_error_kind, init_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn thumbnail(max_width: i32, max_height: i32) -> i64 fails MagickError {
+        let handle = image_handle(native_handle, init_error_kind, init_error_message)?;
         if max_width <= 0 || max_height <= 0 {
-            return .Err(MagickError.InvalidInput("thumbnail bounds must be positive"));
+            return error MagickError.InvalidInput("thumbnail bounds must be positive");
         }
         let width = unsafe {
             hew_magick_width(handle)
@@ -263,7 +220,7 @@ pub actor Image {
             hew_magick_height(handle)
         };
         if width <= 0 || height <= 0 {
-            return .Err(native_error());
+            return error native_error();
         }
         let width_scale = max_width as f64 / width as f64;
         let height_scale = max_height as f64 / height as f64;
@@ -274,7 +231,7 @@ pub actor Image {
         };
         operation(unsafe {
             hew_magick_resize(handle, (width as f64 * scale) as i32, (height as f64 * scale) as i32)
-        })
+        })?
     }
 
     #[on(stop)]

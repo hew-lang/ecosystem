@@ -43,42 +43,42 @@ fn assert_bytes(actual: bytes, expected: bytes) {
     }
 }
 
-fn assert_i64(result: Result<i64, redis.RedisError>, expected: i64) {
+fn assert_i64(result: Result<i64, ActorError<redis.RedisError>>, expected: i64) {
     match result {
         .Ok(value) => assert(value == expected),
         .Err(_) => assert(false),
     }
 }
 
-fn assert_bool(result: Result<bool, redis.RedisError>, expected: bool) {
+fn assert_bool(result: Result<bool, ActorError<redis.RedisError>>, expected: bool) {
     match result {
         .Ok(value) => assert(value == expected),
         .Err(_) => assert(false),
     }
 }
 
-fn assert_value(result: Result<redis.Lookup, redis.RedisError>, expected: bytes) {
+fn assert_value(result: Result<redis.Lookup, ActorError<redis.RedisError>>, expected: bytes) {
     match result {
         .Ok(.Value(value)) => assert_bytes(value, expected),
         _ => assert(false),
     }
 }
 
-fn assert_missing(result: Result<redis.Lookup, redis.RedisError>) {
+fn assert_missing(result: Result<redis.Lookup, ActorError<redis.RedisError>>) {
     match result {
         .Ok(.Missing) => assert(true),
         _ => assert(false),
     }
 }
 
-fn assert_error<T>(result: Result<T, redis.RedisError>) {
+fn assert_error<T>(result: Result<T, ActorError<redis.RedisError>>) {
     match result {
-        .Ok(_) => assert(false),
-        .Err(error) => assert(!redis.error_message(error).is_empty()),
+        .Err(.Failed(error)) => assert(!redis.error_message(error).is_empty()),
+        _ => assert(false),
     }
 }
 
-fn assert_bytes_result(result: Result<bytes, redis.RedisError>, expected: bytes) {
+fn assert_bytes_result(result: Result<bytes, ActorError<redis.RedisError>>, expected: bytes) {
     match result {
         .Ok(value) => assert_bytes(value, expected),
         .Err(_) => assert(false),
@@ -103,10 +103,8 @@ actor DelayedPublisher {
 fn unavailable_endpoint_returns_connection_error() {
     let client = spawn redis.Conn { options: redis.Options { url: "redis://127.0.0.1:1/" } };
     match client.get("key") {
-        .Ok(result) => match result {
-            .Ok(_) => assert(false),
-            .Err(error) => assert(!redis.error_message(error).is_empty()),
-        }
+        .Ok(_) => assert(false),
+        .Err(.Failed(.Connection(message))) => assert(!message.is_empty()),
         .Err(_) => assert(false),
     }
 }
@@ -117,30 +115,12 @@ fn string_commands_preserve_missing_empty_and_nul() {
     let client = client_actor();
     let prefix = "hew:redis:beta:string";
     let _ = client.del(f"{prefix}:value");
-    match client.set(f"{prefix}:value", nul_value()) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
-    match client.get(f"{prefix}:value") {
-        .Ok(result) => assert_value(result, nul_value()),
-        .Err(_) => assert(false),
-    }
-    match client.get(f"{prefix}:missing") {
-        .Ok(result) => assert_missing(result),
-        .Err(_) => assert(false),
-    }
-    match client.set(f"{prefix}:empty", bytes.new()) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
-    match client.get(f"{prefix}:empty") {
-        .Ok(result) => assert_value(result, bytes.new()),
-        .Err(_) => assert(false),
-    }
-    match client.del(f"{prefix}:empty") {
-        .Ok(result) => assert_i64(result, 1),
-        .Err(_) => assert(false),
-    }
+    assert_i64(client.set(f"{prefix}:value", nul_value()), 0);
+    assert_value(client.get(f"{prefix}:value"), nul_value());
+    assert_missing(client.get(f"{prefix}:missing"));
+    assert_i64(client.set(f"{prefix}:empty", bytes.new()), 0);
+    assert_value(client.get(f"{prefix}:empty"), bytes.new());
+    assert_i64(client.del(f"{prefix}:empty"), 1);
     stop(client);
     stopped(client);
 }
@@ -150,26 +130,17 @@ fn string_commands_preserve_missing_empty_and_nul() {
 fn expiration_commands_return_typed_outcomes() {
     let client = client_actor();
     let key = "hew:redis:beta:expiration";
-    match client.set_ex(key, binary("ttl"), 10) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
-    match client.expire(key, 20) {
-        .Ok(result) => assert_bool(result, true),
-        .Err(_) => assert(false),
-    }
+    assert_i64(client.set_ex(key, binary("ttl"), 10), 0);
+    assert_bool(client.expire(key, 20), true);
     match client.ttl(key) {
-        .Ok(.Ok(.Seconds(seconds))) => assert(seconds > 0),
+        .Ok(.Seconds(seconds)) => assert(seconds > 0),
         _ => assert(false),
     }
     match client.ttl("hew:redis:beta:missing-ttl") {
-        .Ok(.Ok(.Missing)) => assert(true),
+        .Ok(.Missing) => assert(true),
         _ => assert(false),
     }
-    match client.set_ex(key, binary("bad"), 0) {
-        .Ok(result) => assert_error(result),
-        .Err(_) => assert(false),
-    }
+    assert_error(client.set_ex(key, binary("bad"), 0));
     stop(client);
     stopped(client);
 }
@@ -179,14 +150,8 @@ fn expiration_commands_return_typed_outcomes() {
 fn increment_returns_exact_new_value() {
     let client = client_actor();
     let key = "hew:redis:beta:counter";
-    match client.set(key, binary("40")) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
-    match client.incr(key) {
-        .Ok(result) => assert_i64(result, 41),
-        .Err(_) => assert(false),
-    }
+    assert_i64(client.set(key, binary("40")), 0);
+    assert_i64(client.incr(key), 41);
     stop(client);
     stopped(client);
 }
@@ -197,18 +162,9 @@ fn list_commands_preserve_nul_and_empty_outcome() {
     let client = client_actor();
     let key = "hew:redis:beta:list";
     let _ = client.del(key);
-    match client.lpush(key, nul_value()) {
-        .Ok(result) => assert_i64(result, 1),
-        .Err(_) => assert(false),
-    }
-    match client.rpop(key) {
-        .Ok(result) => assert_value(result, nul_value()),
-        .Err(_) => assert(false),
-    }
-    match client.rpop(key) {
-        .Ok(result) => assert_missing(result),
-        .Err(_) => assert(false),
-    }
+    assert_i64(client.lpush(key, nul_value()), 1);
+    assert_value(client.rpop(key), nul_value());
+    assert_missing(client.rpop(key));
     stop(client);
     stopped(client);
 }
@@ -219,29 +175,17 @@ fn hash_commands_preserve_nul_and_missing_outcome() {
     let client = client_actor();
     let key = "hew:redis:beta:hash";
     let _ = client.del(key);
-    match client.hset(key, "field", nul_value()) {
-        .Ok(result) => assert_bool(result, true),
-        .Err(_) => assert(false),
-    }
-    match client.hget(key, "field") {
-        .Ok(result) => assert_value(result, nul_value()),
-        .Err(_) => assert(false),
-    }
-    match client.hget(key, "missing") {
-        .Ok(result) => assert_missing(result),
-        .Err(_) => assert(false),
-    }
+    assert_bool(client.hset(key, "field", nul_value()), true);
+    assert_value(client.hget(key, "field"), nul_value());
+    assert_missing(client.hget(key, "missing"));
     match client.hgetall(key) {
-        .Ok(.Ok(entries)) => {
+        .Ok(entries) => {
             assert(entries.len() == 1);
             assert_bytes(entries[0].value, nul_value());
         }
         _ => assert(false),
     }
-    match client.hdel(key, "field") {
-        .Ok(result) => assert_bool(result, true),
-        .Err(_) => assert(false),
-    }
+    assert_bool(client.hdel(key, "field"), true);
     stop(client);
     stopped(client);
 }
@@ -251,16 +195,10 @@ fn hash_commands_preserve_nul_and_missing_outcome() {
 fn unicode_key_and_field_round_trip_through_native() {
     let client = client_actor();
     let _ = client.del(unicode_key());
-    match client.hset(unicode_key(), unicode_field(), unicode_value()) {
-        .Ok(result) => assert_bool(result, true),
-        .Err(_) => assert(false),
-    }
-    match client.hget(unicode_key(), unicode_field()) {
-        .Ok(result) => assert_value(result, unicode_value()),
-        .Err(_) => assert(false),
-    }
+    assert_bool(client.hset(unicode_key(), unicode_field(), unicode_value()), true);
+    assert_value(client.hget(unicode_key(), unicode_field()), unicode_value());
     match client.hgetall(unicode_key()) {
-        .Ok(.Ok(entries)) => {
+        .Ok(entries) => {
             assert(entries.len() == 1);
             assert(entries[0].field == unicode_field());
             assert_bytes(entries[0].value, unicode_value());
@@ -278,25 +216,16 @@ fn set_commands_preserve_binary_members() {
     let client = client_actor();
     let key = "hew:redis:beta:set";
     let _ = client.del(key);
-    match client.sadd(key, nul_value()) {
-        .Ok(result) => assert_bool(result, true),
-        .Err(_) => assert(false),
-    }
-    match client.sismember(key, nul_value()) {
-        .Ok(result) => assert_bool(result, true),
-        .Err(_) => assert(false),
-    }
+    assert_bool(client.sadd(key, nul_value()), true);
+    assert_bool(client.sismember(key, nul_value()), true);
     match client.smembers(key) {
-        .Ok(.Ok(members)) => {
+        .Ok(members) => {
             assert(members.len() == 1);
             assert_bytes(members[0].value, nul_value());
         }
         _ => assert(false),
     }
-    match client.srem(key, nul_value()) {
-        .Ok(result) => assert_bool(result, true),
-        .Err(_) => assert(false),
-    }
+    assert_bool(client.srem(key, nul_value()), true);
     stop(client);
     stopped(client);
 }
@@ -309,26 +238,14 @@ fn pipeline_executes_or_reports_command_error() {
     commands.push(redis.PipelineCommand.Set("hew:redis:beta:pipeline", binary("done")));
     commands.push(redis.PipelineCommand.Hset("hew:redis:beta:pipeline-hash", "field", nul_value()));
     commands.push(redis.PipelineCommand.Del("hew:redis:beta:pipeline-delete"));
-    match client.pipeline_exec(commands) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
-    match client.get("hew:redis:beta:pipeline") {
-        .Ok(result) => assert_value(result, binary("done")),
-        .Err(_) => assert(false),
-    }
+    assert_i64(client.pipeline_exec(commands), 0);
+    assert_value(client.get("hew:redis:beta:pipeline"), binary("done"));
     var ping: Vec<redis.PipelineCommand> = Vec.new();
     ping.push(redis.PipelineCommand.Ping);
-    match client.pipeline_exec(ping) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
+    assert_i64(client.pipeline_exec(ping), 0);
     var invalid: Vec<redis.PipelineCommand> = Vec.new();
     invalid.push(redis.PipelineCommand.Hset("hew:redis:beta:pipeline", "field", binary("wrong-type")));
-    match client.pipeline_exec(invalid) {
-        .Ok(result) => assert_error(result),
-        .Err(_) => assert(false),
-    }
+    assert_error(client.pipeline_exec(invalid));
     stop(client);
     stopped(client);
 }
@@ -340,18 +257,9 @@ fn pubsub_preserves_binary_messages_and_times_out_typed() {
     let publisher = client_actor();
     let delayed = spawn DelayedPublisher { client: publisher };
     let _ = mailbox(delayed, on_full: .Reject).publish("hew:redis:beta:channel", nul_value());
-    match subscriber.subscribe_once("hew:redis:beta:channel", 1000) {
-        .Ok(result) => assert_bytes_result(result, nul_value()),
-        .Err(_) => assert(false),
-    }
-    match subscriber.subscribe_once("hew:redis:beta:timeout", 1) {
-        .Ok(result) => assert_error(result),
-        .Err(_) => assert(false),
-    }
-    match publisher.publish("hew:redis:beta:no-subscribers", binary("message")) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
+    assert_bytes_result(subscriber.subscribe_once("hew:redis:beta:channel", 1000), nul_value());
+    assert_error(subscriber.subscribe_once("hew:redis:beta:timeout", 1));
+    assert_i64(publisher.publish("hew:redis:beta:no-subscribers", binary("message")), 0);
     stop(subscriber);
     stopped(subscriber);
     stop(publisher);
@@ -372,10 +280,7 @@ fn calls_to_a_stopped_client_report_dead() {
 
 fn create_actor_without_explicit_close(previous_count: i64) -> redis.Conn {
     let client = client_actor();
-    match client.set("hew:redis:beta:abandoned", binary("released")) {
-        .Ok(result) => assert_i64(result, 0),
-        .Err(_) => assert(false),
-    }
+    assert_i64(client.set("hew:redis:beta:abandoned", binary("released")), 0);
     assert(unsafe {
         hew_redis_connection_count()
     } == previous_count + 1);

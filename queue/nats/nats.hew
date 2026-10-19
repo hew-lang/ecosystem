@@ -10,23 +10,19 @@
 //! import hew.queue.nats;
 //!
 //! fn main() {
-//!     let client = spawn nats.Conn(options: nats.Options { url: "nats://127.0.0.1:14222" });
+//!     let client = spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:14222" } };
 //!     match client.subscribe("hew.example") {
-//!         .Ok(result) => match result {
-//!             .Ok(subscription) => {
-//!                 let _ = client.publish("hew.example", "hello");
-//!                 match client.next_message(subscription.clone(), 1000) {
-//!                     .Ok(receive_result) => match receive_result {
-//!                         .Ok(.Message(message)) => println(message.data),
-//!                         .Ok(.Missing) => println("no message arrived"),
-//!                         .Err(error) => println(nats.error_message(error)),
-//!                     },
-//!                     .Err(_) => println("NATS actor stopped before replying"),
-//!                 }
-//!                 let _ = client.unsubscribe(subscription);
-//!             },
-//!             .Err(error) => println(nats.error_message(error)),
-//!         },
+//!         .Ok(subscription) => {
+//!             let _ = client.publish("hew.example", "hello");
+//!             match client.next_message(subscription.clone(), 1000) {
+//!                 .Ok(.Message(message)) => println(message.data),
+//!                 .Ok(.Missing) => println("no message arrived"),
+//!                 .Err(.Failed(error)) => println(nats.error_message(error)),
+//!                 .Err(_) => println("NATS actor stopped before replying"),
+//!             }
+//!             let _ = client.unsubscribe(subscription);
+//!         }
+//!         .Err(.Failed(error)) => println(nats.error_message(error)),
 //!         .Err(_) => println("NATS actor stopped before replying"),
 //!     }
 //!     stop(client);
@@ -212,75 +208,55 @@ pub actor Conn {
     }
 
     /// Publish a UTF-8 payload to a subject.
-    receive fn publish(subject: string, data: string) -> Result<(), NatsError> {
-        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn publish(subject: string, data: string) fails NatsError {
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let status = unsafe {
             hew_nats_publish(handle, subject, data)
         };
-        if status == 0 {
-            .Ok(())
-        } else {
-            .Err(native_error())
+        if status != 0 {
+            return error native_error();
         }
     }
 
     /// Create an actor-owned subscription.
-    receive fn subscribe(subject: string) -> Result<Subscription, NatsError> {
-        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn subscribe(subject: string) -> Subscription fails NatsError {
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let subscription = unsafe {
             hew_nats_subscribe(handle, subject)
         };
         if subscription == 0 {
-            .Err(native_error())
-        } else {
-            .Ok(Subscription { handle: subscription })
+            return error native_error();
         }
+        Subscription { handle: subscription }
     }
 
     /// Wait for one subscription delivery, preserving timeout as missing.
-    receive fn next_message(subscription: Subscription, timeout_ms: i64) -> Result<Receive, NatsError> {
-        let _ = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(value) => value,
-            .Err(error) => return .Err(error),
-        };
+    receive fn next_message(subscription: Subscription, timeout_ms: i64) -> Receive fails NatsError {
+        let _ = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         receive_result(unsafe {
             hew_nats_next_result(subscription.handle, timeout_ms)
-        })
+        })?
     }
 
     /// Publish a request and wait for one reply, preserving timeout as missing.
-    receive fn request(subject: string, data: string, timeout_ms: i64) -> Result<Receive, NatsError> {
-        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn request(subject: string, data: string, timeout_ms: i64) -> Receive fails NatsError {
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         receive_result(unsafe {
             hew_nats_request(handle, subject, data, timeout_ms)
-        })
+        })?
     }
 
     /// Reply to a message, rejecting messages without a reply subject.
-    receive fn reply(message: Delivery, data: string) -> Result<(), NatsError> {
-        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn reply(message: Delivery, data: string) fails NatsError {
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         match message.reply_to {
-            .Missing => .Err(NatsError.InvalidInput("NATS message has no reply subject")),
+            .Missing => return error NatsError.InvalidInput("NATS message has no reply subject"),
             .Subject(subject) => {
                 let status = unsafe {
                     hew_nats_reply(handle, subject, data)
                 };
-                if status == 0 {
-                    .Ok(())
-                } else {
-                    .Err(native_error())
+                if status != 0 {
+                    return error native_error();
                 }
             }
         }

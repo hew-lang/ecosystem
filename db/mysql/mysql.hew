@@ -1,6 +1,6 @@
 //! Actor-owned MySQL client with typed query results.
 //!
-//! Every fallible operation returns `Result`. Query rows are immutable,
+//! Every operation fails with a typed `MysqlError`. Query rows are immutable,
 //! `#[wire]` snapshots, and SQL `NULL` is represented by `CellValue.Null`.
 
 import std.encoding.utf8;
@@ -158,65 +158,55 @@ pub actor Conn {
     }
 
     /// Execute SQL and return the exact affected-row count.
-    receive fn execute(sql: string) -> Result<i64, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn execute(sql: string) -> i64 fails MysqlError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
             hew_mysql_execute(connection, sql)
         };
         if unsafe {
             hew_mysql_last_error_kind()
-        } == 0 {
-            .Ok(affected)
-        } else {
-            .Err(native_error())
+        } != 0 {
+            return error native_error();
         }
+        affected
     }
 
     /// Execute SQL with newline-delimited text parameters.
-    receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn execute_params(sql: string, params: Vec<Param>) -> i64 fails MysqlError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
             hew_mysql_execute_params(connection, sql, cbor.encode(params))
         };
         if unsafe {
             hew_mysql_last_error_kind()
-        } == 0 {
-            .Ok(affected)
-        } else {
-            .Err(native_error())
+        } != 0 {
+            return error native_error();
         }
+        affected
     }
 
     /// Query SQL and return a wire-safe snapshot.
-    receive fn query(sql: string) -> Result<QueryResult, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn query(sql: string) -> QueryResult fails MysqlError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_mysql_query(connection, sql)
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
-        collect_result(result)
+        collect_result(result)?
     }
 
     /// Query SQL with newline-delimited text parameters.
-    receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, MysqlError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn query_params(sql: string, params: Vec<Param>) -> QueryResult fails MysqlError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_mysql_query_params(connection, sql, cbor.encode(params))
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
-        collect_result(result)
+        collect_result(result)?
     }
 
     /// Release the native connection when the actor stops.

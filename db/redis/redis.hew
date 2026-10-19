@@ -1,30 +1,29 @@
 //! A typed, actor-owned Redis client.
 //!
-//! The actor serializes access to its connection. All fallible operations
-//! return `Result`; a missing key, field, or list element is represented by
-//! `Lookup.Missing`, never an empty-string sentinel. Native resources are
-//! owned `#[resource]` values and close automatically on every exit path.
+//! The actor serializes access to its connection. Every command declares
+//! `fails RedisError`, so a reply is `Result<T, ActorError<RedisError>>` and a
+//! command failure arrives as `.Err(.Failed(error))`. A missing key, field, or
+//! list element is represented by `Lookup.Missing`, never an empty-string
+//! sentinel. Native resources are owned `#[resource]` values and close
+//! automatically on every exit path.
 //!
 //! # Examples
 //!
 //! ```
 //! import hew.db.redis;
+//! import std.encoding.utf8;
 //!
 //! fn main() {
-//!     let client = spawn redis.Conn(options: redis.Options { url: "redis://127.0.0.1/" });
+//!     let client = spawn redis.Conn { options: redis.Options { url: "redis://127.0.0.1/" } };
 //!     match client.set("greeting", "hello".to_bytes()) {
-//!         .Ok(result) => match result {
-//!             .Ok(_) => {},
-//!             .Err(error) => println(redis.error_message(error)),
-//!         },
+//!         .Ok(_) => {}
+//!         .Err(.Failed(error)) => println(redis.error_message(error)),
 //!         .Err(_) => println("Redis actor stopped before replying"),
 //!     }
 //!     match client.get("greeting") {
-//!         .Ok(result) => match result {
-//!             .Ok(Lookup.Value(value)) => println(value.to_string()),
-//!             .Ok(Lookup.Missing) => println("key is missing"),
-//!             .Err(error) => println(redis.error_message(error)),
-//!         },
+//!         .Ok(.Value(value)) => println(utf8.decode_lossy(value)),
+//!         .Ok(.Missing) => println("key is missing"),
+//!         .Err(.Failed(error)) => println(redis.error_message(error)),
 //!         .Err(_) => println("Redis actor stopped before replying"),
 //!     }
 //!     stop(client);
@@ -277,275 +276,196 @@ pub actor Conn {
     }
 
     /// Set an exact binary value.
-    receive fn set(key: string, value: bytes) -> Result<i64, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn set(key: string, value: bytes) -> i64 fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
             hew_redis_set(handle, key, value)
-        })
+        })?
     }
 
     /// Get an exact binary value, preserving missing versus present-empty.
-    receive fn get(key: string) -> Result<Lookup, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn get(key: string) -> Lookup fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         lookup_result(StringResource { handle: unsafe {
             hew_redis_get(handle, key)
-        } })
+        } })?
     }
 
     /// Delete a key and return the number removed.
-    receive fn del(key: string) -> Result<i64, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn del(key: string) -> i64 fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
             hew_redis_del(handle, key)
-        })
+        })?
     }
 
     /// Set a value with a positive expiration in seconds.
-    receive fn set_ex(key: string, value: bytes, ttl_seconds: i64) -> Result<i64, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn set_ex(key: string, value: bytes, ttl_seconds: i64) -> i64 fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
             hew_redis_set_ex(handle, key, value, ttl_seconds)
-        })
+        })?
     }
 
     /// Set a positive expiration and return whether the key existed.
-    receive fn expire(key: string, ttl_seconds: i64) -> Result<bool, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
-        let changed = match checked_count(unsafe {
+    receive fn expire(key: string, ttl_seconds: i64) -> bool fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let changed = checked_count(unsafe {
             hew_redis_expire(handle, key, ttl_seconds)
-        }) {
-            .Ok(changed) => changed,
-            .Err(error) => return .Err(error),
-        };
-        .Ok(changed == 1)
+        })?;
+        changed == 1
     }
 
     /// Return a typed key-lifetime outcome.
-    receive fn ttl(key: string) -> Result<KeyTtl, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
-        let seconds = unsafe {
+    receive fn ttl(key: string) -> KeyTtl fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let seconds = checked_count(unsafe {
             hew_redis_ttl(handle, key)
-        };
-        if unsafe {
-            hew_redis_last_error_kind()
-        } != 0 {
-            .Err(native_error())
-        } else if seconds == -2 {
-            .Ok(KeyTtl.Missing)
+        })?;
+        if seconds == -2 {
+            KeyTtl.Missing
         } else if seconds == -1 {
-            .Ok(KeyTtl.Persistent)
+            KeyTtl.Persistent
         } else {
-            .Ok(KeyTtl.Seconds(seconds))
+            KeyTtl.Seconds(seconds)
         }
     }
 
     /// Atomically increment an integer value and return the new value.
-    receive fn incr(key: string) -> Result<i64, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn incr(key: string) -> i64 fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         let value = unsafe {
             hew_redis_incr(handle, key)
         };
-        checked_count(value)
+        checked_count(value)?
     }
 
     /// Push a value at the head of a list and return the new length.
-    receive fn lpush(key: string, value: bytes) -> Result<i64, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn lpush(key: string, value: bytes) -> i64 fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
             hew_redis_lpush(handle, key, value)
-        })
+        })?
     }
 
     /// Pop the tail of a list, returning `Missing` for an empty list.
-    receive fn rpop(key: string) -> Result<Lookup, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn rpop(key: string) -> Lookup fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         lookup_result(StringResource { handle: unsafe {
             hew_redis_rpop(handle, key)
-        } })
+        } })?
     }
 
     /// Set a hash field and return whether it was newly added.
-    receive fn hset(key: string, field: string, value: bytes) -> Result<bool, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
-        let added = match checked_count(unsafe {
+    receive fn hset(key: string, field: string, value: bytes) -> bool fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let added = checked_count(unsafe {
             hew_redis_hset(handle, key, field, value)
-        }) {
-            .Ok(added) => added,
-            .Err(error) => return .Err(error),
-        };
-        .Ok(added == 1)
+        })?;
+        added == 1
     }
 
     /// Get a hash field, preserving missing versus empty.
-    receive fn hget(key: string, field: string) -> Result<Lookup, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn hget(key: string, field: string) -> Lookup fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         lookup_result(StringResource { handle: unsafe {
             hew_redis_hget(handle, key, field)
-        } })
+        } })?
     }
 
     /// Delete a hash field and return whether it existed.
-    receive fn hdel(key: string, field: string) -> Result<bool, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
-        let removed = match checked_count(unsafe {
+    receive fn hdel(key: string, field: string) -> bool fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let removed = checked_count(unsafe {
             hew_redis_hdel(handle, key, field)
-        }) {
-            .Ok(removed) => removed,
-            .Err(error) => return .Err(error),
-        };
-        .Ok(removed == 1)
+        })?;
+        removed == 1
     }
 
     /// Return every hash field and value as wire-safe snapshots.
-    receive fn hgetall(key: string) -> Result<Vec<HashEntry>, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn hgetall(key: string) -> Vec<HashEntry> fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         let result = HashResource { handle: unsafe {
             hew_redis_hgetall(handle, key)
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
         let count = result.count();
         if count < 0 {
             let error = native_error();
             result.close();
-            return .Err(error);
+            return error error;
         }
         var entries: Vec<HashEntry> = Vec.new();
         for i in 0..count {
             entries.push(HashEntry { field: result.key(i), value: result.value(i) });
         }
         result.close();
-        .Ok(entries)
+        entries
     }
 
     /// Add a set member and return whether it was newly inserted.
-    receive fn sadd(key: string, member: bytes) -> Result<bool, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
-        let added = match checked_count(unsafe {
+    receive fn sadd(key: string, member: bytes) -> bool fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let added = checked_count(unsafe {
             hew_redis_sadd(handle, key, member)
-        }) {
-            .Ok(added) => added,
-            .Err(error) => return .Err(error),
-        };
-        .Ok(added == 1)
+        })?;
+        added == 1
     }
 
     /// Remove a set member and return whether it existed.
-    receive fn srem(key: string, member: bytes) -> Result<bool, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
-        let removed = match checked_count(unsafe {
+    receive fn srem(key: string, member: bytes) -> bool fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let removed = checked_count(unsafe {
             hew_redis_srem(handle, key, member)
-        }) {
-            .Ok(removed) => removed,
-            .Err(error) => return .Err(error),
-        };
-        .Ok(removed == 1)
+        })?;
+        removed == 1
     }
 
     /// Return every set member as a wire-safe snapshot.
-    receive fn smembers(key: string) -> Result<Vec<SetMember>, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn smembers(key: string) -> Vec<SetMember> fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         let result = SetResource { handle: unsafe {
             hew_redis_smembers(handle, key)
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
         let count = result.count();
         if count < 0 {
             let error = native_error();
             result.close();
-            return .Err(error);
+            return error error;
         }
         var members: Vec<SetMember> = Vec.new();
         for i in 0..count {
             members.push(SetMember { value: result.value(i) });
         }
         result.close();
-        .Ok(members)
+        members
     }
 
     /// Test membership in a set.
-    receive fn sismember(key: string, member: bytes) -> Result<bool, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
-        let present = match checked_count(unsafe {
+    receive fn sismember(key: string, member: bytes) -> bool fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
+        let present = checked_count(unsafe {
             hew_redis_sismember(handle, key, member)
-        }) {
-            .Ok(present) => present,
-            .Err(error) => return .Err(error),
-        };
-        .Ok(present == 1)
+        })?;
+        present == 1
     }
 
     /// Publish a message and return the subscriber count.
-    receive fn publish(channel: string, message: bytes) -> Result<i64, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn publish(channel: string, message: bytes) -> i64 fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         checked_count(unsafe {
             hew_redis_publish(handle, channel, message)
-        })
+        })?
     }
 
     /// Wait up to a positive timeout for one subscription message.
-    receive fn subscribe_once(channel: string, timeout_ms: i64) -> Result<bytes, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn subscribe_once(channel: string, timeout_ms: i64) -> bytes fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         let result = StringResource { handle: unsafe {
             hew_redis_subscribe_once(handle, channel, timeout_ms)
         } };
@@ -553,20 +473,17 @@ pub actor Conn {
         if status == 1 {
             let value = result.value();
             result.close();
-            .Ok(value)
+            value
         } else {
             let error = native_error();
             result.close();
-            .Err(error)
+            return error error;
         }
     }
 
     /// Execute a complete command pipeline, releasing its native queue on every path.
-    receive fn pipeline_exec(commands: Vec<PipelineCommand>) -> Result<i64, RedisError> {
-        let handle = match connection_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(handle) => handle,
-            .Err(error) => return .Err(error),
-        };
+    receive fn pipeline_exec(commands: Vec<PipelineCommand>) -> i64 fails RedisError {
+        let handle = connection_handle(native_handle, connect_error_kind, connect_error_message)?;
         let pipeline = NativePipeline { handle: unsafe {
             hew_redis_pipeline_new()
         } };
@@ -588,14 +505,14 @@ pub actor Conn {
             if status < 0 {
                 let error = native_error();
                 pipeline.close();
-                return .Err(error);
+                return error error;
             }
         }
         let status = unsafe {
             hew_redis_pipeline_exec(handle, pipeline.handle)
         };
         pipeline.close();
-        checked_count(status)
+        checked_count(status)?
     }
 
     /// Release the native connection when the actor stops.

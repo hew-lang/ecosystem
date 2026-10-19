@@ -27,7 +27,7 @@ fn qos_levels_are_exact_and_invalid_values_fail_closed() {
 fn unavailable_broker_returns_typed_connection_error() {
     let client = spawn mqtt.Conn { options: mqtt.Options { host: "127.0.0.1", port: 1, client_id: "hew-mqtt-unavailable", keepalive_seconds: 30 } };
     match client.publish("hew/test", "value", mqtt.QoS.AtMostOnce, false) {
-        .Ok(.Err(.Connection(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.Connection(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(client);

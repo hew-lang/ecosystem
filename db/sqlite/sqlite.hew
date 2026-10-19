@@ -153,62 +153,52 @@ pub actor Db {
         }
     }
 
-    receive fn execute(sql: string) -> Result<i64, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn execute(sql: string) -> i64 fails SqliteError {
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
         let affected = unsafe {
             hew_sqlite_execute(connection, sql)
         };
         if unsafe {
             hew_sqlite_last_error_kind()
-        } == 0 {
-            .Ok(affected)
-        } else {
-            .Err(native_error())
+        } != 0 {
+            return error native_error();
         }
+        affected
     }
 
-    receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn execute_params(sql: string, params: Vec<Param>) -> i64 fails SqliteError {
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
         let affected = unsafe {
             hew_sqlite_execute_params(connection, sql, cbor.encode(params))
         };
         if unsafe {
             hew_sqlite_last_error_kind()
-        } == 0 {
-            .Ok(affected)
-        } else {
-            .Err(native_error())
+        } != 0 {
+            return error native_error();
         }
+        affected
     }
 
-    receive fn query(sql: string) -> Result<QueryResult, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn query(sql: string) -> QueryResult fails SqliteError {
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_sqlite_query(connection, sql)
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
-        collect_result(result)
+        collect_result(result)?
     }
 
-    receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, SqliteError> {
-        let connection = connection_handle(handle, open_error_kind, open_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn query_params(sql: string, params: Vec<Param>) -> QueryResult fails SqliteError {
+        let connection = connection_handle(handle, open_error_kind, open_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_sqlite_query_params(connection, sql, cbor.encode(params))
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
-        collect_result(result)
+        collect_result(result)?
     }
 
     #[on(stop)]

@@ -1,8 +1,8 @@
 # hew.db.mysql
 
-`hew.db.mysql` owns each MySQL connection in an actor. Operations return
-typed `Result` values, query replies are immutable wire-safe snapshots, and SQL
-`NULL` is represented by `CellValue.Null` rather than an empty-string sentinel.
+`hew.db.mysql` owns each MySQL connection in an actor. Operations fail with a
+typed `MysqlError`, which a call reports as `.Err(.Failed(error))`; query
+replies are immutable wire-safe snapshots, and SQL `NULL` is represented by `CellValue.Null` rather than an empty-string sentinel.
 `QueryResult`, `Row` and `CellValue` come from [`hew.db.sql`](../sql/README.md),
 shared with SQLite and PostgreSQL.
 
@@ -13,13 +13,11 @@ import std.encoding.utf8;
 fn main() {
     let db = spawn mysql.Conn { url: "mysql://hew:hew@127.0.0.1:3306/hew_test" };
     match db.query("SELECT 41 AS value") {
-        .Ok(result) => match result {
-            .Ok(query) => match query.rows[0].values[0] {
-                .Text(value) => println(utf8.decode_lossy(value)),
-                .Null => println("value is NULL"),
-            }
-            .Err(error) => println(mysql.error_message(error)),
+        .Ok(query) => match query.rows[0].values[0] {
+            .Text(value) => println(utf8.decode_lossy(value)),
+            .Null => println("value is NULL"),
         }
+        .Err(.Failed(error)) => println(mysql.error_message(error)),
         .Err(_) => println("MySQL actor stopped before replying"),
     }
     stop(db);

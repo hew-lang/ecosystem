@@ -153,62 +153,52 @@ pub actor Conn {
         }
     }
 
-    receive fn execute(sql: string) -> Result<i64, PostgresError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn execute(sql: string) -> i64 fails PostgresError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
             hew_pg_execute(connection, sql)
         };
         if unsafe {
             hew_pg_last_error_kind()
-        } == 0 {
-            .Ok(affected)
-        } else {
-            .Err(native_error())
+        } != 0 {
+            return error native_error();
         }
+        affected
     }
 
-    receive fn execute_params(sql: string, params: Vec<Param>) -> Result<i64, PostgresError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn execute_params(sql: string, params: Vec<Param>) -> i64 fails PostgresError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let affected = unsafe {
             hew_pg_execute_params(connection, sql, cbor.encode(params))
         };
         if unsafe {
             hew_pg_last_error_kind()
-        } == 0 {
-            .Ok(affected)
-        } else {
-            .Err(native_error())
+        } != 0 {
+            return error native_error();
         }
+        affected
     }
 
-    receive fn query(sql: string) -> Result<QueryResult, PostgresError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn query(sql: string) -> QueryResult fails PostgresError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_pg_query(connection, sql)
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
-        collect_result(result)
+        collect_result(result)?
     }
 
-    receive fn query_params(sql: string, params: Vec<Param>) -> Result<QueryResult, PostgresError> {
-        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone()) handle error {
-            return .Err(error);
-        };
+    receive fn query_params(sql: string, params: Vec<Param>) -> QueryResult fails PostgresError {
+        let connection = connection_handle(handle, connect_error_kind, connect_error_message.clone())?;
         let result = NativeResult { handle: unsafe {
             hew_pg_query_params(connection, sql, cbor.encode(params))
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
-        collect_result(result)
+        collect_result(result)?
     }
 
     #[on(stop)]

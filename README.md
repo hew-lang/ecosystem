@@ -81,24 +81,21 @@ hew install
 Save the program as `main.hew`, then run `hew run main.hew` without `--pkg-path`.
 
 Three things in that snippet carry across every package here. A fallible call
-returns `Result<T, E>` with a package-specific error enum, never a sentinel
-value. Variants are matched in dotted form (`.Ok`, `.Err`) because the
+fails with a package-specific error enum, never a sentinel value. Variants are matched in dotted form (`.Ok`, `.Err`) because the
 scrutinee's type already selects the enum. And every error enum has an
 `error_message` that turns it into a printable string, so a match arm never has
 to reach inside the variant to report a failure.
 
-The service-backed packages add one wrapper: they own their connection in an
-actor, so a call is `conn.query(sql)` and its answer is
-`Result<Result<T, E>, ActorError>` — the outer `Result` reports whether the actor
-answered at all, the inner one whether the operation succeeded.
+The service-backed packages own their connection in an actor, so a call is
+`conn.query(sql)`. Each operation declares `-> T fails E`, and its answer is
+one `Result<T, ActorError<E>>`: `.Ok` carries the value, `.Err(.Failed(error))`
+the operation's own error, and any other `.Err` means the actor did not answer.
 
 ```hew
 let conn = spawn postgres.Conn { connstr: "host=127.0.0.1 user=hew password=hew dbname=hew_test" };
 match conn.query("select 1") {
-    .Ok(result) => match result {
-        .Ok(query) => println(f"{query.rows.len()} rows"),
-        .Err(error) => println(postgres.error_message(error)),
-    },
+    .Ok(query) => println(f"{query.rows.len()} rows"),
+    .Err(.Failed(error)) => println(postgres.error_message(error)),
     .Err(_) => println("connection actor stopped"),
 }
 stop(conn);

@@ -16,10 +16,8 @@ import hew.auth.oauth;
 fn main() {
     let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
     match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
-        .Ok(result) => match result {
-            .Ok(url) => println(f"send the user to {url}"),
-            .Err(error) => println(oauth.error_message(error)),
-        }
+        .Ok(url) => println(f"send the user to {url}"),
+        .Err(.Failed(error)) => println(oauth.error_message(error)),
         .Err(_) => println("OAuth actor stopped before replying"),
     }
     stop(client);
@@ -44,7 +42,11 @@ rejects an empty callback state as `OAuthError.InvalidInput`.
 
 ## Errors
 
-Token requests return `Result<Token, OAuthError>`:
+Token requests are `receive fn`s declared `-> Token fails OAuthError`, so a call
+replies `Result<Token, ActorError<OAuthError>>`: the handler's error arrives as
+`.Err(.Failed(error))`, and any other `.Err` means the actor did not reply.
+`auth_url` and `validate_state` fail the same way; `current_state` and
+`current_code_verifier` cannot fail and reply `Option<string>`.
 
 - `InvalidInput` — a local precondition failed before any request was sent:
   an empty URL, refresh token, verifier, or callback state, or

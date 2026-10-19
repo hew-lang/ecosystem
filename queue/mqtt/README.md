@@ -12,10 +12,10 @@ docker run --rm -d --name hew-mqtt -p 11883:1883 eclipse-mosquitto:2.0.22 \
 hew run --pkg-path . queue/mqtt/examples/pubsub.hew
 ```
 
-An actor call returns `Result<R, MqttError>` wrapped in the
-`Result<_, ActorError>` the ask itself can fail with, so every reply is matched
-one layer at a time: the outer `Result` covers the actor call, the inner one
-covers the MQTT operation.
+Each `Conn` method is a `receive fn` that returns `T fails MqttError`, so a
+call replies with `Result<T, ActorError<MqttError>>`: `.Ok(value)` on success,
+`.Err(.Failed(error))` when the MQTT operation fails, and another `.Err` when
+the actor could not answer.
 
 ```hew
 import hew.queue.mqtt;
@@ -28,11 +28,9 @@ fn main() {
     let _ = client.subscribe("hew/readme", mqtt.QoS.AtLeastOnce);
     let _ = client.publish("hew/readme", "hello", mqtt.QoS.AtLeastOnce, false);
     match client.next_message(1000) {
-        .Ok(result) => match result {
-            .Ok(.Message(message)) => println(message.payload),
-            .Ok(.Missing) => println("no message arrived"),
-            .Err(error) => println(mqtt.error_message(error)),
-        }
+        .Ok(.Message(message)) => println(message.payload),
+        .Ok(.Missing) => println("no message arrived"),
+        .Err(.Failed(error)) => println(mqtt.error_message(error)),
         .Err(_) => println("MQTT actor stopped before replying"),
     }
     stop(client);

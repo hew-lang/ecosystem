@@ -7,7 +7,7 @@ import hew.queue.nats.{NatsError};
 fn unavailable_server_returns_typed_connection_error() {
     let client = spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:1" } };
     match client.publish("hew.test", "value") {
-        .Ok(.Err(.Connection(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.Connection(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(client);
@@ -20,7 +20,7 @@ fn reply_without_subject_returns_typed_input_error() {
     let client = spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:1" } };
     let message = nats.Delivery { subject: "events", data: "value", reply_to: nats.ReplyTo.Missing };
     match client.reply(message, "reply") {
-        .Ok(.Err(.Connection(_))) => {}
+        .Err(.Failed(.Connection(_))) => {}
         _ => assert(false),
     }
     stop(client);

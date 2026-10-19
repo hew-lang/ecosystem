@@ -5,7 +5,7 @@ import hew.storage.s3;
 fn invalid_endpoint_returns_typed_error() {
     let store = spawn s3.Bucket { options: s3.Options { endpoint: "not a URL", region: "us-east-1", bucket: "test", access_key: "x", secret_key: "y" } };
     match store.exists("key") {
-        .Ok(.Err(error)) => assert(!s3.error_message(error).is_empty()),
+        .Err(.Failed(error)) => assert(!s3.error_message(error).is_empty()),
         _ => assert(false),
     }
 }

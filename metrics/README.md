@@ -1,8 +1,10 @@
 # hew.metrics
 
 Actor-owned Prometheus counters, gauges, histograms, labels, and text export.
-All registration and mutation APIs return `Result`, and stopping or closing the
-actor releases its native registry.
+Every registration, mutation and export handler is declared `-> T fails
+MetricsError`, so a call replies `Result<T, ActorError<MetricsError>>`: match
+`.Ok(value)`, `.Err(.Failed(error))` for a metrics error, and `.Err(_)` for a
+registry that could not answer. Stopping the actor releases its native registry.
 
 Each labeled metric retains at most 1024 distinct label-value tuples. Once the
 limit is reached, existing tuples remain mutable and operations with a new
@@ -14,20 +16,16 @@ import hew.metrics;
 fn export_requests() -> string {
     let registry = spawn metrics.Registry;
     let text = match registry.counter("requests_total", "Handled requests") {
-        .Ok(result) => match result {
-            .Ok(counter) => {
-                let _ = registry.counter_inc(counter);
-                let _ = registry.counter_add(counter, 2.0);
-                match registry.export() {
-                    .Ok(export_result) => match export_result {
-                        .Ok(text) => text,
-                        .Err(error) => metrics.error_message(error),
-                    }
-                    .Err(_) => "metrics actor stopped before replying",
-                }
+        .Ok(counter) => {
+            let _ = registry.counter_inc(counter);
+            let _ = registry.counter_add(counter, 2.0);
+            match registry.export() {
+                .Ok(text) => text,
+                .Err(.Failed(error)) => metrics.error_message(error),
+                .Err(_) => "metrics actor stopped before replying",
             }
-            .Err(error) => metrics.error_message(error),
         }
+        .Err(.Failed(error)) => metrics.error_message(error),
         .Err(_) => "metrics actor stopped before replying",
     };
     stop(registry);

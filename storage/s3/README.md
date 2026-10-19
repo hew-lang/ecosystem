@@ -23,19 +23,15 @@ fn main() {
     } };
 
     match store.put("hello.txt", "hello".to_bytes(), "text/plain") {
-        .Ok(result) => match result {
-            .Ok(_) => println("uploaded"),
-            .Err(error) => println(s3.error_message(error)),
-        }
+        .Ok(_) => println("uploaded"),
+        .Err(.Failed(error)) => println(s3.error_message(error)),
         .Err(_) => println("S3 actor stopped before replying"),
     }
 
     match store.get("hello.txt") {
-        .Ok(result) => match result {
-            .Ok(.Found(body)) => println(utf8.decode_lossy(body)),
-            .Ok(.Missing) => println("object is missing"),
-            .Err(error) => println(s3.error_message(error)),
-        }
+        .Ok(.Found(body)) => println(utf8.decode_lossy(body)),
+        .Ok(.Missing) => println("object is missing"),
+        .Err(.Failed(error)) => println(s3.error_message(error)),
         .Err(_) => println("S3 actor stopped before replying"),
     }
 
@@ -44,8 +40,9 @@ fn main() {
 }
 ```
 
-The outer `Result` on an actor ask reports mailbox/actor failure. The inner
-`Result` reports the S3 operation outcome.
+Each call replies `Result<T, ActorError<S3Error>>`: `.Ok(value)` on success,
+`.Err(.Failed(error))` for an S3 failure, and another `.Err` variant when the
+actor could not answer (for example `.Dead` after it stopped).
 
 The checked example at [`examples/basic.hew`](examples/basic.hew) is the same
 program, plus a test that runs it, against the MinIO service in
@@ -66,21 +63,21 @@ It prints `uploaded example/hello.txt` and then `hello`.
 (all `string`).
 
 Every operation below is `receive fn`, called as `store.<name>(...)`,
-and returns `Result<T, S3Error>` inside the actor-ask `Result`:
+and is declared `-> T fails S3Error`:
 
-- `put(key: string, body: bytes, content_type: string) -> Result<i64, S3Error>`
+- `put(key: string, body: bytes, content_type: string) -> i64 fails S3Error`
   — upload exact bytes under `key`.
-- `get(key: string) -> Result<ObjectLookup, S3Error>` — download exact bytes.
+- `get(key: string) -> ObjectLookup fails S3Error` — download exact bytes.
   `ObjectLookup` is `.Missing` or `.Found(bytes)`; a missing object is distinct
   from a present empty one.
-- `delete(key: string) -> Result<i64, S3Error>` — deleting an absent key is
+- `delete(key: string) -> i64 fails S3Error` — deleting an absent key is
   successful S3 behaviour, not an error.
-- `list(prefix: string) -> Result<Vec<ObjectInfo>, S3Error>` — every object
+- `list(prefix: string) -> Vec<ObjectInfo> fails S3Error` — every object
   under `prefix`, following continuation tokens. `ObjectInfo` has `key:
   string` and `size: i64`.
-- `exists(key: string) -> Result<bool, S3Error>`.
-- `presign(key: string, method: string, expires_seconds: i64) -> Result<string,
-  S3Error>` — a signed URL for `"GET"`, `"PUT"`, `"DELETE"`, or `"HEAD"`.
+- `exists(key: string) -> bool fails S3Error`.
+- `presign(key: string, method: string, expires_seconds: i64) -> string fails
+  S3Error` — a signed URL for `"GET"`, `"PUT"`, `"DELETE"`, or `"HEAD"`.
 - `stop(store); stopped(store);` — stop the actor and wait for native client cleanup.
 
 `s3.error_message(error: S3Error) -> string` returns the diagnostic carried by

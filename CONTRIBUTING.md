@@ -32,11 +32,10 @@ have it installed.
 ## What a package looks like
 
 The packages here are deliberately small — the point is that you can read one
-in a sitting. Keep the public surface narrow, return `Result<T, E>` with a
-package-specific error enum rather than sentinel values, give that enum an
-`error_message`, and put the failure in the type rather than in a comment. Own
-external resources in an actor so lifetime is explicit. Match variants in
-dotted form (`.Ok`, `.Err`).
+in a sitting. Keep the public surface narrow, fail with a package-specific
+error enum rather than sentinel values, give that enum an `error_message`, and
+put the failure in the type rather than in a comment. Own external resources in
+an actor so lifetime is explicit. Match variants in dotted form (`.Ok`, `.Err`).
 
 Each README opens with one runnable example, and `examples/` holds the same
 program as a file. An example has to print something a reader can recognise as
@@ -46,10 +45,21 @@ printed value when the output is the point. Tests in `tests/` are `#[test]`
 functions too, marked `#[real_time]` when they reach the package's native
 code.
 
-Match a nested `Result` with one `match` per layer, the inner one inside the
-outer `.Ok` arm — that is the shape every example here uses, and it is worth
-more than the terser flattened pattern precisely because it is the same
-everywhere.
+A fallible `receive fn` declares its failure with `-> T fails E`, not
+`-> Result<T, E>`, so a caller gets one `Result<T, ActorError<E>>` rather than a
+`Result` inside a `Result`. Match it in this order — the same shape in every
+example here:
+
+```hew
+match conn.del(key) {
+    .Ok(removed) => println(f"removed {removed}"),
+    .Err(.Failed(error)) => println(redis.error_message(error)),
+    .Err(_) => println("the actor stopped before replying"),
+}
+```
+
+A test that expects the handler's error matches `.Err(.Failed(error))`, never
+`.Err(_)`, which a stopped actor would also satisfy.
 
 ## Commits
 
