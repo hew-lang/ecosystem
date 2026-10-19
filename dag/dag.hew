@@ -224,25 +224,17 @@ pub fn add_edge(var spec: DagSpec, src: i64, dst: i64) -> Result<DagSpec, DagErr
 }
 
 // ── Runtime spec loading (text -> DagSpec) ──────────────────────────────────
-fn is_digit(ch: char) -> bool {
-    ch >= '0' && ch <= '9'
-}
-
 fn is_i64_text(text: string) -> bool {
-    let chars = text.chars();
-    let n = chars.len();
-    if n == 0 {
+    let digits = if text.starts_with("-") {
+        text[1..]
+    } else {
+        text
+    };
+    if digits.is_empty() {
         return false;
     }
-    var start = 0;
-    if chars[0] == '-' {
-        if n == 1 {
-            return false;
-        }
-        start = 1;
-    }
-    for i in start..n {
-        if !is_digit(chars[i]) {
+    for ch in digits {
+        if ch < '0' || ch > '9' {
             return false;
         }
     }
@@ -812,6 +804,25 @@ fn test_parse_spec_rejects_malformed_node_descriptors() {
                 _ => assert(false),
             }
         }
+    }
+}
+
+#[test]
+fn test_parse_spec_operand_is_optionally_signed_ascii_digits() {
+    match parse_spec("add:-12 multiply:7") {
+        .Ok(spec) => {
+            assert(spec.nodes[0].operand == -12);
+            assert(spec.nodes[1].operand == 7);
+        }
+        .Err(_) => assert(false),
+    }
+    match parse_spec("add:- multiply:2") {
+        .Err(.Malformed(i)) => assert(i == 0),
+        _ => assert(false),
+    }
+    match parse_spec("add:1 multiply:+5") {
+        .Err(.Malformed(i)) => assert(i == 1),
+        _ => assert(false),
     }
 }
 
