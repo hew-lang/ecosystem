@@ -82,7 +82,7 @@ pub type Running {
 // ── Descriptive Statistics ───────────────────────────────────────────
 /// Compute the arithmetic mean of a dataset.
 pub fn mean(data: Vec<f64>) -> Result<f64, StatsError> {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return .Err(StatsError.InsufficientData(0));
     }
@@ -96,15 +96,15 @@ pub fn mean(data: Vec<f64>) -> Result<f64, StatsError> {
 /// Compute the sum of a dataset.
 pub fn sum(data: Vec<f64>) -> f64 {
     var total = 0.0;
-    for i in 0..len(data) {
-        total = total + data[i];
+    for value in data {
+        total = total + value;
     }
     total
 }
 
 /// Find the minimum value in a dataset.
 pub fn min_val(data: Vec<f64>) -> Result<f64, StatsError> {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return .Err(StatsError.InsufficientData(0));
     }
@@ -119,7 +119,7 @@ pub fn min_val(data: Vec<f64>) -> Result<f64, StatsError> {
 
 /// Find the maximum value in a dataset.
 pub fn max_val(data: Vec<f64>) -> Result<f64, StatsError> {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return .Err(StatsError.InsufficientData(0));
     }
@@ -139,7 +139,7 @@ pub fn range(data: Vec<f64>) -> f64 fails StatsError {
 
 /// Compute the population variance.
 pub fn variance(data: Vec<f64>) -> f64 fails StatsError {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return error StatsError.InsufficientData(0);
     }
@@ -154,7 +154,7 @@ pub fn variance(data: Vec<f64>) -> f64 fails StatsError {
 
 /// Compute the sample variance (Bessel's correction).
 pub fn variance_sample(data: Vec<f64>) -> f64 fails StatsError {
-    let n = len(data);
+    let n = data.len();
     if n < 2 {
         return error StatsError.InsufficientData(n);
     }
@@ -182,7 +182,7 @@ pub fn std_dev_sample(data: Vec<f64>) -> f64 fails StatsError {
 /// For even-length datasets, returns the average of the two middle values.
 /// Note: creates a sorted copy of the data.
 pub fn median(data: Vec<f64>) -> Result<f64, StatsError> {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return .Err(StatsError.InsufficientData(0));
     }
@@ -197,7 +197,7 @@ pub fn median(data: Vec<f64>) -> Result<f64, StatsError> {
 // ── Percentiles & Quartiles ─────────────────────────────────────────
 /// Compute the p-th percentile (0-100) using linear interpolation.
 pub fn percentile(data: Vec<f64>, p: f64) -> Result<f64, StatsError> {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return .Err(StatsError.InsufficientData(0));
     }
@@ -230,9 +230,9 @@ pub fn iqr(data: Vec<f64>) -> f64 fails StatsError {
 // ── Correlation & Regression ────────────────────────────────────────
 /// Compute the Pearson correlation coefficient between two datasets.
 pub fn correlation(x: Vec<f64>, y: Vec<f64>) -> f64 fails StatsError {
-    let n = len(x);
-    if len(y) != n {
-        return error StatsError.LengthMismatch(n, len(y));
+    let n = x.len();
+    if y.len() != n {
+        return error StatsError.LengthMismatch(n, y.len());
     }
     if n < 2 {
         return error StatsError.InsufficientData(n);
@@ -258,9 +258,9 @@ pub fn correlation(x: Vec<f64>, y: Vec<f64>) -> f64 fails StatsError {
 
 /// Compute the sample covariance between two datasets.
 pub fn covariance(x: Vec<f64>, y: Vec<f64>) -> f64 fails StatsError {
-    let n = len(x);
-    if len(y) != n {
-        return error StatsError.LengthMismatch(n, len(y));
+    let n = x.len();
+    if y.len() != n {
+        return error StatsError.LengthMismatch(n, y.len());
     }
     if n < 2 {
         return error StatsError.InsufficientData(n);
@@ -278,9 +278,9 @@ pub fn covariance(x: Vec<f64>, y: Vec<f64>) -> f64 fails StatsError {
 ///
 /// Returns a `LinearFit` with slope, intercept, and R-squared.
 pub fn linear_regression(x: Vec<f64>, y: Vec<f64>) -> LinearFit fails StatsError {
-    let n = len(x);
-    if len(y) != n {
-        return error StatsError.LengthMismatch(n, len(y));
+    let n = x.len();
+    if y.len() != n {
+        return error StatsError.LengthMismatch(n, y.len());
     }
     if n < 2 {
         return error StatsError.InsufficientData(n);
@@ -319,9 +319,9 @@ pub fn linear_regression(x: Vec<f64>, y: Vec<f64>) -> LinearFit fails StatsError
 // ── Moving Averages ─────────────────────────────────────────────────
 /// Compute a simple moving average with the given window size.
 ///
-/// Returns a vector of length `len(data) - window + 1`.
+/// Returns a vector of length `data.len() - window + 1`.
 pub fn simple_moving_avg(data: Vec<f64>, window: i64) -> Result<Vec<f64>, StatsError> {
-    let n = len(data);
+    let n = data.len();
     if window <= 0 || window > n {
         return .Err(StatsError.InvalidParameter("moving-average window must fit the dataset"));
     }
@@ -342,7 +342,7 @@ pub fn simple_moving_avg(data: Vec<f64>, window: i64) -> Result<Vec<f64>, StatsE
 
 /// Compute an exponential moving average with smoothing factor alpha (0-1).
 pub fn exponential_moving_avg(data: Vec<f64>, alpha: f64) -> Result<Vec<f64>, StatsError> {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return .Err(StatsError.InsufficientData(0));
     }
@@ -365,7 +365,7 @@ pub fn exponential_moving_avg(data: Vec<f64>, alpha: f64) -> Result<Vec<f64>, St
 /// Returns bin `edges` (length `num_bins + 1`) and per-bin `counts`
 /// (length `num_bins`). Values are clamped into the first/last bin.
 pub fn histogram(data: Vec<f64>, num_bins: i64) -> Histogram fails StatsError {
-    let n = len(data);
+    let n = data.len();
     if n == 0 {
         return error StatsError.InsufficientData(0);
     }
@@ -490,11 +490,8 @@ impl RunningMethods for Running {
 // ── Internal helpers ────────────────────────────────────────────────
 /// Sort a copy of the data (insertion sort for simplicity).
 fn sort_f64(data: Vec<f64>) -> Vec<f64> {
-    var sorted: Vec<f64> = Vec.new();
-    for i in 0..len(data) {
-        sorted.push(data[i]);
-    }
-    let n = len(sorted);
+    var sorted = data.clone();
+    let n = sorted.len();
     for i in 1..n {
         let key = sorted[i];
         var j = i - 1;
