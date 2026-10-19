@@ -28,18 +28,21 @@ running a test.
 
 ## Compatibility
 
-Every package's `hew.toml` declares a `hew` compatibility range that starts at
-the pinned compiler's version and excludes the next breaking minor release. CI
-validates the exact pinned revision.
+Every package's `hew.toml` declares its supported compiler range. Native
+packages require Hew 0.6.2 because their Rust crates use its managed-string
+ABI; update the compiler and `hew-cabi` pins together before publishing them.
+Pure Hew packages retain their older minimum where their source remains
+compatible. CI validates the exact pinned revision.
 
 ## Checks
 
 ```sh
 # Build the pinned compiler from source.
 . ./toolchain.env
-git clone https://github.com/hew-lang/hew.git /tmp/hew
-git -C /tmp/hew checkout "$HEW_REVISION"
-HEW_SOURCE=/tmp/hew make toolchain
+hew_source="$(mktemp -d)"
+git clone https://github.com/hew-lang/hew.git "$hew_source"
+git -C "$hew_source" checkout "$HEW_REVISION"
+HEW_SOURCE="$hew_source" make toolchain
 
 make check
 
