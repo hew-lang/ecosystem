@@ -112,8 +112,7 @@ fn parse_context(ctx: string) -> HashMap<string, string> {
         return vars;
     }
     // Split only on LF; a CR is part of the value.
-    let lines = ctx.split("
-");
+    let lines = ctx.split("\n");
     var index = 0;
     while index < lines.len() {
         let value = if index + 1 < lines.len() {
