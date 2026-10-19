@@ -8,6 +8,7 @@
 #   make test-crates                             the native crates' Rust tests
 #   make publish-check                           dry-run the workspace publish
 #   make publish                                 publish every new member version
+#   make native-sqlite                           build a Linux x86_64 native archive
 #
 # `make test`, `make test-native` and `make test-crates` need the
 # docker-compose.yml services: `docker compose up --detach --wait`. `make test-native` also needs the
@@ -30,6 +31,8 @@ export HEW_MQTT_PORT
 # Where publish credentials come from: `credentials` (hew login and hew key
 # generate) or `github-actions` (trusted publishing from publish.yml).
 PUBLISH_AUTH ?= credentials
+# Archive construction is independent of registry authentication/publication.
+NATIVE_SQLITE_ARCHIVE ?= $(CURDIR)/.tooling/native-packages/hew.db.sqlite.tar.zst
 
 # Tracked Hew sources. The hew/ mirror is symlinks, so nothing under it is
 # listed twice.
@@ -42,7 +45,7 @@ NATIVE_PACKAGES := image/magick storage/s3
 # the package's .hew/packages, following the tracked hew.lock.
 LOCKED_PACKAGES := $(filter-out hew/%,$(patsubst %/hew.lock,%,$(wildcard */hew.lock */*/hew.lock)))
 
-.PHONY: lint toolchain deps check test test-native test-crates publish-check publish
+.PHONY: lint toolchain deps check test test-native test-crates publish-check publish native-sqlite
 
 lint:
 	cargo fmt --all -- --check
@@ -101,3 +104,12 @@ publish-check:
 
 publish:
 	"$(HEW)" publish --workspace --auth $(PUBLISH_AUTH)
+
+# hew builds from the packed source and records that source checksum, the
+# compiler/runtime identity and the target inside the archive.
+native-sqlite:
+	archive="$(NATIVE_SQLITE_ARCHIVE)"; \
+	case "$$archive" in /*) ;; *) archive="$(CURDIR)/$$archive" ;; esac; \
+	mkdir -p "$$(dirname "$$archive")"; \
+	cd db/sqlite && "$(HEW)" native build \
+		--target x86_64-unknown-linux-gnu --output "$$archive"

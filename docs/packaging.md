@@ -71,3 +71,23 @@ different tree fails with `E_PUBLISH_VERSION_DRIFT`, so a package that changes
 needs a new version. The publish workflow runs `make publish` with trusted
 publishing (`--auth github-actions`) on every push to `main`; a local
 `make publish` uses the credentials from `hew login` and `hew key generate`.
+
+## SQLite native archive
+
+After updating both compiler and `hew-cabi` pins to the same released Hew
+0.6.2 revision, `make native-sqlite` builds the Linux x86_64 SQLite archive at
+`.tooling/native-packages/hew.db.sqlite.tar.zst`. Set `NATIVE_SQLITE_ARCHIVE`
+to choose another output path. The existing `hew native build` command packs
+the source, builds its Rust static library and records the source checksum,
+target and compiler/runtime identity in the archive. Cargo and rustc are
+required on the build machine.
+
+This target only constructs an archive. The workspace publisher currently
+publishes source packages; it cannot include native archives in its publish
+plan or share its trusted-publishing grant with `hew native publish`. Native
+publication remains pending that CLI support and registry native routes.
+The initial consumer qualification scope is Linux x86_64 SQLite: O0/O2 queries
+without Cargo or rustc, locked/offline installation, source fallback, integrity
+and identity refusal, and repeated publication with matching source checksums.
+An archive built with a development SDK or an older `hew-cabi` pin does not
+qualify the released 0.6.2 packages.

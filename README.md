@@ -9,8 +9,9 @@ to read in a sitting.
 ## Packages
 
 Every package uses a dotted name (`hew.math.stats`) and lives in the directory
-that matches it. The current source release is `0.4.0`, compatible with Hew
-0.6.1. Check a package's published versions with `hew info <PACKAGE>`.
+that matches it. The source manifests are at `0.4.0`. Native packages require
+Hew 0.6.2; pure Hew packages declare their compatible minimum in `hew.toml`.
+Check a package's published versions with `hew info <PACKAGE>`.
 
 | Package | Directory | What it gives you |
 | --- | --- | --- |
