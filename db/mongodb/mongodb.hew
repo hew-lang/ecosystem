@@ -35,8 +35,6 @@ pub enum MongoError {
     Operation(string) @2;
     /// A BSON document could not be represented as JSON.
     Serialize(string) @3;
-    /// The connection actor has been closed.
-    Closed(string) @4;
     /// The native layer rejected an invalid handle.
     Internal(string) @5;
 }
@@ -48,7 +46,6 @@ pub fn error_message(error: MongoError) -> string {
         .InvalidJson(message) => message,
         .Operation(message) => message,
         .Serialize(message) => message,
-        .Closed(message) => message,
         .Internal(message) => message,
     }
 }

@@ -73,8 +73,6 @@ pub enum MetricsError {
     SeriesLimit(i64) @3;
     /// The registry has already been closed.
     Closed(string) @4;
-    /// The native registry could not complete the operation.
-    Internal(string) @5;
 }
 
 /// Return the diagnostic carried by a `MetricsError`.
@@ -85,7 +83,6 @@ pub fn error_message(error: MetricsError) -> string {
         .WrongMetricKind(handle) => f"wrong metric kind for handle: {handle}",
         .SeriesLimit(handle) => f"metric series limit reached: {handle}",
         .Closed(message) => message,
-        .Internal(message) => message,
     }
 }
 

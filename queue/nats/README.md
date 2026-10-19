@@ -56,5 +56,5 @@ fn main() {
 - `type Delivery { subject: string; data: string; reply_to: ReplyTo; }`
 - `enum ReplyTo { Missing; Subject(string); }`
 - `enum Receive { Missing; Message(Delivery); }`
-- `enum NatsError { Connection; InvalidInput; Operation; Timeout; Closed; Internal; }` — each variant carries a diagnostic `string`.
+- `enum NatsError { Connection; InvalidInput; Operation; Closed; Internal; }` — each variant carries a diagnostic `string`.
 - `fn error_message(error: NatsError) -> string` — extracts the diagnostic from any `NatsError` variant.

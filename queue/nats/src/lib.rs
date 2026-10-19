@@ -19,11 +19,6 @@ enum ErrorKind {
     Connection = 1,
     InvalidInput = 2,
     Operation = 3,
-    #[expect(
-        dead_code,
-        reason = "reserved ABI error category for bounded broker operations"
-    )]
-    Timeout = 4,
     Closed = 5,
 }
 

@@ -38,8 +38,6 @@ pub enum NatsError {
     InvalidInput(string) @1;
     /// The server or client rejected an operation.
     Operation(string) @2;
-    /// A bounded operation failed because its deadline elapsed.
-    Timeout(string) @3;
     /// The connection or subscription is already closed.
     Closed(string) @4;
     /// The native layer reported an unclassified failure.
@@ -52,7 +50,6 @@ pub fn error_message(error: NatsError) -> string {
         .Connection(message) => message,
         .InvalidInput(message) => message,
         .Operation(message) => message,
-        .Timeout(message) => message,
         .Closed(message) => message,
         .Internal(message) => message,
     }
@@ -96,7 +93,6 @@ fn native_error_from(kind: i32, message: string) -> NatsError {
         1 => NatsError.Connection(message),
         2 => NatsError.InvalidInput(message),
         3 => NatsError.Operation(message),
-        4 => NatsError.Timeout(message),
         5 => NatsError.Closed(message),
         _ => NatsError.Internal(message),
     }

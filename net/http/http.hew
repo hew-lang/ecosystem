@@ -57,8 +57,6 @@ pub enum HttpError {
     Busy(string) @10;
     /// No accepted request is waiting for a header lookup or response.
     NoPending(string) @11;
-    /// The server has been closed.
-    Closed(string) @12;
     /// The native layer reported an unclassified failure.
     Internal(string) @13;
 }
@@ -78,7 +76,6 @@ pub fn error_message(error: HttpError) -> string {
         .InvalidHeaderValue(name) => f"invalid HTTP header value: {name}",
         .Busy(message) => message,
         .NoPending(message) => message,
-        .Closed(message) => message,
         .Internal(message) => message,
     }
 }
