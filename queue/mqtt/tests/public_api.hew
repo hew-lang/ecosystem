@@ -1,7 +1,5 @@
 import hew.queue.mqtt;
 
-import hew.queue.mqtt.{MqttError, QoS};
-
 #[test]
 fn qos_levels_are_exact_and_invalid_values_fail_closed() {
     match mqtt.qos_from_level(0) {

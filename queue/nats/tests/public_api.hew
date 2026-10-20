@@ -1,7 +1,5 @@
 import hew.queue.nats;
 
-import hew.queue.nats.{NatsError};
-
 #[test]
 #[real_time]
 fn unavailable_server_returns_typed_connection_error() {
