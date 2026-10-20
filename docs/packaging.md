@@ -72,6 +72,53 @@ needs a new version. The publish workflow runs `make publish` with trusted
 publishing (`--auth github-actions`) on every push to `main`; a local
 `make publish` uses the credentials from `hew login` and `hew key generate`.
 
+## Consuming local native sources
+
+To build an application against an unpublished ecosystem checkout, put both
+under a virtual Hew workspace. List the application and the packages it uses,
+including transitive members such as `hew.db.sql`:
+
+```text
+workspace/
+  hew.toml
+  ecosystem/       # ecosystem checkout with matching compiler/C ABI pins
+  applications/   # application sources and their package manifest
+```
+
+For SQLite, the root `workspace/hew.toml` is:
+
+```toml
+[workspace]
+members = ["ecosystem/db/sql", "ecosystem/db/sqlite", "applications"]
+```
+
+The application keeps ordinary version requirements:
+
+```toml
+[dependencies]
+"hew.db.sql" = "0.4.0"
+"hew.db.sqlite" = "0.4.0"
+```
+
+From `applications/`, run `hew install --offline`, then
+`hew install --offline --locked` to check the resulting lock. `hew build
+main.hew` builds the native crate from the workspace member. Cargo and rustc
+must match the compiler/runtime toolchain, and the ecosystem's `hew-cabi` pin
+must match that compiler. No prebuilt archive or remote publication is needed.
+Add other package directories to the same workspace as needed.
+
+`--pkg-path` changes module lookup; it does not change a dependency's locked
+registry identity. Using it to shadow a registry dependency with different
+local source correctly fails checksum validation. A standalone path dependency
+also does not override another package's registry requirement on that name;
+the workspace supplies one source for the entire dependency graph.
+
+The current `hew publish --local` native consumer path is incomplete: its
+local cache entry has no verified remote source provenance, while native
+registry resolution requires that provenance before choosing source fallback.
+Use workspace members for local native development; do not add provenance
+metadata by hand or weaken the registry integrity check.
+
 ## SQLite native archive
 
 After updating both compiler and `hew-cabi` pins to the same released Hew
