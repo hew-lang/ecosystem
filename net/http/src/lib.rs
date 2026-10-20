@@ -143,6 +143,33 @@ pub unsafe extern "C" fn hew_ecosystem_http_listen(addr: *const HewString) -> i6
     }
 }
 
+/// Return the actual bound address of an owned listener.
+///
+/// # Safety
+/// `server` must be zero or a live, exclusively accessed handle returned by
+/// [`hew_ecosystem_http_listen`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hew_ecosystem_http_server_local_addr(server: i64) -> *mut HewString {
+    // SAFETY: the caller supplies exclusive access to a live listener or zero.
+    let Some(server) = (unsafe { server_mut(server) }) else {
+        set_error(
+            ErrorKind::Listen,
+            "local address failed: null server handle",
+        );
+        return string_from_str("");
+    };
+    match server.listener.local_addr() {
+        Ok(addr) => {
+            clear_error();
+            string_from_str(&addr.to_string())
+        }
+        Err(error) => {
+            set_error(ErrorKind::Listen, format!("local address failed: {error}"));
+            string_from_str("")
+        }
+    }
+}
+
 /// Accept and parse exactly one HTTP/1.1 request.
 ///
 /// # Safety
@@ -1114,11 +1141,6 @@ struct TestClient {
     worker: thread::JoinHandle<Result<Vec<u8>, String>>,
 }
 
-#[derive(Debug)]
-struct TestFixture {
-    addr: String,
-}
-
 fn run_test_client(
     addr: &str,
     request_head: &[u8],
@@ -1179,74 +1201,18 @@ fn run_test_client(
     Ok(response)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn hew_ecosystem_http_test_fixture_new() -> i64 {
-    match TcpListener::bind("127.0.0.1:0").and_then(|listener| listener.local_addr()) {
-        Ok(addr) => {
-            clear_error();
-            Box::into_raw(Box::new(TestFixture {
-                addr: addr.to_string(),
-            })) as i64
-        }
-        Err(error) => {
-            set_error(
-                ErrorKind::Internal,
-                format!("test address allocation failed: {error}"),
-            );
-            0
-        }
-    }
-}
-
-/// Return the loopback address of a test fixture's listener.
-///
-/// # Safety
-/// `fixture` must be zero or a live handle returned by
-/// [`hew_ecosystem_http_test_fixture_new`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_test_fixture_addr(fixture: i64) -> *mut HewString {
-    // SAFETY: this function's caller contract requires `fixture` to be zero
-    // or a live handle from `hew_ecosystem_http_test_fixture_new`.
-    let Some(fixture) = (unsafe { (fixture as *const TestFixture).as_ref() }) else {
-        set_error(ErrorKind::Internal, "test fixture handle was null");
-        return string_from_str("");
-    };
-    clear_error();
-    string_from_str(&fixture.addr)
-}
-
-/// Free a test fixture. Zero is a no-op.
-///
-/// # Safety
-/// A nonzero `fixture` must be a live handle returned by
-/// [`hew_ecosystem_http_test_fixture_new`] and must be freed exactly once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn hew_ecosystem_http_test_fixture_free(fixture: i64) {
-    if fixture != 0 {
-        // SAFETY: this function's caller contract requires `fixture` to be
-        // a live handle from `hew_ecosystem_http_test_fixture_new`, freed
-        // exactly once.
-        drop(unsafe { Box::from_raw(fixture as *mut TestFixture) });
-    }
-}
-
 /// Start a background client that plays one fixed test-request scenario
-/// against `fixture`'s listener.
+/// against the supplied owned listener's address.
 ///
 /// # Safety
-/// `fixture` must be zero or a live handle returned by
-/// [`hew_ecosystem_http_test_fixture_new`].
+/// `addr` must be a live managed Hew string borrowed for this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hew_ecosystem_http_test_client_start_case(
-    fixture: i64,
+    addr: *const HewString,
     case_id: i32,
 ) -> i64 {
-    // SAFETY: this function's caller contract requires `fixture` to be zero
-    // or a live handle from `hew_ecosystem_http_test_fixture_new`.
-    let Some(fixture) = (unsafe { (fixture as *const TestFixture).as_ref() }) else {
-        set_error(ErrorKind::Internal, "test fixture handle was null");
-        return 0;
-    };
+    // SAFETY: the caller borrows a live managed string for this call.
+    let addr = unsafe { string_as_str(addr) }.to_owned();
     let (request_head, request_body, wait_for_continue) = match case_id {
         0 => (
             b"GET /test HTTP/1.1\r\nHost: test\r\n\r\n".to_vec(),
@@ -1299,9 +1265,8 @@ pub unsafe extern "C" fn hew_ecosystem_http_test_client_start_case(
             return 0;
         }
     };
-    let worker = thread::spawn({
-        let addr = fixture.addr.clone();
-        move || run_test_client(&addr, &request_head, &request_body, wait_for_continue)
+    let worker = thread::spawn(move || {
+        run_test_client(&addr, &request_head, &request_body, wait_for_continue)
     });
     clear_error();
     Box::into_raw(Box::new(TestClient { worker })) as i64
@@ -1476,13 +1441,9 @@ mod tests {
         // SAFETY: the address argument is a `&str` literal; its pointer and byte length match.
         let handle = unsafe { raw_listen("127.0.0.1:0") };
         assert_ne!(handle, 0, "{:?}", error_snapshot());
-        // SAFETY: `handle` is the live handle just returned by `raw_listen` above.
-        let port = unsafe { server_mut(handle) }
-            .unwrap()
-            .listener
-            .local_addr()
-            .unwrap()
-            .port();
+        // SAFETY: `handle` is live and the returned string is a fresh owner.
+        let addr = unsafe { owned_string(hew_ecosystem_http_server_local_addr(handle)) };
+        let port = addr.parse::<std::net::SocketAddr>().unwrap().port();
         (handle, port)
     }
 
@@ -1561,6 +1522,28 @@ mod tests {
         // SAFETY: `server` is the live handle from `listener()`/`accept_bytes()` earlier in this test, freed at most once here.
         unsafe { hew_ecosystem_http_server_close(server) };
         assert_eq!(error_snapshot(), (0, 0, String::new()));
+    }
+
+    #[test]
+    fn local_address_remains_owned_by_the_listener() {
+        let (server, _) = listener();
+        // SAFETY: `server` remains live; each returned string is released once.
+        let addr = unsafe { owned_string(hew_ecosystem_http_server_local_addr(server)) };
+        assert!(TcpListener::bind(&addr).is_err());
+        assert!(TcpStream::connect(&addr).is_ok());
+        // SAFETY: `server` remains live and the returned string is released once.
+        let repeated = unsafe { owned_string(hew_ecosystem_http_server_local_addr(server)) };
+        assert_eq!(repeated, addr);
+        // SAFETY: this test owns `server` and closes it once.
+        unsafe { hew_ecosystem_http_server_close(server) };
+    }
+
+    #[test]
+    fn null_server_local_address_returns_listen_error() {
+        // SAFETY: zero is an explicitly permitted invalid handle.
+        let addr = unsafe { owned_string(hew_ecosystem_http_server_local_addr(0)) };
+        assert!(addr.is_empty());
+        assert_eq!(error_snapshot().1, ErrorKind::Listen as i32);
     }
 
     #[test]

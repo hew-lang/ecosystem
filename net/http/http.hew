@@ -160,6 +160,19 @@ impl RequestMethods for Request {
     }
 }
 
+fn bound_listener(handle: i64, addr: string) -> i64 fails HttpError {
+    if handle != 0 {
+        return handle;
+    }
+    let listener = unsafe {
+        hew_ecosystem_http_listen(addr)
+    };
+    if listener == 0 {
+        return error native_error();
+    }
+    listener
+}
+
 /// An actor that owns one HTTP listener.
 ///
 /// Every `accept_one()` call waits up to 250 milliseconds for one request. This
@@ -169,6 +182,22 @@ pub actor Server {
     let addr: string;
     var handle: i64 = 0;
     var request_handle: i64 = 0;
+
+    /// Bind the listener if needed and return its actual local address.
+    /// With `127.0.0.1:0`, the returned address contains the assigned port.
+    /// A successful call establishes readiness without accepting a request.
+    receive fn local_addr() -> string fails HttpError {
+        handle = bound_listener(handle, addr)?;
+        let value = unsafe {
+            hew_ecosystem_http_server_local_addr(handle)
+        };
+        if unsafe {
+            hew_ecosystem_http_last_status()
+        } != 0 {
+            return error native_error();
+        }
+        value
+    }
 
     /// Decode a percent-encoded UTF-8 string.
     receive fn url_decode(input: string) -> string fails HttpError {
@@ -209,14 +238,7 @@ pub actor Server {
         if request_handle != 0 {
             return error HttpError.Busy("respond to the current request before accepting another");
         }
-        if handle == 0 {
-            handle = unsafe {
-                hew_ecosystem_http_listen(addr)
-            };
-            if handle == 0 {
-                return error native_error();
-            }
-        }
+        handle = bound_listener(handle, addr)?;
         request_handle = unsafe {
             hew_ecosystem_http_server_accept(handle)
         };
@@ -394,6 +416,7 @@ pub actor Server {
 
 extern "C" {
     fn hew_ecosystem_http_listen(addr: string) -> i64;
+    fn hew_ecosystem_http_server_local_addr(server: i64) -> string;
     fn hew_ecosystem_http_server_accept(server: i64) -> i64;
     fn hew_ecosystem_http_server_close(server: i64);
     fn hew_ecosystem_http_request_method(request: i64) -> string;

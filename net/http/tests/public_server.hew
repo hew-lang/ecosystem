@@ -3,30 +3,21 @@
 import hew.net.http;
 
 extern "C" {
-    fn hew_ecosystem_http_test_fixture_new() -> i64;
-    fn hew_ecosystem_http_test_fixture_addr(fixture: i64) -> string;
-    fn hew_ecosystem_http_test_fixture_free(fixture: i64);
-    fn hew_ecosystem_http_test_client_start_case(fixture: i64, case_id: i32) -> i64;
+    fn hew_ecosystem_http_test_client_start_case(addr: string, case_id: i32) -> i64;
     fn hew_ecosystem_http_test_client_expect_case(client: i64, case_id: i32) -> i32;
 }
 
-fn test_fixture() -> i64 {
-    let fixture = unsafe {
-        hew_ecosystem_http_test_fixture_new()
-    };
-    assert(fixture != 0);
-    fixture
-}
-
-fn test_addr(fixture: i64) -> string {
-    unsafe {
-        hew_ecosystem_http_test_fixture_addr(fixture)
+fn test_addr(server: http.Server) -> string {
+    match server.local_addr() {
+        .Ok(addr) => addr,
+        .Err(.Failed(error)) => panic(http.error_message(error)),
+        .Err(_) => panic("server actor stopped before binding"),
     }
 }
 
-fn test_client(fixture: i64, case_id: i32) -> i64 {
+fn test_client(addr: string, case_id: i32) -> i64 {
     let client = unsafe {
-        hew_ecosystem_http_test_client_start_case(fixture, case_id)
+        hew_ecosystem_http_test_client_start_case(addr, case_id)
     };
     assert(client != 0);
     client
@@ -42,9 +33,8 @@ fn expect_client_response(client: i64, case_id: i32) {
 #[test]
 #[real_time]
 fn reports_no_pending_busy_and_closed_states() {
-    let fixture = test_fixture();
-    let addr = test_addr(fixture);
-    let server = spawn http.Server { addr: addr.clone() };
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = test_addr(server);
     match server.header("X-Test") {
         .Err(.Failed(.NoPending(_))) => {}
         .Err(_) => panic("server actor stopped during header"),
@@ -70,7 +60,7 @@ fn reports_no_pending_busy_and_closed_states() {
         .Err(_) => panic("server actor stopped during redirect"),
         _ => panic("expected NoPending from redirect"),
     }
-    let client = test_client(fixture, 0);
+    let client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(request) => assert(request.path() == "/test"),
         .Err(.Failed(_)) => panic("expected accepted request"),
@@ -93,18 +83,14 @@ fn reports_no_pending_busy_and_closed_states() {
         .Err(.Dead) => {}
         _ => panic("expected Dead after stop"),
     }
-    unsafe {
-        hew_ecosystem_http_test_fixture_free(fixture)
-    };
 }
 
 #[test]
 #[real_time]
 fn validation_errors_release_pending_connections() {
-    let fixture = test_fixture();
-    let addr = test_addr(fixture);
-    let server = spawn http.Server { addr: addr.clone() };
-    let invalid_status_client = test_client(fixture, 0);
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = test_addr(server);
+    let invalid_status_client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(_) => {}
         .Err(.Failed(_)) => panic("expected invalid-status request"),
@@ -116,7 +102,7 @@ fn validation_errors_release_pending_connections() {
         _ => panic("expected InvalidStatus from respond"),
     }
     expect_client_response(invalid_status_client, 0);
-    let invalid_type_client = test_client(fixture, 0);
+    let invalid_type_client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(_) => {}
         .Err(.Failed(.Busy(_))) => panic("invalid respond leaked its request"),
@@ -129,7 +115,7 @@ fn validation_errors_release_pending_connections() {
         _ => panic("expected InvalidHeaderValue from respond"),
     }
     expect_client_response(invalid_type_client, 0);
-    let invalid_text_client = test_client(fixture, 0);
+    let invalid_text_client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(_) => {}
         .Err(.Failed(.Busy(_))) => panic("invalid content type leaked its request"),
@@ -142,7 +128,7 @@ fn validation_errors_release_pending_connections() {
         _ => panic("expected InvalidStatus from respond_text"),
     }
     expect_client_response(invalid_text_client, 0);
-    let invalid_html_client = test_client(fixture, 0);
+    let invalid_html_client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(_) => {}
         .Err(.Failed(.Busy(_))) => panic("invalid text response leaked its request"),
@@ -155,7 +141,7 @@ fn validation_errors_release_pending_connections() {
         _ => panic("expected InvalidStatus from respond_html"),
     }
     expect_client_response(invalid_html_client, 0);
-    let invalid_redirect_client = test_client(fixture, 0);
+    let invalid_redirect_client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(_) => {}
         .Err(.Failed(.Busy(_))) => panic("invalid HTML response leaked its request"),
@@ -168,7 +154,7 @@ fn validation_errors_release_pending_connections() {
         _ => panic("expected InvalidHeaderValue from redirect"),
     }
     expect_client_response(invalid_redirect_client, 0);
-    let final_client = test_client(fixture, 0);
+    let final_client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(request) => assert(request.path() == "/test"),
         .Err(.Failed(.Busy(_))) => panic("invalid redirect leaked its request"),
@@ -188,25 +174,21 @@ fn validation_errors_release_pending_connections() {
     expect_client_response(final_client, 1);
     stop(server);
     stopped(server);
-    unsafe {
-        hew_ecosystem_http_test_fixture_free(fixture)
-    };
 }
 
 #[test]
 #[real_time]
 fn validates_targets_and_completes_expect_handshake() {
-    let fixture = test_fixture();
-    let addr = test_addr(fixture);
-    let server = spawn http.Server { addr: addr.clone() };
-    let invalid_target_client = test_client(fixture, 1);
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = test_addr(server);
+    let invalid_target_client = test_client(addr.clone(), 1);
     match server.accept_one() {
         .Err(.Failed(.Parse(_))) => {}
         .Err(_) => panic("server actor stopped during invalid target"),
         _ => panic("expected Parse for invalid request target"),
     }
     expect_client_response(invalid_target_client, 0);
-    let absolute_client = test_client(fixture, 2);
+    let absolute_client = test_client(addr.clone(), 2);
     match server.accept_one() {
         .Ok(request) => {
             assert(request.path() == "/absolute");
@@ -221,7 +203,7 @@ fn validates_targets_and_completes_expect_handshake() {
         .Err(_) => panic("server actor stopped during absolute-form response"),
     }
     expect_client_response(absolute_client, 1);
-    let continue_client = test_client(fixture, 3);
+    let continue_client = test_client(addr.clone(), 3);
     match server.accept_one() {
         .Ok(request) => assert(request.body() == "body"),
         .Err(.Failed(_)) => panic("expected request after 100 Continue"),
@@ -233,7 +215,7 @@ fn validates_targets_and_completes_expect_handshake() {
         .Err(_) => panic("server actor stopped during Expect response"),
     }
     expect_client_response(continue_client, 2);
-    let unsupported_expect_client = test_client(fixture, 4);
+    let unsupported_expect_client = test_client(addr.clone(), 4);
     match server.accept_one() {
         .Err(.Failed(.Parse(_))) => {}
         .Err(_) => panic("server actor stopped during unsupported Expect"),
@@ -242,18 +224,14 @@ fn validates_targets_and_completes_expect_handshake() {
     expect_client_response(unsupported_expect_client, 0);
     stop(server);
     stopped(server);
-    unsafe {
-        hew_ecosystem_http_test_fixture_free(fixture)
-    };
 }
 
 #[test]
 #[real_time]
 fn carries_nul_bytes_without_truncation() {
-    let fixture = test_fixture();
-    let addr = test_addr(fixture);
-    let server = spawn http.Server { addr: addr.clone() };
-    let body_nul_client = test_client(fixture, 5);
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = test_addr(server);
+    let body_nul_client = test_client(addr.clone(), 5);
     match server.accept_one() {
         .Ok(request) => assert(request.body().len() == 3),
         .Err(.Failed(_)) => panic("expected the request body carrying NUL to be accepted"),
@@ -265,14 +243,14 @@ fn carries_nul_bytes_without_truncation() {
         .Err(_) => panic("server actor stopped during NUL body response"),
     }
     expect_client_response(body_nul_client, 1);
-    let header_nul_client = test_client(fixture, 6);
+    let header_nul_client = test_client(addr.clone(), 6);
     match server.accept_one() {
         .Err(.Failed(.Parse(_))) => {}
         .Err(_) => panic("server actor stopped during NUL header accept"),
         _ => panic("expected Parse for request header containing NUL"),
     }
     expect_client_response(header_nul_client, 0);
-    let utf8_response_client = test_client(fixture, 0);
+    let utf8_response_client = test_client(addr.clone(), 0);
     match server.accept_one() {
         .Ok(_) => {}
         .Err(.Failed(_)) => panic("expected request for UTF-8 response"),
@@ -296,9 +274,6 @@ fn carries_nul_bytes_without_truncation() {
     }
     stop(server);
     stopped(server);
-    unsafe {
-        hew_ecosystem_http_test_fixture_free(fixture)
-    };
 }
 
 /// Round-trip long, non-ASCII text through the native boundary in both
@@ -306,10 +281,9 @@ fn carries_nul_bytes_without_truncation() {
 #[test]
 #[real_time]
 fn round_trips_long_percent_encoded_text() {
-    let fixture = test_fixture();
-    let addr = test_addr(fixture);
-    let server = spawn http.Server { addr: addr.clone() };
-    let path_client = test_client(fixture, 7);
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = test_addr(server);
+    let path_client = test_client(addr.clone(), 7);
     var target = "";
     match server.accept_one() {
         .Ok(request) => {
@@ -347,9 +321,6 @@ fn round_trips_long_percent_encoded_text() {
     }
     stop(server);
     stopped(server);
-    unsafe {
-        hew_ecosystem_http_test_fixture_free(fixture)
-    };
 }
 
 /// An unusable listen address must surface the native diagnostic, which
@@ -358,6 +329,11 @@ fn round_trips_long_percent_encoded_text() {
 #[real_time]
 fn reports_the_native_listen_failure() {
     let server = spawn http.Server { addr: "hew-http-not-an-address" };
+    match server.local_addr() {
+        .Err(.Failed(.Listen(message))) => assert(message.contains("hew-http-not-an-address")),
+        .Err(_) => panic("server actor stopped during local address lookup"),
+        _ => panic("expected Listen for an unusable local address"),
+    }
     match server.accept_one() {
         .Err(.Failed(.Listen(message))) => assert(message.contains("hew-http-not-an-address")),
         .Err(_) => panic("server actor stopped during listen failure"),
@@ -365,4 +341,38 @@ fn reports_the_native_listen_failure() {
     }
     stop(server);
     stopped(server);
+}
+
+#[test]
+#[real_time]
+fn local_address_establishes_owned_listener_readiness() {
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = test_addr(server);
+    assert(addr.starts_with("127.0.0.1:"));
+    assert(addr != "127.0.0.1:0");
+    assert(test_addr(server) == addr);
+    let duplicate = spawn http.Server { addr: addr.clone() };
+    match duplicate.local_addr() {
+        .Err(.Failed(.Listen(message))) => assert(message.contains(addr)),
+        .Err(_) => panic("duplicate actor stopped before binding"),
+        _ => panic("expected the owned listener to retain its address"),
+    }
+    stop(duplicate);
+    stopped(duplicate);
+    let client = test_client(addr, 0);
+    match server.accept_one() {
+        .Ok(request) => assert(request.path() == "/test"),
+        .Err(_) => panic("expected a request on the original bound listener"),
+    }
+    match server.respond_text(204, "") {
+        .Ok(_) => {}
+        .Err(_) => panic("expected the original listener to respond"),
+    }
+    expect_client_response(client, 1);
+    stop(server);
+    stopped(server);
+    match server.local_addr() {
+        .Err(.Dead) => {}
+        _ => panic("expected Dead after stop"),
+    }
 }

@@ -21,10 +21,9 @@ fn example_addr() -> string {
     os.env("HEW_HTTP_EXAMPLE_ADDR") ?? "127.0.0.1:8080"
 }
 
-// Answers the first request on `addr` and returns its method and path, or
+// Answers the first request on `server` and returns its method and path, or
 // what stopped the server before it could answer one.
-fn serve_one(addr: string) -> string {
-    let server = spawn http.Server { addr: addr };
+fn serve_one(server: http.Server) -> string {
     var outcome = "no request arrived within 30 seconds";
     var attempts_left = 120;
     var served = false;
@@ -66,23 +65,44 @@ fn main() {
     let addr = example_addr();
     println(f"listening for one request on http://{addr}");
     println(f"send it within 30 seconds, for example: curl http://{addr}/hello");
-    println(serve_one(addr));
+    let server = spawn http.Server { addr: addr };
+    println(serve_one(server));
 }
 
 #[test]
 #[real_time]
 fn answers_one_request_over_http() {
-    let addr = example_addr();
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = match server.local_addr() {
+        .Ok(addr) => addr,
+        .Err(.Failed(error)) => panic(http.error_message(error)),
+        .Err(_) => panic("server actor stopped before binding"),
+    };
     scope {
-        let served = fork serve_one(addr.clone());
+        let served = fork {
+            let outcome = serve_one(server);
+            println(f"server outcome: {outcome}");
+            outcome
+        };
         var body: Option<string> = .None;
+        var last_error = "no request attempted";
         var attempts_left = 40;
         while body.is_none() && attempts_left > 0 {
             attempts_left = attempts_left - 1;
-            body = http_client.get_string(f"http://{addr}/hello");
+            let response = http_client.get(f"http://{addr}/hello");
+            if response.status() < 0 {
+                last_error = response.body();
+            } else {
+                assert(response.status() == 200);
+                body = .Some(response.body());
+            }
+            response.close();
             if body.is_none() {
                 sleep(250ms);
             }
+        }
+        if body.is_none() {
+            println(f"HTTP request to {addr} failed: {last_error}");
         }
         assert(body == .Some("Hello from Hew!\n"));
         assert((await served) == "GET /hello");

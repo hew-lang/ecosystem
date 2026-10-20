@@ -68,6 +68,15 @@ The server prints `GET /hello` and exits; `curl` prints `Hello from Hew!`. With
 no request at all it prints `no request arrived within 30 seconds` and still
 exits successfully.
 
+`server.local_addr()` binds the actor's listener if needed and returns its
+actual local address. A successful call establishes readiness without
+accepting a request. For an OS-assigned port, spawn with `addr: "127.0.0.1:0"`
+and use the address it returns. Later calls and `accept_one()` use that same
+owned listener; a bind failure returns `HttpError.Listen`. The example's test
+uses this readiness call and an assigned port, so it does not depend on port
+8080 being free. Its checked client retains HTTP status and transport-error
+details when a request fails.
+
 Every `Server` method that can fail is declared `-> T fails HttpError`, so a
 call replies `Result<T, ActorError<HttpError>>`: the handler's error arrives as
 `.Err(.Failed(error))`, and any other `.Err` means the actor did not reply (for
