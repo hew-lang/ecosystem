@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      native_sqlite:
+        description: Build and publish the pinned Linux x86_64 SQLite native archive (requires a Hew 0.6.3 publisher)
+        type: boolean
+        default: false
       publisher_revision:
         description: Full 40-character Hew commit for the publisher CLI
         type: string
@@ -84,6 +88,15 @@ jobs:
           export GIT_CONFIG_COUNT="$((git_config_count + 1))"
           HEW_SOURCE=.tooling/hew make toolchain \
             HEW_REVISION="$PUBLISHER_REVISION" HEW_VERSION="$PUBLISHER_VERSION"
+
+      - name: Build SQLite native archive
+        if: inputs.native_sqlite
+        shell: bash
+        run: |
+          set -euo pipefail
+          native_archive="$RUNNER_TEMP/hew.db.sqlite.tar.zst"
+          make native-sqlite NATIVE_SQLITE_ARCHIVE="$native_archive"
+          printf 'NATIVE_ARCHIVES=%s\n' "$native_archive" >> "$GITHUB_ENV"
 
       # hew orders the members, skips versions the registry already holds
       # unchanged, fails on a changed tree under an existing version, and
