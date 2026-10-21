@@ -132,3 +132,6 @@ rules the packages here assume you know.
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your
 option. See [CONTRIBUTING.md](CONTRIBUTING.md) to add a package and
 [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+Native attachment cohorts for official SDK releases are described in
+[Native releases](docs/native-releases.md).

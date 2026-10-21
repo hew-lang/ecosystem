@@ -5,10 +5,19 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      native_sqlite:
-        description: Build and publish the pinned Linux x86_64 SQLite native archive (requires a Hew 0.6.3 publisher)
-        type: boolean
-        default: false
+      native_packages:
+        description: Native package paths (space-separated), or all; empty publishes source only
+        type: string
+        required: false
+      native_hosts:
+        description: Linux native host cohort
+        type: choice
+        options: [both, x86_64, aarch64]
+        default: both
+      native_sdk_version:
+        description: Exact official Hew SDK release for native attachments
+        type: string
+        required: false
       publisher_revision:
         description: Full 40-character Hew commit for the publisher CLI
         type: string
@@ -29,7 +38,7 @@ concurrency:
 jobs:
   publish:
     name: Publish unpublished manifest versions
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.native_packages
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -89,18 +98,74 @@ jobs:
           HEW_SOURCE=.tooling/hew make toolchain \
             HEW_REVISION="$PUBLISHER_REVISION" HEW_VERSION="$PUBLISHER_VERSION"
 
-      - name: Build SQLite native archive
-        if: inputs.native_sqlite
-        shell: bash
-        run: |
-          set -euo pipefail
-          native_archive="$RUNNER_TEMP/hew.db.sqlite.tar.zst"
-          make native-sqlite NATIVE_SQLITE_ARCHIVE="$native_archive"
-          printf 'NATIVE_ARCHIVES=%s\n' "$native_archive" >> "$GITHUB_ENV"
-
       # hew orders the members, skips versions the registry already holds
       # unchanged, fails on a changed tree under an existing version, and
       # reads every upload back. A local `make publish` takes the same path
       # with stored credentials.
       - name: Publish new package versions
         run: make publish PUBLISH_AUTH=github-actions
+
+  native-plan:
+    if: github.ref == 'refs/heads/main' && inputs.native_packages
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      - id: plan
+        env:
+          NATIVE_PACKAGES: ${{ inputs.native_packages }}
+          SDK_VERSION: ${{ inputs.native_sdk_version }}
+          NATIVE_HOSTS: ${{ inputs.native_hosts }}
+          PUBLISHER_REVISION: ${{ inputs.publisher_revision }}
+          PUBLISHER_VERSION: ${{ inputs.publisher_version }}
+        run: |
+          set -euo pipefail
+          [[ "$SDK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "An exact official SDK version is required" >&2; exit 1; }
+          [[ -z "$PUBLISHER_REVISION$PUBLISHER_VERSION" ]] || { echo "Native cohorts use the official SDK, not publisher overrides" >&2; exit 1; }
+          python3 scripts/native-release.py plan --packages "$NATIVE_PACKAGES" --hosts "$NATIVE_HOSTS" --github-output "$GITHUB_OUTPUT"
+
+  native-publish:
+    needs: native-plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.native-plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.tooling/native-target
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      - name: Download the official SDK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_VERSION: ${{ inputs.native_sdk_version }}
+          SDK_ARCH: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+          sdk_dir="$RUNNER_TEMP/official-sdk"
+          mkdir -p "$sdk_dir"
+          archive="hew-v$SDK_VERSION-$SDK_ARCH.tar.gz"
+          gh release download "v$SDK_VERSION" -R hew-lang/hew --pattern "$archive" --pattern "hew-v$SDK_VERSION-checksums.txt" --dir "$sdk_dir"
+          cd "$sdk_dir"
+          grep -F "  $archive" "hew-v$SDK_VERSION-checksums.txt" | sha256sum --check --strict -
+          printf 'NATIVE_SDK_CHECKSUM=%s\n' "$(sha256sum "$archive" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          tar -xzf "$archive"
+          printf 'NATIVE_SDK_ROOT=%s/hew-v%s-%s\n' "$sdk_dir" "$SDK_VERSION" "$SDK_ARCH" >> "$GITHUB_ENV"
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Verify existing attachments and publish missing native packages
+        env:
+          NATIVE_COHORT: ${{ inputs.native_packages }}
+          NATIVE_SDK_VERSION: ${{ inputs.native_sdk_version }}
+          NATIVE_HOST: ${{ matrix.host }}
+          NATIVE_OUTPUT: ${{ runner.temp }}/native-archives
+          TMPDIR: ${{ runner.temp }}
+        run: make native-publish NATIVE_RELEASE_ARGS=--install-system-deps
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: native-release-${{ matrix.host }}
+          path: ${{ runner.temp }}/native-archives/
+          if-no-files-found: ignore
