@@ -3,6 +3,16 @@ name: Publish packages
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publisher_revision:
+        description: Full 40-character Hew commit for the publisher CLI
+        type: string
+        required: false
+      publisher_version:
+        description: Exact version the selected publisher CLI must report
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -15,6 +25,7 @@ concurrency:
 jobs:
   publish:
     name: Publish unpublished manifest versions
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -23,11 +34,36 @@ jobs:
       - name: Load toolchain pins
         run: grep '^[A-Z_]*=' toolchain.env >> "$GITHUB_ENV"
 
-      - name: Check out pinned Hew source
+      - name: Select publisher CLI
+        env:
+          PUBLISHER_REVISION_INPUT: ${{ inputs.publisher_revision }}
+          PUBLISHER_VERSION_INPUT: ${{ inputs.publisher_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$PUBLISHER_REVISION_INPUT" || -n "$PUBLISHER_VERSION_INPUT" ]]; then
+            if [[ -z "$PUBLISHER_REVISION_INPUT" || -z "$PUBLISHER_VERSION_INPUT" ]]; then
+              echo "::error::publisher_revision and publisher_version must be supplied together"
+              exit 1
+            fi
+          fi
+          revision="${PUBLISHER_REVISION_INPUT:-$HEW_REVISION}"
+          version="${PUBLISHER_VERSION_INPUT:-$HEW_VERSION}"
+          if [[ ! "$revision" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::publisher_revision must be a full 40-character commit SHA"
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::publisher_version must be an exact Hew version"
+            exit 1
+          fi
+          printf 'PUBLISHER_REVISION=%s\nPUBLISHER_VERSION=%s\n' "${revision,,}" "$version" >> "$GITHUB_ENV"
+
+      - name: Check out selected Hew source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           repository: hew-lang/hew
-          ref: ${{ env.HEW_REVISION }}
+          ref: ${{ env.PUBLISHER_REVISION }}
           path: .tooling/hew
           fetch-depth: 0
 
@@ -38,8 +74,10 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
 
-      - name: Build pinned Hew toolchain
-        run: HEW_SOURCE=.tooling/hew make toolchain
+      - name: Build selected publisher CLI
+        run: >-
+          HEW_SOURCE=.tooling/hew make toolchain
+          HEW_REVISION="$PUBLISHER_REVISION" HEW_VERSION="$PUBLISHER_VERSION"
 
       # hew orders the members, skips versions the registry already holds
       # unchanged, fails on a changed tree under an existing version, and
