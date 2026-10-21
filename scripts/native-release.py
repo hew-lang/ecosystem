@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build only missing signed native attachments with an official Hew SDK."""
+"""Publish or qualify signed native attachments with an official Hew SDK."""
 
 import argparse
 import hashlib
@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -56,7 +57,7 @@ def run(args, **kwargs):
     subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
-def batch(args):
+def cohort_context(args):
     sdk = args.sdk.resolve()
     hew = sdk / "bin/hew"
     version = subprocess.check_output([str(hew), "--version"], text=True).strip()
@@ -71,6 +72,11 @@ def batch(args):
         raise ValueError("Native releases must build on their selected Linux host")
     available = packages()
     cohort = selected(args.packages, available)
+    return hew, available, cohort
+
+
+def batch(args):
+    hew, available, cohort = cohort_context(args)
     args.output.mkdir(parents=True, exist_ok=True)
     # The publisher owns source identity; install owns signature, descriptor and
     # native-cache verification. The adapter consumes their checked lock facts.
@@ -181,6 +187,156 @@ def batch(args):
             )
 
 
+def qualify(args):
+    hew, available, cohort = cohort_context(args)
+    args.output.mkdir(parents=True, exist_ok=True)
+    results = []
+    for path in cohort:
+        package = available[path]
+        output = args.output.resolve() / path
+        output.mkdir(parents=True, exist_ok=True)
+        result = {"package": path, "version": package["version"], "state": "failed"}
+        # Each package gets a fresh signed registry install. Remove its native
+        # archives after execution so a cohort does not retain duplicate caches.
+        with tempfile.TemporaryDirectory(prefix="native-consumer-") as temporary:
+            project = Path(temporary)
+            (project / "tmp").mkdir()
+            environment = os.environ | {
+                "PATH": "/usr/bin:/bin",
+                "HEW_HOME": str(project / "profile"),
+                "TMPDIR": str(project / "tmp"),
+            }
+            for variable in ("CARGO", "RUSTC", "RUSTUP_TOOLCHAIN"):
+                environment.pop(variable, None)
+            tools = {
+                tool: shutil.which(tool, path=environment["PATH"])
+                for tool in ("cargo", "rustc")
+            }
+            if any(tools.values()):
+                raise ValueError("Consumer PATH must not provide Cargo or rustc")
+            result["consumer_tools"] = tools
+            (project / "hew.toml").write_text(
+                '[package]\nname="native_consumer_probe"\nversion="0.1.0"\n'
+                'edition="2026"\n\n[dependencies]\n'
+                + json.dumps(package["name"])
+                + " = "
+                + json.dumps("=" + package["version"])
+                + "\n"
+            )
+            try:
+                result["phase"] = "install"
+                with (output / "install.log").open("w") as log:
+                    run(
+                        [hew, "install"],
+                        cwd=project,
+                        env=environment,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                    )
+                shutil.copyfile(project / "hew.lock", output / "hew.lock")
+                locked = next(
+                    item
+                    for item in tomllib.loads((project / "hew.lock").read_text())[
+                        "package"
+                    ]
+                    if item["name"] == package["name"]
+                )
+                native = locked.get("native", [])
+                result["native"] = native
+                result["phase"] = "identity"
+                if (
+                    len(native) != 1
+                    or native[0]["identity"]["hew"] != args.version
+                    or native[0]["identity"]["target"] != HOSTS[args.host]["target"]
+                ):
+                    raise ValueError(
+                        "Install did not verify the selected native attachment"
+                    )
+                paths = []
+                sources = {}
+                for directory in ("tests", "examples"):
+                    source = ROOT / path / directory
+                    if source.is_dir():
+                        shutil.copytree(source, project / directory)
+                        paths.append(directory)
+                        for file in sorted(source.rglob("*.hew")):
+                            sources[str(file.relative_to(ROOT / path))] = (
+                                hashlib.sha256(file.read_bytes()).hexdigest()
+                            )
+                if not paths:
+                    raise ValueError("Package has no maintained tests or examples")
+                result["sources"] = sources
+                result["phase"] = "execution"
+                with (
+                    (output / "tests.jsonl").open("w") as stdout,
+                    (output / "tests.stderr").open("w") as stderr,
+                ):
+                    completed = subprocess.run(
+                        [
+                            str(hew),
+                            "test",
+                            "--format",
+                            "json",
+                            "--jobs",
+                            "1",
+                            "--timeout",
+                            "30s",
+                            *paths,
+                        ],
+                        cwd=project,
+                        env=environment,
+                        stdout=stdout,
+                        stderr=stderr,
+                        check=False,
+                    )
+                result["exit_code"] = completed.returncode
+                events = [
+                    json.loads(line)
+                    for line in (output / "tests.jsonl").read_text().splitlines()
+                ]
+                summary = next(
+                    (
+                        event
+                        for event in reversed(events)
+                        if event.get("event") == "run_finished"
+                    ),
+                    None,
+                )
+                result["summary"] = summary
+                if (
+                    completed.returncode == 0
+                    and summary
+                    and summary["passed"] > 0
+                    and summary["failed"] == 0
+                    and summary["ignored"] == 0
+                ):
+                    result["state"] = "passed"
+            except (
+                OSError,
+                subprocess.CalledProcessError,
+                ValueError,
+                KeyError,
+                StopIteration,
+            ) as error:
+                result["error"] = str(error)
+        results.append(result)
+        (args.output / "receipt.json").write_text(
+            json.dumps(
+                {
+                    "sdk_version": args.version,
+                    "sdk_archive_sha256": os.environ.get("NATIVE_SDK_CHECKSUM"),
+                    "source_revision": os.environ.get("GITHUB_SHA"),
+                    "host": args.host,
+                    "packages": results,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        print(f"{path}: {result['state']} ({result['phase']})", flush=True)
+    return all(result["state"] == "passed" for result in results)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -188,15 +344,19 @@ def main():
     plan.add_argument("--packages", default="all")
     plan.add_argument("--hosts", choices=[*HOSTS, "both"], default="both")
     plan.add_argument("--github-output", type=Path)
-    build = sub.add_parser("batch")
-    build.add_argument("--packages", required=True)
-    build.add_argument("--host", choices=HOSTS, required=True)
-    build.add_argument("--sdk", type=Path, required=True)
-    build.add_argument("--version", required=True)
-    build.add_argument("--output", type=Path, required=True)
-    build.add_argument("--publish", action="store_true")
-    build.add_argument("--install-system-deps", action="store_true")
+    for command in ("batch", "qualify"):
+        command_parser = sub.add_parser(command)
+        command_parser.add_argument("--packages", required=True)
+        command_parser.add_argument("--host", choices=HOSTS, required=True)
+        command_parser.add_argument("--sdk", type=Path, required=True)
+        command_parser.add_argument("--version", required=True)
+        command_parser.add_argument("--output", type=Path, required=True)
+        if command == "batch":
+            command_parser.add_argument("--publish", action="store_true")
+            command_parser.add_argument("--install-system-deps", action="store_true")
     args = parser.parse_args()
+    if args.command == "qualify":
+        raise SystemExit(0 if qualify(args) else 1)
     if args.command == "batch":
         batch(args)
         return
