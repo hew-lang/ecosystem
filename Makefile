@@ -94,7 +94,12 @@ toolchain:
 	test -x "$(HEW_BIN)"
 	rm -rf "$(TOOLCHAIN_TARGET)/std"
 	cp -a "$(HEW_SOURCE)/std" "$(TOOLCHAIN_TARGET)/std"
-	test "$$("$(HEW_BIN)" --version)" = "hew $(HEW_VERSION)"
+	@actual_version="$$("$(HEW_BIN)" --version)"; \
+	if [ "$$actual_version" != "hew $(HEW_VERSION)" ]; then \
+		printf 'toolchain version mismatch\nexpected: %s\nactual: %s\n' \
+			"hew $(HEW_VERSION)" "$$actual_version" >&2; \
+		exit 1; \
+	fi
 	@echo "pinned toolchain: $(HEW_BIN)"
 
 # Validation, checking, packing and the registry query happen offline or
