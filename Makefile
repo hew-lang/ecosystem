@@ -129,15 +129,26 @@ NATIVE_SDK_VERSION ?=
 NATIVE_OUTPUT ?= $(CURDIR)/.tooling/native-packages
 NATIVE_RELEASE_ARGS ?=
 
-.PHONY: native-plan native-build native-publish test-native-release
+.PHONY: native-plan native-build native-publish native-qualify test-native-release lint-native-release
 native-plan:
 	python3 scripts/native-release.py plan --packages "$(NATIVE_COHORT)" --hosts "$(NATIVE_HOST)"
 
 native-build:
 	python3 scripts/native-release.py batch --packages "$(NATIVE_COHORT)" --host "$(NATIVE_HOST)" --sdk "$(NATIVE_SDK_ROOT)" --version "$(NATIVE_SDK_VERSION)" --output "$(NATIVE_OUTPUT)" $(NATIVE_RELEASE_ARGS)
 
+native-qualify:
+	python3 scripts/native-release.py qualify --packages "$(NATIVE_COHORT)" --host "$(NATIVE_HOST)" --sdk "$(NATIVE_SDK_ROOT)" --version "$(NATIVE_SDK_VERSION)" --output "$(NATIVE_OUTPUT)"
+
 native-publish:
 	$(MAKE) native-build NATIVE_RELEASE_ARGS="--publish $(NATIVE_RELEASE_ARGS)"
 
 test-native-release:
 	python3 -m unittest discover -s scripts/tests -p 'test_native_release.py'
+
+# Focused checks for the native release adapter and its opt-in workflow.
+lint-native-release:
+	ruff check scripts/native-release.py scripts/tests/test_native_release.py
+	ruff format --check scripts/native-release.py scripts/tests/test_native_release.py
+	actionlint .github/workflows/publish.yml .github/workflows/ci.yml
+	shellcheck scripts/setup-native-system-deps.sh
+	git diff --check

@@ -9,6 +9,10 @@ on:
         description: Native package paths (space-separated), or all; empty publishes source only
         type: string
         required: false
+      native_qualify:
+        description: Install signed native packages and execute maintained consumers without Rust
+        type: boolean
+        default: false
       native_hosts:
         description: Linux native host cohort
         type: choice
@@ -38,7 +42,7 @@ concurrency:
 jobs:
   publish:
     name: Publish unpublished manifest versions
-    if: github.ref == 'refs/heads/main' && !inputs.native_packages
+    if: github.ref == 'refs/heads/main' && !inputs.native_packages && !inputs.native_qualify
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -106,7 +110,7 @@ jobs:
         run: make publish PUBLISH_AUTH=github-actions
 
   native-plan:
-    if: github.ref == 'refs/heads/main' && inputs.native_packages
+    if: inputs.native_packages && (github.ref == 'refs/heads/main' || inputs.native_qualify)
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -126,6 +130,7 @@ jobs:
           python3 scripts/native-release.py plan --packages "$NATIVE_PACKAGES" --hosts "$NATIVE_HOSTS" --github-output "$GITHUB_OUTPUT"
 
   native-publish:
+    name: Native ${{ inputs.native_qualify && 'consumers' || 'attachments' }} (${{ matrix.host }})
     needs: native-plan
     strategy:
       fail-fast: false
@@ -154,8 +159,16 @@ jobs:
           tar -xzf "$archive"
           printf 'NATIVE_SDK_ROOT=%s/hew-v%s-%s\n' "$sdk_dir" "$SDK_VERSION" "$SDK_ARCH" >> "$GITHUB_ENV"
       - name: Install the pinned Rust toolchain
+        if: ${{ !inputs.native_qualify }}
         run: rustup toolchain install
+      - name: Install native consumer system libraries
+        if: inputs.native_qualify
+        run: bash scripts/setup-native-system-deps.sh magick
+      - name: Start integration services
+        if: inputs.native_qualify
+        run: docker compose up --detach --wait
       - name: Verify existing attachments and publish missing native packages
+        if: ${{ !inputs.native_qualify }}
         env:
           NATIVE_COHORT: ${{ inputs.native_packages }}
           NATIVE_SDK_VERSION: ${{ inputs.native_sdk_version }}
@@ -163,6 +176,18 @@ jobs:
           NATIVE_OUTPUT: ${{ runner.temp }}/native-archives
           TMPDIR: ${{ runner.temp }}
         run: make native-publish NATIVE_RELEASE_ARGS=--install-system-deps
+      - name: Execute signed native package consumers without Rust
+        if: inputs.native_qualify
+        env:
+          NATIVE_COHORT: ${{ inputs.native_packages }}
+          NATIVE_SDK_VERSION: ${{ inputs.native_sdk_version }}
+          NATIVE_HOST: ${{ matrix.host }}
+          NATIVE_OUTPUT: ${{ runner.temp }}/native-archives
+          TMPDIR: ${{ runner.temp }}
+        run: make native-qualify
+      - name: Stop integration services
+        if: ${{ always() && inputs.native_qualify }}
+        run: docker compose down
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

@@ -34,6 +34,10 @@ if args==['install']:
   if os.environ.get('FAKE_EXISTING'):
    text+='[[package.native]]\\nsource_checksum="sha256:source"\\nchecksum="sha256:archive"\\n[package.native.identity]\\nhew="0.6.4"\\ntarget='+json.dumps(os.environ.get('FAKE_TARGET','x86_64-unknown-linux-gnu'))+'\\nrustc_release="1.96.0"\\nrustc_host="x86_64-unknown-linux-gnu"\\n'
  pathlib.Path('hew.lock').write_text(text)
+if args and args[0]=='test':
+ print(json.dumps({'event':'run_finished',**json.loads(os.environ.get('FAKE_SUMMARY','{"passed":1,"failed":0,"ignored":0}'))}))
+ if os.environ.get('FAKE_TEST_FAILED_PACKAGE') in tomllib.loads(pathlib.Path('hew.toml').read_text())['dependencies']:
+  sys.exit(1)
 if args[:2]==['native','build']:
  pathlib.Path(args[args.index('--output')+1]).write_bytes(b'native archive')
 """
@@ -68,7 +72,7 @@ class NativeRelease(unittest.TestCase):
         )
         self.environment = {"FAKE_LOG": str(self.log)}
 
-    def execute(self):
+    def execute(self, command="batch"):
         with (
             patch.object(release, "ROOT", self.root),
             patch.dict(os.environ, self.environment),
@@ -79,10 +83,54 @@ class NativeRelease(unittest.TestCase):
             ),
             patch.object(release.platform, "system", return_value="Linux"),
         ):
-            release.batch(self.args)
+            return getattr(release, command)(self.args)
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def prepare_consumers(self):
+        for path in ["net/http", "image/magick"]:
+            source = self.root / path / "examples"
+            source.mkdir()
+            (source / "basic.hew").write_text("#[test] fn executes() {}\n")
+        self.environment["FAKE_EXISTING"] = "1"
+
+    def test_qualifier_installs_and_executes_without_build_tools(self):
+        self.prepare_consumers()
+        self.assertTrue(self.execute("qualify"))
+        receipt = json.loads((self.args.output / "receipt.json").read_text())
+        package = receipt["packages"][0]
+        self.assertEqual(package["state"], "passed")
+        self.assertEqual(package["consumer_tools"], {"cargo": None, "rustc": None})
+        self.assertEqual(package["summary"]["passed"], 1)
+        self.assertIn("examples/basic.hew", package["sources"])
+        self.assertFalse(
+            any(
+                args[:2] == ["native", "build"] or "--auth" in args
+                for args in self.calls()
+            )
+        )
+
+    def test_qualifier_collects_failure_and_continues_cohort(self):
+        self.prepare_consumers()
+        self.args.packages = "net/http image/magick"
+        self.environment["FAKE_TEST_FAILED_PACKAGE"] = "hew.net.http"
+        self.assertFalse(self.execute("qualify"))
+        receipt = json.loads((self.args.output / "receipt.json").read_text())
+        self.assertEqual(
+            [package["state"] for package in receipt["packages"]], ["failed", "passed"]
+        )
+
+    def test_qualifier_rejects_empty_skipped_and_failed_test_summaries(self):
+        self.prepare_consumers()
+        for summary in [
+            dict(passed=0, failed=0, ignored=0),
+            dict(passed=1, failed=0, ignored=1),
+            dict(passed=1, failed=1, ignored=0),
+        ]:
+            with self.subTest(summary=summary):
+                self.environment["FAKE_SUMMARY"] = json.dumps(summary)
+                self.assertFalse(self.execute("qualify"))
 
     def test_manifest_inventory_and_selection_cover_all_native_packages(self):
         available = release.packages(self.root)
