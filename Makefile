@@ -31,6 +31,8 @@ export HEW_MQTT_PORT
 # Where publish credentials come from: `credentials` (hew login and hew key
 # generate) or `github-actions` (trusted publishing from publish.yml).
 PUBLISH_AUTH ?= credentials
+# Optional archives matched to their source packages by the publisher.
+NATIVE_ARCHIVES ?=
 # Archive construction is independent of registry authentication/publication.
 NATIVE_SQLITE_ARCHIVE ?= $(CURDIR)/.tooling/native-packages/hew.db.sqlite.tar.zst
 
@@ -105,10 +107,10 @@ toolchain:
 # Validation, checking, packing and the registry query happen offline or
 # read-only; nothing uploads.
 publish-check:
-	"$(HEW)" publish --workspace --dry-run
+	"$(HEW)" publish --workspace --dry-run $(foreach archive,$(NATIVE_ARCHIVES),--native-archive "$(archive)")
 
 publish:
-	"$(HEW)" publish --workspace --auth $(PUBLISH_AUTH)
+	"$(HEW)" publish --workspace --auth $(PUBLISH_AUTH) $(foreach archive,$(NATIVE_ARCHIVES),--native-archive "$(archive)")
 
 # hew builds from the packed source and records that source checksum, the
 # compiler/runtime identity and the target inside the archive.

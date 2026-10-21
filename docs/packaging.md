@@ -121,20 +121,31 @@ metadata by hand or weaken the registry integrity check.
 
 ## SQLite native archive
 
-After updating both compiler and `hew-cabi` pins to the same released Hew
-0.6.2 revision, `make native-sqlite` builds the Linux x86_64 SQLite archive at
+`make native-sqlite` builds the Linux x86_64 SQLite archive at
 `.tooling/native-packages/hew.db.sqlite.tar.zst`. Set `NATIVE_SQLITE_ARCHIVE`
 to choose another output path. The existing `hew native build` command packs
 the source, builds its Rust static library and records the source checksum,
 target and compiler/runtime identity in the archive. Cargo and rustc are
 required on the build machine.
 
-This target only constructs an archive. The workspace publisher currently
-publishes source packages; it cannot include native archives in its publish
-plan or share its trusted-publishing grant with `hew native publish`. Native
-publication remains pending that CLI support and registry native routes.
+Use the same released Hew 0.6.3 executable to build and publish the archive:
+
+```sh
+make native-sqlite HEW="$HEW"
+make publish-check HEW="$HEW" NATIVE_ARCHIVES=.tooling/native-packages/hew.db.sqlite.tar.zst
+make publish HEW="$HEW" NATIVE_ARCHIVES=.tooling/native-packages/hew.db.sqlite.tar.zst
+```
+
+Set `HEW` to that executable's path before running these commands.
+`NATIVE_ARCHIVES` accepts a space-separated list of archive paths. The publisher
+matches each archive to its source package and validates its recorded source,
+target and compiler identity. Source and native archives use one publication
+plan and authentication grant; existing identical publications are retained.
+The existing publication workflow accepts `native_sqlite: true` to build and
+attach this archive using the selected publisher.
+Select a Hew 0.6.3 publisher revision and version together when dispatching it.
 The initial consumer qualification scope is Linux x86_64 SQLite: O0/O2 queries
 without Cargo or rustc, locked/offline installation, source fallback, integrity
 and identity refusal, and repeated publication with matching source checksums.
-An archive built with a development SDK or an older `hew-cabi` pin does not
-qualify the released 0.6.2 packages.
+Native archives are selected for their recorded compiler and Rust toolchain
+identity. Rebuild them for each supported release identity.
