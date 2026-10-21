@@ -19,11 +19,6 @@ enum ErrorKind {
     Connection = 1,
     InvalidInput = 2,
     Operation = 3,
-    #[expect(
-        dead_code,
-        reason = "reserved ABI error category for bounded broker operations"
-    )]
-    Timeout = 4,
     Closed = 5,
 }
 
@@ -504,6 +499,16 @@ pub extern "C" fn hew_nats_message_count() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tests that compare a registry count before and after run one at a time,
+    /// so another test's live entry never shifts the count between samples.
+    static REGISTRY_COUNTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn registry_counts() -> std::sync::MutexGuard<'static, ()> {
+        REGISTRY_COUNTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
     use hew_cabi::string::string_release;
 
     /// Allocate one managed string argument for a boundary call.
@@ -523,6 +528,7 @@ mod tests {
 
     #[test]
     fn message_strings_round_trip_and_lifecycle_is_guarded() {
+        let _counts = registry_counts();
         let before = hew_nats_message_count();
         let handle = register_message(NatsMessage {
             subject: "events.created".to_owned(),
@@ -561,6 +567,7 @@ mod tests {
     #[test]
     #[cfg(feature = "integration")]
     fn publish_subscribe_roundtrip_and_cleanup() {
+        let _counts = registry_counts();
         let before_connections = hew_nats_connection_count();
         let before_subscriptions = hew_nats_subscription_count();
         let connection = connect();

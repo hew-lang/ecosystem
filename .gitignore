@@ -1,6 +1,5 @@
 # Rust
-# Cargo.lock is tracked: the Rust dependency closure is pinned like the
-# compiler, and every cargo invocation in the gate passes --locked.
+# Cargo.lock is tracked; see docs/toolchain.md.
 target/
 
 # Editor directories
@@ -11,10 +10,8 @@ target/
 .DS_Store
 Thumbs.db
 
-# build/work scratch
-# image/magick's example and test suite write their output beside you
+# image/magick/examples/basic.hew writes its output to the working directory
 magick-*.png
-.work/
 
 # local toolchain build
 .tooling/
@@ -22,3 +19,4 @@ magick-*.png
 
 # lefthook per-developer overrides
 lefthook-local.yml
+.tmp/

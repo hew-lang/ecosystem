@@ -13,47 +13,98 @@
 
 import hew.net.http;
 
+import std.net.http.http_client;
+
 import std.os;
 
-fn main() {
-    let addr = os.env("HEW_HTTP_EXAMPLE_ADDR") ?? "127.0.0.1:8080";
-    let server = spawn http.Server { addr: addr };
-    println(f"listening for one request on http://{addr}");
-    println(f"send it within 30 seconds, for example: curl http://{addr}/hello");
+fn example_addr() -> string {
+    os.env("HEW_HTTP_EXAMPLE_ADDR") ?? "127.0.0.1:8080"
+}
+
+// Answers the first request on `server` and returns its method and path, or
+// what stopped the server before it could answer one.
+fn serve_one(server: http.Server) -> string {
+    var outcome = "no request arrived within 30 seconds";
     var attempts_left = 120;
     var served = false;
     while attempts_left > 0 && !served {
         attempts_left = attempts_left - 1;
         match server.accept_one() {
-            .Ok(result) => match result {
-                .Ok(request) => {
-                    println(f"{request.method()} {request.path()}");
-                    match server.respond_text(200, "Hello from Hew!\n") {
-                        .Ok(response_result) => match response_result {
-                            .Ok(_) => {}
-                            .Err(error) => println(http.error_message(error)),
-                        }
-                        .Err(_) => println("HTTP server actor stopped before replying"),
+            .Ok(request) => {
+                outcome = f"{request.method()} {request.path()}";
+                match server.respond_text(200, "Hello from Hew!\n") {
+                    .Ok(_) => {}
+                    .Err(.Failed(error)) => {
+                        outcome = http.error_message(error);
                     }
-                    served = true;
+                    .Err(_) => {
+                        outcome = "HTTP server actor stopped before replying";
+                    }
                 }
-                // An idle quarter second is the documented outcome of
-                // accept_one(), so it is a retry rather than a failure.
-                .Err(.Accept(_)) => {}
-                .Err(error) => {
-                    println(http.error_message(error));
-                    served = true;
-                }
+                served = true;
+            }
+            // An idle quarter second is the documented outcome of
+            // accept_one(), so it is a retry rather than a failure.
+            .Err(.Failed(.Accept(_))) => {}
+            .Err(.Failed(error)) => {
+                outcome = http.error_message(error);
+                served = true;
             }
             .Err(_) => {
-                println("HTTP server actor stopped before replying");
+                outcome = "HTTP server actor stopped before replying";
                 served = true;
             }
         }
     }
-    if !served {
-        println("no request arrived within 30 seconds");
-    }
     stop(server);
     stopped(server);
+    outcome
+}
+
+fn main() {
+    let addr = example_addr();
+    println(f"listening for one request on http://{addr}");
+    println(f"send it within 30 seconds, for example: curl http://{addr}/hello");
+    let server = spawn http.Server { addr: addr };
+    println(serve_one(server));
+}
+
+#[test]
+#[real_time]
+fn answers_one_request_over_http() {
+    let server = spawn http.Server { addr: "127.0.0.1:0" };
+    let addr = match server.local_addr() {
+        .Ok(addr) => addr,
+        .Err(.Failed(error)) => panic(http.error_message(error)),
+        .Err(_) => panic("server actor stopped before binding"),
+    };
+    scope {
+        let served = fork {
+            let outcome = serve_one(server);
+            println(f"server outcome: {outcome}");
+            outcome
+        };
+        var body: Option<string> = .None;
+        var last_error = "no request attempted";
+        var attempts_left = 40;
+        while body.is_none() && attempts_left > 0 {
+            attempts_left = attempts_left - 1;
+            let response = http_client.get(f"http://{addr}/hello");
+            if response.status() < 0 {
+                last_error = response.body();
+            } else {
+                assert(response.status() == 200);
+                body = .Some(response.body());
+            }
+            response.close();
+            if body.is_none() {
+                sleep(250ms);
+            }
+        }
+        if body.is_none() {
+            println(f"HTTP request to {addr} failed: {last_error}");
+        }
+        assert(body == .Some("Hello from Hew!\n"));
+        assert((await served) == "GET /hello");
+    }
 }

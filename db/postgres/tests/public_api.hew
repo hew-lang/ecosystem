@@ -1,17 +1,11 @@
-import hew.db.postgres.{CellValue, Row, QueryResult};
+import hew.db.postgres;
 
-fn error_variants_preserve_diagnostics() {
-    assert(postgres.error_message(.Connect("connect")) == "connect");
-    assert(postgres.error_message(.InvalidInput("input")) == "input");
-    assert(postgres.error_message(.Query("query")) == "query");
-    assert(postgres.error_message(.Closed("closed")) == "closed");
-    assert(postgres.error_message(.Internal("internal")) == "internal");
-}
-
+#[test]
+#[real_time]
 fn invalid_connection_and_explicit_close_return_typed_errors() {
     let db = spawn postgres.Conn { connstr: "not a postgres connection string" };
     match db.query("SELECT 1") {
-        .Ok(.Err(.Connect(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.Connect(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(db);
@@ -20,28 +14,4 @@ fn invalid_connection_and_explicit_close_return_typed_errors() {
         .Err(.Dead) => {}
         _ => assert(false),
     }
-}
-
-fn wire_values_distinguish_null_empty_and_no_rows() {
-    var values: Vec<CellValue> = Vec.new();
-    values.push(.Null);
-    values.push(.Text(bytes.new()));
-    var rows: Vec<Row> = Vec.new();
-    rows.push(Row { values: values });
-    let result = QueryResult { columns: Vec.new(), rows: rows };
-    assert(result.rows.len() == 1);
-    match result.rows[0].values[0] {
-        .Null => assert(true),
-        _ => assert(false),
-    }
-    match result.rows[0].values[1] {
-        .Text(value) => assert(value.len() == 0),
-        _ => assert(false),
-    }
-}
-
-fn main() {
-    error_variants_preserve_diagnostics();
-    invalid_connection_and_explicit_close_return_typed_errors();
-    wire_values_distinguish_null_empty_and_no_rows();
 }

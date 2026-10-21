@@ -1,7 +1,8 @@
 # hew.db.mongodb
 
 `hew.db.mongodb` is an actor-owned MongoDB client. Documents, filters, and
-updates are JSON objects. All fallible operations return `Result`; missing
+updates are JSON objects. Every operation fails with a typed `MongoError`,
+which a call reports as `.Err(.Failed(error))`; missing
 documents are represented by `DocumentLookup.Missing`, separately from
 connection and query failures.
 
@@ -15,19 +16,15 @@ fn main() {
     };
 
     match db.insert_one("users", "{\"name\":\"Alice\",\"age\":30}") {
-        .Ok(result) => match result {
-            .Ok(id) => println(f"inserted {id}"),
-            .Err(error) => println(mongodb.error_message(error)),
-        }
+        .Ok(id) => println(f"inserted {id}"),
+        .Err(.Failed(error)) => println(mongodb.error_message(error)),
         .Err(_) => println("MongoDB actor stopped before replying"),
     }
 
     match db.find_one("users", "{\"name\":\"Alice\"}") {
-        .Ok(result) => match result {
-            .Ok(.Found(document)) => println(document),
-            .Ok(.Missing) => println("user not found"),
-            .Err(error) => println(mongodb.error_message(error)),
-        }
+        .Ok(.Found(document)) => println(document),
+        .Ok(.Missing) => println("user not found"),
+        .Err(.Failed(error)) => println(mongodb.error_message(error)),
         .Err(_) => println("MongoDB actor stopped before replying"),
     }
 

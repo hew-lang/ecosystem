@@ -1,12 +1,14 @@
 # hew.db.sqlite
 
-`hew.db.sqlite` is an actor-owned embedded SQL client. Operations return
-typed `Result` values, query replies are immutable wire-safe snapshots, and SQL
-`NULL` is represented by `CellValue.Null`.
+`hew.db.sqlite` is an actor-owned embedded SQL client. Operations fail with a
+typed `SqliteError`, query replies are immutable wire-safe snapshots, and SQL
+`NULL` is represented by `CellValue.Null`. The query result types come from
+[`hew.db.sql`](../sql/README.md), shared with MySQL and PostgreSQL.
 
-Because an actor call can fail (the actor may have stopped), every reply is
-`Result<Result<T, SqliteError>, ActorError>` — match the outer `Result` for ask
-failure, the inner for SQL failure.
+Every method is a `receive fn ... -> T fails SqliteError`, so a call replies
+with `Result<T, ActorError<SqliteError>>`: `.Ok(value)` on success,
+`.Err(.Failed(error))` for a SQL failure, and another `.Err` when the actor
+could not answer (for example, `.Dead` after it stopped).
 
 ```hew
 import hew.db.sqlite;
@@ -17,13 +19,11 @@ fn main() {
     let _ = db.execute("CREATE TABLE values_table (value TEXT)");
     let _ = db.execute("INSERT INTO values_table VALUES ('hello')");
     match db.query("SELECT value FROM values_table") {
-        .Ok(result) => match result {
-            .Ok(query) => match query.rows[0].values[0] {
-                .Text(value) => println(utf8.decode_lossy(value)),
-                .Null => println("value is NULL"),
-            }
-            .Err(error) => println(sqlite.error_message(error)),
+        .Ok(query) => match query.rows[0].values[0] {
+            .Text(value) => println(utf8.decode_lossy(value)),
+            .Null => println("value is NULL"),
         }
+        .Err(.Failed(error)) => println(sqlite.error_message(error)),
         .Err(_) => println("SQLite actor stopped before replying"),
     }
     stop(db);
@@ -54,13 +54,13 @@ call below is made with `db.<method>(...)`.
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `execute(sql: string)` | `Result<i64, SqliteError>` | Runs a statement with no `?` placeholders; the `i64` is the affected row count. |
-| `execute_params(sql: string, params: Vec<Param>)` | `Result<i64, SqliteError>` | Same as `execute`, with typed `?` bindings. |
-| `query(sql: string)` | `Result<QueryResult, SqliteError>` | Runs a `SELECT` with no placeholders. |
-| `query_params(sql: string, params: Vec<Param>)` | `Result<QueryResult, SqliteError>` | Same as `query`, with typed `?` bindings. |
+| `execute(sql: string)` | `i64 fails SqliteError` | Runs a statement with no `?` placeholders; the `i64` is the affected row count. |
+| `execute_params(sql: string, params: Vec<Param>)` | `i64 fails SqliteError` | Same as `execute`, with typed `?` bindings. |
+| `query(sql: string)` | `QueryResult fails SqliteError` | Runs a `SELECT` with no placeholders. |
+| `query_params(sql: string, params: Vec<Param>)` | `QueryResult fails SqliteError` | Same as `query`, with typed `?` bindings. |
 | `stop(db); stopped(db);` | — | Gracefully stops the actor and waits for native connection cleanup. |
 
-Public types:
+Public types, with `QueryResult`, `Row` and `CellValue` from `hew.db.sql`:
 
 - `QueryResult { columns: Vec<string>; rows: Vec<Row>; }`
 - `Row { values: Vec<CellValue>; }`

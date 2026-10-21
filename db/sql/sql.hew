@@ -1,4 +1,4 @@
-//! Typed parameters shared by the SQL database clients.
+//! Typed parameters and query results shared by the SQL database clients.
 //!
 //! Text is UTF-8 and may contain newlines. Bytes preserves arbitrary binary
 //! data. Null binds SQL NULL; it is distinct from an empty Text or Bytes value.
@@ -12,4 +12,25 @@ pub enum Param {
     Float(f64) @3;
     Text(string) @4;
     Bytes(bytes) @5;
+}
+
+/// One result cell: SQL `NULL`, or the column value as the driver's text
+/// representation. The bytes need not be UTF-8.
+#[wire]
+pub enum CellValue {
+    Null @0;
+    Text(bytes) @1;
+}
+
+/// One result row, with a value for each column in order.
+#[wire]
+pub type Row {
+    values: Vec<CellValue> @1;
+}
+
+/// An immutable snapshot of a query's column names and rows.
+#[wire]
+pub type QueryResult {
+    columns: Vec<string> @1;
+    rows: Vec<Row> @2;
 }

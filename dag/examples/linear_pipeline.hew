@@ -1,8 +1,8 @@
 // linear_pipeline.hew — load a DAG spec at runtime and route a value through it.
 //
 // The spec is a string parsed AT RUNTIME (not built in code): three nodes in a
-// chain. This example uses `route_with`, the import-friendly seam: each node is
-// driven by a caller-supplied dispatch closure.
+// chain. This example uses `route_with`: each node is driven by a
+// caller-supplied dispatch closure.
 //
 //   node0 (add 1) ──> node1 (multiply 10) ──> node2 (add 100)
 //
@@ -22,12 +22,8 @@ fn main() {
         .Ok(spec) => {
             // Route input 5; the dispatch reads each node's bound op + operand
             // from the spec and applies it via the library's pure kernel.
-            let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 {
-                let ns = dag.node_at(spec, node);
-                match dag.op_of_code(ns.op_code) {
-                    .Ok(op) => dag.apply_op(op, input, ns.operand),
-                    .Err(_) => input,
-                }
+            let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 fails dag.DagError {
+                dag.apply_spec_node(spec, node, input)?
             });
             match report {
                 .Ok(r) => {
@@ -47,4 +43,9 @@ fn main() {
         }
         .Err(e) => println(dag.describe(e)),
     }
+}
+
+#[test]
+fn runs_to_completion() {
+    main();
 }

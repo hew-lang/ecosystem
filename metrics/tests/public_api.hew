@@ -6,13 +6,19 @@ extern "C" {
 
 fn registry_without_close(before: i64) -> metrics.Registry {
     let registry = spawn metrics.Registry;
-    sleep(20ms);
+    // Handlers run only after init, so this reply proves the native registry exists.
+    match registry.export() {
+        .Ok(_) => {}
+        _ => assert(false),
+    }
     assert(unsafe {
         hew_metrics_registry_count()
     } == before + 1);
     registry
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_relative_registry_count() {
     let before = unsafe {
         hew_metrics_registry_count()
@@ -20,35 +26,32 @@ fn actor_stop_releases_relative_registry_count() {
     let registry = registry_without_close(before);
     stop(registry);
     stopped(registry);
-    var attempts = 0;
-    while unsafe {
-        hew_metrics_registry_count()
-    } != before && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_metrics_registry_count()
     } == before);
 }
 
+#[test]
+#[real_time]
 fn invalid_registration_returns_typed_error() {
     let registry = spawn metrics.Registry;
     match registry.counter("bad name", "invalid") {
-        .Ok(.Err(.InvalidInput(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.InvalidInput(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(registry);
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn counter_and_export_return_exact_values() {
     let registry = spawn metrics.Registry;
     match registry.counter("requests_handled_by_the_server_total", "Requêtes traitées — 雪") {
-        .Ok(.Ok(counter)) => {
+        .Ok(counter) => {
             let _ = registry.counter_add(counter, 3.0);
             match registry.export() {
-                .Ok(.Ok(output)) => {
+                .Ok(output) => {
                     assert(output.contains("requests_handled_by_the_server_total 3"));
                     assert(output.contains("Requêtes traitées — 雪"));
                 }
@@ -61,38 +64,44 @@ fn counter_and_export_return_exact_values() {
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn empty_export_is_the_empty_string() {
     let registry = spawn metrics.Registry;
     match registry.export() {
-        .Ok(.Ok(output)) => assert(output.is_empty()),
+        .Ok(output) => assert(output.is_empty()),
         _ => assert(false),
     }
     stop(registry);
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn empty_label_list_returns_a_typed_error() {
     let registry = spawn metrics.Registry;
     match registry.counter_vec("unlabelled_requests_total", "Missing labels", "") {
-        .Ok(.Err(.InvalidInput(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.InvalidInput(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(registry);
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn labeled_metric_returns_typed_error_at_series_limit() {
     let registry = spawn metrics.Registry;
     match registry.counter_vec("bounded_requests_total", "Bounded requests", "route") {
-        .Ok(.Ok(counter)) => {
+        .Ok(counter) => {
             for i in 0..1024 {
                 match registry.counter_vec_inc(counter, f"{i}") {
-                    .Ok(.Ok(_)) => {}
+                    .Ok(_) => {}
                     _ => assert(false),
                 }
             }
             match registry.counter_vec_inc(counter, "overflow") {
-                .Ok(.Err(.SeriesLimit(handle))) => assert(handle == counter),
+                .Err(.Failed(.SeriesLimit(handle))) => assert(handle == counter),
                 _ => assert(false),
             }
         }
@@ -102,12 +111,14 @@ fn labeled_metric_returns_typed_error_at_series_limit() {
     stopped(registry);
 }
 
+#[test]
+#[real_time]
 fn wrong_metric_kind_returns_typed_error() {
     let registry = spawn metrics.Registry;
     match registry.counter("kind_counter_total", "Kind counter") {
-        .Ok(.Ok(counter)) => {
+        .Ok(counter) => {
             match registry.gauge_set(counter, 42.0) {
-                .Ok(.Err(.WrongMetricKind(handle))) => assert(handle == counter),
+                .Err(.Failed(.WrongMetricKind(handle))) => assert(handle == counter),
                 _ => assert(false),
             }
         }
@@ -115,14 +126,4 @@ fn wrong_metric_kind_returns_typed_error() {
     }
     stop(registry);
     stopped(registry);
-}
-
-fn main() {
-    actor_stop_releases_relative_registry_count();
-    invalid_registration_returns_typed_error();
-    counter_and_export_return_exact_values();
-    empty_export_is_the_empty_string();
-    empty_label_list_returns_a_typed_error();
-    labeled_metric_returns_typed_error_at_series_limit();
-    wrong_metric_kind_returns_typed_error();
 }

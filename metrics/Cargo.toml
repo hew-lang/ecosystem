@@ -4,10 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "hew.metrics — Prometheus-compatible metrics for Hew"
-readme = "README.md"
-keywords = ["metrics", "prometheus", "monitoring", "observability"]
-categories = ["development-tools::profiling"]
+publish = false
 
 [lib]
 name = "hew_hew_metrics"

@@ -92,9 +92,9 @@ fn bucket_handle(handle: i64, kind: i32, status: i32, message: string) -> Result
     }
 }
 
-fn unit_result(status: i32) -> Result<i64, S3Error> {
+fn unit_result(status: i32) -> Result<(), S3Error> {
     if status == 0 {
-        .Ok(0)
+        .Ok(())
     } else {
         .Err(native_error())
     }
@@ -182,112 +182,90 @@ pub actor Bucket {
     }
 
     /// Upload exact bytes under `key`.
-    receive fn put(key: string, body: bytes, content_type: string) -> Result<i64, S3Error> {
-        let handle = match bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn put(key: string, body: bytes, content_type: string) fails S3Error {
+        let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         unit_result(unsafe {
             hew_s3_put(handle, key, body, content_type)
-        })
+        })?
     }
 
     /// Download exact bytes, preserving missing versus present-empty.
-    receive fn get(key: string) -> Result<ObjectLookup, S3Error> {
-        let handle = match bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn get(key: string) -> ObjectLookup fails S3Error {
+        let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         let result = GetResource { handle: unsafe {
             hew_s3_get(handle, key)
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
         let status = result.status();
         if status == 1 {
             let value = result.value();
             result.close();
-            .Ok(ObjectLookup.Found(value))
+            ObjectLookup.Found(value)
         } else if status == 0 {
             result.close();
-            .Ok(ObjectLookup.Missing)
+            ObjectLookup.Missing
         } else {
             let error = native_error();
             result.close();
-            .Err(error)
+            return error error;
         }
     }
 
     /// Delete an object. Deleting an absent key is successful S3 behavior.
-    receive fn delete(key: string) -> Result<i64, S3Error> {
-        let handle = match bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn delete(key: string) fails S3Error {
+        let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         unit_result(unsafe {
             hew_s3_delete(handle, key)
-        })
+        })?
     }
 
     /// Return every object under a prefix, following continuation tokens.
-    receive fn list(prefix: string) -> Result<Vec<ObjectInfo>, S3Error> {
-        let handle = match bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn list(prefix: string) -> Vec<ObjectInfo> fails S3Error {
+        let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         let result = ListResource { handle: unsafe {
             hew_s3_list(handle, prefix)
         } };
         if result.handle == 0 {
-            return .Err(native_error());
+            return error native_error();
         }
         let count = result.count();
         if count < 0 {
             let error = native_error();
             result.close();
-            return .Err(error);
+            return error error;
         }
         var entries: Vec<ObjectInfo> = Vec.new();
         for index in 0..count {
             entries.push(ObjectInfo { key: result.key(index), size: result.size(index) });
         }
         result.close();
-        .Ok(entries)
+        entries
     }
 
     /// Return whether an object exists.
-    receive fn exists(key: string) -> Result<bool, S3Error> {
-        let handle = match bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn exists(key: string) -> bool fails S3Error {
+        let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         let status = unsafe {
             hew_s3_exists(handle, key)
         };
-        if status == 1 {
-            .Ok(true)
-        } else if status == 0 {
-            .Ok(false)
-        } else {
-            .Err(native_error())
+        if status != 0 && status != 1 {
+            return error native_error();
         }
+        status == 1
     }
 
     /// Generate a signed URL for GET, PUT, DELETE, or HEAD.
-    receive fn presign(key: string, method: string, expires_seconds: i64) -> Result<string, S3Error> {
-        let handle = match bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn presign(key: string, method: string, expires_seconds: i64) -> string fails S3Error {
+        let handle = bucket_handle(native_handle, connect_error_kind, connect_error_status, connect_error_message)?;
         let url = unsafe {
             hew_s3_presign(handle, key, method, expires_seconds)
         };
         if url.is_empty() {
-            .Err(native_error())
-        } else {
-            .Ok(url)
+            return error native_error();
         }
+        url
     }
 
     /// Release the bucket when the actor stops.

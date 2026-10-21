@@ -14,149 +14,122 @@ fn scratch_path(name: string) -> string {
     os.temp_dir() + "/" + name
 }
 
-fn assert_ok_i64(result: Result<i64, magick.MagickError>) {
+fn assert_ok(result: Result<(), ActorError<magick.MagickError>>) {
     match result {
         .Ok(_) => {}
         .Err(_) => assert(false),
     }
 }
 
+#[test]
+#[real_time]
 fn transformations_cover_public_surface() {
     let path = scratch_path("magick-public-api.png");
     let _ = fs.delete(path);
     let image = spawn magick.Image { source: Source.Blank(80, 40, "blue") };
     match image.width() {
-        .Ok(.Ok(value)) => assert(value as i64 == 80),
+        .Ok(value) => assert(value as i64 == 80),
         _ => assert(false),
     }
     match image.height() {
-        .Ok(.Ok(value)) => assert(value as i64 == 40),
+        .Ok(value) => assert(value as i64 == 40),
         _ => assert(false),
     }
-    match image.resize(40, 20) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.crop(20, 10, 0, 0) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.rotate(90.0) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.blur(0.0, 1.0) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.sharpen(0.0, 0.5) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.flip() {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.flop() {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.thumbnail(5, 5) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
-    match image.write(path) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
+    assert_ok(image.resize(40, 20));
+    assert_ok(image.crop(20, 10, 0, 0));
+    assert_ok(image.rotate(90.0));
+    assert_ok(image.blur(0.0, 1.0));
+    assert_ok(image.sharpen(0.0, 0.5));
+    assert_ok(image.flip());
+    assert_ok(image.flop());
+    assert_ok(image.thumbnail(5, 5));
+    assert_ok(image.write(path));
     stop(image);
     stopped(image);
-    sleep(20ms);
     let reopened = spawn magick.Image { source: Source.File(path) };
     match reopened.format() {
-        .Ok(.Ok(value)) => assert(value == "PNG"),
+        .Ok(value) => assert(value == "PNG"),
         _ => assert(false),
     }
     stop(reopened);
     stopped(reopened);
-    sleep(20ms);
     let _ = fs.delete(path);
 }
 
 /// A path carrying non-ASCII text and more than sixteen bytes has to reach
 /// ImageMagick exactly as written, and the format has to come back out.
+#[test]
+#[real_time]
 fn long_unicode_path_round_trips_a_written_image() {
     let path = scratch_path("magick-héllo-wörld-très-longue-imagé.png");
     let _ = fs.delete(path);
     let image = spawn magick.Image { source: Source.Blank(48, 32, "#3366cc") };
-    match image.write(path) {
-        .Ok(result) => assert_ok_i64(result),
-        _ => assert(false),
-    }
+    assert_ok(image.write(path));
     stop(image);
     stopped(image);
-    sleep(20ms);
     assert(fs.exists(path));
     let reopened = spawn magick.Image { source: Source.File(path) };
     match reopened.width() {
-        .Ok(.Ok(value)) => assert(value as i64 == 48),
+        .Ok(value) => assert(value as i64 == 48),
         _ => assert(false),
     }
     match reopened.height() {
-        .Ok(.Ok(value)) => assert(value as i64 == 32),
+        .Ok(value) => assert(value as i64 == 32),
         _ => assert(false),
     }
     match reopened.format() {
-        .Ok(.Ok(value)) => assert(value == "PNG"),
+        .Ok(value) => assert(value == "PNG"),
         _ => assert(false),
     }
     stop(reopened);
     stopped(reopened);
-    sleep(20ms);
     let _ = fs.delete(path);
 }
 
 /// ImageMagick names the file it could not open, so the diagnostic proves the
 /// path travelled in and the message travelled back out intact.
+#[test]
+#[real_time]
 fn missing_file_error_carries_the_path() {
     let path = scratch_path("magick-manquant-wörld-très-longue.png");
     let _ = fs.delete(path);
     assert(!fs.exists(path));
     let missing = spawn magick.Image { source: Source.File(path) };
     match missing.width() {
-        .Ok(.Err(error)) => assert(magick.error_message(error).contains(path)),
+        .Err(.Failed(error)) => assert(magick.error_message(error).contains(path)),
         _ => assert(false),
     }
     stop(missing);
     stopped(missing);
-    sleep(20ms);
 }
 
+#[test]
+#[real_time]
 fn invalid_inputs_return_typed_errors() {
     let image = spawn magick.Image { source: Source.Blank(10, 10, "white") };
     match image.resize(0, 1) {
-        .Ok(.Err(error)) => assert(!magick.error_message(error).is_empty()),
+        .Err(.Failed(error)) => assert(!magick.error_message(error).is_empty()),
         _ => assert(false),
     }
     stop(image);
     stopped(image);
-    sleep(20ms);
     let rejected = spawn magick.Image { source: Source.Blank(10, 10, "pas-une-couleur") };
     match rejected.width() {
-        .Ok(.Err(.InvalidInput(message))) => {
+        .Err(.Failed(.InvalidInput(message))) => {
             assert(message.contains("invalid image colour"));
         }
         _ => assert(false),
     }
     stop(rejected);
     stopped(rejected);
-    sleep(20ms);
 }
 
+#[test]
+#[real_time]
 fn blob_round_trip_preserves_a_real_image() {
     let source = spawn magick.Image { source: Source.Blank(37, 19, "#2f80ed") };
     let encoded = match source.write_blob("PNG") {
-        .Ok(.Ok(value)) => value,
+        .Ok(value) => value,
         _ => {
             assert(false);
             bytes.new()
@@ -165,29 +138,27 @@ fn blob_round_trip_preserves_a_real_image() {
     assert(encoded.len() > 8);
     stop(source);
     stopped(source);
-    sleep(20ms);
     let decoded = spawn magick.Image { source: Source.Blob(encoded) };
     match decoded.width() {
-        .Ok(.Ok(value)) => assert(value as i64 == 37),
+        .Ok(value) => assert(value as i64 == 37),
         _ => assert(false),
     }
     match decoded.height() {
-        .Ok(.Ok(value)) => assert(value as i64 == 19),
+        .Ok(value) => assert(value as i64 == 19),
         _ => assert(false),
     }
     match decoded.format() {
-        .Ok(.Ok(value)) => assert(value == "PNG"),
+        .Ok(value) => assert(value == "PNG"),
         _ => assert(false),
     }
     stop(decoded);
     stopped(decoded);
-    sleep(20ms);
 }
 
 fn image_without_close(before: i64) -> magick.Image {
     let image = spawn magick.Image { source: Source.Blank(10, 10, "white") };
     match image.width() {
-        .Ok(.Ok(value)) => assert(value as i64 == 10),
+        .Ok(value) => assert(value as i64 == 10),
         _ => assert(false),
     }
     assert(unsafe {
@@ -196,6 +167,8 @@ fn image_without_close(before: i64) -> magick.Image {
     image
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_relative_registry_count() {
     let before = unsafe {
         hew_magick_image_count()
@@ -204,23 +177,7 @@ fn actor_stop_releases_relative_registry_count() {
     let image = image_without_close(before);
     stop(image);
     stopped(image);
-    var attempts = 0;
-    while unsafe {
-        hew_magick_image_count()
-    } != before && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_magick_image_count()
     } == before);
-}
-
-fn main() {
-    transformations_cover_public_surface();
-    long_unicode_path_round_trips_a_written_image();
-    missing_file_error_carries_the_path();
-    invalid_inputs_return_typed_errors();
-    blob_round_trip_preserves_a_real_image();
-    actor_stop_releases_relative_registry_count();
 }

@@ -1,13 +1,13 @@
 # hew.db.redis
 
-An actor-owned Redis client for Hew. It returns typed `Result` values,
+An actor-owned Redis client for Hew. Its commands fail with a typed `RedisError`,
 distinguishes missing values from present empty byte buffers, and automatically
 releases connection, reply, collection, and pipeline resources.
 
 ## Example
 
 Run Redis locally on its default port, then save this as `main.hew` in a
-project that depends on `hew.db.redis = "0.3.0"`:
+project that depends on `hew.db.redis = "0.4.0"`:
 
 ```hew
 import hew.db.redis;
@@ -17,19 +17,15 @@ fn main() {
     let client = spawn redis.Conn { options: redis.Options { url: "redis://127.0.0.1/" } };
 
     match client.set("greeting", "hello".to_bytes()) {
-        .Ok(result) => match result {
-            .Ok(_) => {}
-            .Err(error) => println(redis.error_message(error)),
-        }
+        .Ok(_) => {}
+        .Err(.Failed(error)) => println(redis.error_message(error)),
         .Err(_) => println("Redis actor stopped before replying"),
     }
 
     match client.get("greeting") {
-        .Ok(result) => match result {
-            .Ok(.Value(value)) => println(utf8.decode_lossy(value)),
-            .Ok(.Missing) => println("greeting is missing"),
-            .Err(error) => println(redis.error_message(error)),
-        }
+        .Ok(.Value(value)) => println(utf8.decode_lossy(value)),
+        .Ok(.Missing) => println("greeting is missing"),
+        .Err(.Failed(error)) => println(redis.error_message(error)),
         .Err(_) => println("Redis actor stopped before replying"),
     }
 
@@ -39,7 +35,8 @@ fn main() {
 ```
 
 The checked example at [`examples/basic.hew`](examples/basic.hew) is the same
-program against the Redis service in `docker-compose.yml`. Run it from the
+program, plus a test that runs it, against the Redis service in
+`docker-compose.yml`. Run it from the
 ecosystem checkout:
 
 ```sh
@@ -49,8 +46,10 @@ hew run --pkg-path . db/redis/examples/basic.hew
 
 It prints `hello`.
 
-All actor calls have two error layers: the outer `Result` is Hew's actor ask
-result; the inner `Result` is the Redis operation result. Redis payloads use
+Every command declares `fails RedisError`, so a call replies with
+`Result<T, ActorError<RedisError>>`: `.Ok(value)` on success,
+`.Err(.Failed(error))` when Redis reports a failure, and another `ActorError`
+variant, such as `.Dead`, when the actor could not answer. Redis payloads use
 Hew's `bytes` ABI end to end, so embedded NUL and non-text bytes round-trip
 without C-string truncation.
 
@@ -73,7 +72,7 @@ Pipelines are submitted as a complete wire-safe command list. The actor owns
 the native queue and releases it on success or error:
 
 ```hew
-let commands: Vec<redis.PipelineCommand> = Vec.new();
+var commands: Vec<redis.PipelineCommand> = Vec.new();
 commands.push(redis.PipelineCommand.Set("one", "1".to_bytes()));
 commands.push(redis.PipelineCommand.Set("two", "2".to_bytes()));
 let _ = client.pipeline_exec(commands);
@@ -82,15 +81,15 @@ let _ = client.pipeline_exec(commands);
 ## API surface
 
 `pub actor Conn { init(options: Options) ... }` — one connection per actor
-instance. Every method below is a `receive fn` and returns
-`Result<T, RedisError>` unless noted:
+instance. Every method below is a `receive fn` declared `-> T fails RedisError`,
+where `T` is the return listed:
 
 | Method | Returns |
 | --- | --- |
-| `set(key, value: bytes)` | number of keys set |
+| `set(key, value: bytes)` | `()` |
 | `get(key)` | `Lookup` |
 | `del(key)` | number of keys removed |
-| `set_ex(key, value: bytes, ttl_seconds)` | number of keys set |
+| `set_ex(key, value: bytes, ttl_seconds)` | `()` |
 | `expire(key, ttl_seconds)` | `bool` — whether the key existed |
 | `ttl(key)` | `KeyTtl` |
 | `incr(key)` | the incremented `i64` |

@@ -4,18 +4,25 @@
 placeholders escape HTML metacharacters; triple-brace placeholders insert
 trusted, pre-rendered HTML unchanged.
 
-The checked [render page example](examples/render_page.hew) is:
+The checked [render page example](examples/render_page.hew) is below; its
+test pins the rendered page, so `hew test template` fails if the output
+changes:
 
 ```hew
 import hew.template;
 
-fn main() {
+fn render_page() -> string {
     let context = "name\n<Ada & Co>\nbody\n<strong>Welcome</strong>";
-    let page = template.render(
-        "<h1>Hello, {{name}}!</h1><main>{{{body}}}</main>",
-        context,
-    );
-    println(page);
+    template.render("<h1>Hello, {{name}}!</h1><main>{{{body}}}</main>", context)
+}
+
+fn main() {
+    println(render_page());
+}
+
+#[test]
+fn escapes_the_name_and_keeps_the_trusted_body() {
+    assert(render_page() == "<h1>Hello, &lt;Ada &amp; Co&gt;!</h1><main><strong>Welcome</strong></main>");
 }
 ```
 

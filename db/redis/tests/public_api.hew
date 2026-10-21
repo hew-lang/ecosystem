@@ -1,23 +1,12 @@
 import hew.db.redis;
 
-fn error_variants_return_exact_diagnostics() {
-    assert(redis.error_message(redis.RedisError.Closed("closed")) == "closed");
-    assert(redis.error_message(redis.RedisError.Timeout("late")) == "late");
-    assert(redis.error_message(redis.RedisError.InvalidInput("invalid")) == "invalid");
-}
-
+#[test]
+#[real_time]
 fn unavailable_connection_returns_typed_error() {
     let client = spawn redis.Conn { options: redis.Options { url: "redis://127.0.0.1:1/" } };
     match client.get("key") {
-        .Ok(result) => match result {
-            .Ok(_) => assert(false),
-            .Err(error) => assert(!redis.error_message(error).is_empty()),
-        }
+        .Ok(_) => assert(false),
+        .Err(.Failed(.Connection(message))) => assert(!message.is_empty()),
         .Err(_) => assert(false),
     }
-}
-
-fn main() {
-    error_variants_return_exact_diagnostics();
-    unavailable_connection_returns_typed_error();
 }

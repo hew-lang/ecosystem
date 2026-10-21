@@ -12,6 +12,8 @@ fn connection() -> nats.Conn {
     spawn nats.Conn { options: nats.Options { url: "nats://127.0.0.1:14222" } }
 }
 
+#[test]
+#[real_time]
 fn publish_subscribe_preserves_exact_message_and_timeout() {
     let previous_connections = unsafe {
         hew_nats_connection_count()
@@ -24,15 +26,15 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
     };
     let client = connection();
     let subscription = match client.subscribe("hew.integration") {
-        .Ok(.Ok(value)) => value,
+        .Ok(value) => value,
         _ => panic("NATS subscribe failed"),
     };
     match client.publish("hew.integration", "exact payload — 雪の結晶") {
-        .Ok(.Ok(_)) => {}
+        .Ok(_) => {}
         _ => assert(false),
     }
     match client.next_message(subscription.clone(), 3000) {
-        .Ok(.Ok(.Message(message))) => {
+        .Ok(.Message(message)) => {
             assert(message.subject == "hew.integration");
             assert(message.data == "exact payload — 雪の結晶");
             match message.reply_to {
@@ -46,7 +48,7 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
         hew_nats_message_count()
     } == previous_messages);
     match client.next_message(subscription.clone(), 50) {
-        .Ok(.Ok(.Missing)) => {}
+        .Ok(.Missing) => {}
         _ => assert(false),
     }
     let _ = client.unsubscribe(subscription);
@@ -76,7 +78,7 @@ actor ResponderHarness {
     }
     receive fn serve() {
         match responder.next_message(subscription.clone(), 3000) {
-            .Ok(.Ok(.Message(message))) => {
+            .Ok(.Message(message)) => {
                 let _ = responder.reply(message, "84");
             }
             _ => {}
@@ -87,13 +89,15 @@ actor ResponderHarness {
     }
 }
 
+#[test]
+#[real_time]
 fn request_reply_preserves_reply_subject_and_payload() {
     let previous_connections = unsafe {
         hew_nats_connection_count()
     };
     let responder = connection();
     let subscription = match responder.subscribe("hew.request.double") {
-        .Ok(.Ok(value)) => value,
+        .Ok(value) => value,
         _ => panic("NATS responder subscribe failed"),
     };
     let requester = connection();
@@ -102,7 +106,7 @@ fn request_reply_preserves_reply_subject_and_payload() {
     // requester's blocking `request`, which needs a live listener to answer.
     let serving = fork harness.serve();
     match requester.request("hew.request.double", "42", 3000) {
-        .Ok(.Ok(.Message(message))) => {
+        .Ok(.Message(message)) => {
             assert(message.data == "84");
             match message.reply_to {
                 .Missing => {}
@@ -114,7 +118,7 @@ fn request_reply_preserves_reply_subject_and_payload() {
     let _ = await serving;
     let no_reply = nats.Delivery { subject: "hew.event", data: "value", reply_to: nats.ReplyTo.Missing };
     match requester.reply(no_reply, "ignored") {
-        .Ok(.Err(.InvalidInput(message))) => assert(message == "NATS message has no reply subject"),
+        .Err(.Failed(.InvalidInput(message))) => assert(message == "NATS message has no reply subject"),
         _ => assert(false),
     }
     stop(requester);
@@ -131,6 +135,8 @@ fn request_reply_preserves_reply_subject_and_payload() {
     } == previous_connections);
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_connection_and_subscription_relatively() {
     let previous_connections = unsafe {
         hew_nats_connection_count()
@@ -140,7 +146,7 @@ fn actor_stop_releases_connection_and_subscription_relatively() {
     };
     let client = connection();
     match client.subscribe("hew.stop.cleanup") {
-        .Ok(.Ok(_)) => {}
+        .Ok(_) => {}
         _ => assert(false),
     }
     assert(unsafe {
@@ -164,10 +170,4 @@ fn actor_stop_releases_connection_and_subscription_relatively() {
     assert(unsafe {
         hew_nats_subscription_count()
     } == previous_subscriptions);
-}
-
-fn main() {
-    publish_subscribe_preserves_exact_message_and_timeout();
-    request_reply_preserves_reply_subject_and_payload();
-    actor_stop_releases_connection_and_subscription_relatively();
 }

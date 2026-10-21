@@ -1,3 +1,7 @@
+import std.os;
+
+import std.string;
+
 import hew.queue.mqtt;
 
 import hew.queue.mqtt.{Options, Receive};
@@ -7,10 +11,23 @@ extern "C" {
     fn hew_mqtt_message_count() -> i64;
 }
 
-fn options(client_id: string) -> Options {
-    Options { host: "127.0.0.1", port: 11883, client_id: client_id, keepalive_seconds: 30 }
+// The test broker's host port. `make test` exports it from docker-compose.yml.
+fn broker_port() -> i64 {
+    match os.env("HEW_MQTT_PORT") {
+        .Some(text) => match string.to_int(text) {
+            .Ok(port) => port,
+            .Err(_) => panic(f"HEW_MQTT_PORT is not a port number: {text}"),
+        }
+        .None => panic("HEW_MQTT_PORT is unset; run the tests through make, which reads it from docker-compose.yml"),
+    }
 }
 
+fn options(client_id: string) -> Options {
+    Options { host: "127.0.0.1", port: broker_port(), client_id: client_id, keepalive_seconds: 30 }
+}
+
+#[test]
+#[real_time]
 fn publish_subscribe_preserves_exact_message_and_timeout() {
     let previous_connections = unsafe {
         hew_mqtt_connection_count()
@@ -20,42 +37,62 @@ fn publish_subscribe_preserves_exact_message_and_timeout() {
     };
     let client = spawn mqtt.Conn { options: options("hew-mqtt-integration") };
     match client.subscribe("hew/integration", mqtt.QoS.AtLeastOnce) {
-        .Ok(.Ok(_)) => {}
+        .Ok(_) => {}
         _ => assert(false),
     }
-    sleep(100ms);
-    match client.publish("hew/integration", "exact payload — 雪の結晶", mqtt.QoS.AtLeastOnce, false) {
-        .Ok(.Ok(_)) => {}
-        _ => assert(false),
-    }
-    match client.next_message(3000) {
-        .Ok(.Ok(.Message(message))) => {
-            assert(message.topic == "hew/integration");
-            assert(message.payload == "exact payload — 雪の結晶");
+    // subscribe returns once the request is queued, before the broker's SUBACK,
+    // so probe until a delivery shows the subscription is live.
+    var live = false;
+    var probes = 0;
+    while !live && probes < 60 {
+        match client.publish("hew/integration", "probe", mqtt.QoS.AtLeastOnce, false) {
+            .Ok(_) => {}
+            _ => assert(false),
         }
+        match client.next_message(50) {
+            .Ok(.Message(_)) => {
+                live = true;
+            }
+            .Ok(.Missing) => {}
+            _ => assert(false),
+        }
+        probes = probes + 1;
+    }
+    assert(live);
+    match client.publish("hew/integration", "exact payload — 雪の結晶", mqtt.QoS.AtLeastOnce, false) {
+        .Ok(_) => {}
         _ => assert(false),
+    }
+    // The broker keeps per-topic order, so late probes arrive before the payload.
+    var delivered = false;
+    while !delivered {
+        match client.next_message(3000) {
+            .Ok(.Message(message)) => {
+                if message.payload != "probe" {
+                    assert(message.topic == "hew/integration");
+                    assert(message.payload == "exact payload — 雪の結晶");
+                    delivered = true;
+                }
+            }
+            _ => assert(false),
+        }
     }
     assert(unsafe {
         hew_mqtt_message_count()
     } == previous_messages);
     match client.next_message(50) {
-        .Ok(.Ok(.Missing)) => {}
+        .Ok(.Missing) => {}
         _ => assert(false),
     }
     stop(client);
     stopped(client);
-    var attempts = 0;
-    while unsafe {
-        hew_mqtt_connection_count()
-    } != previous_connections && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_mqtt_connection_count()
     } == previous_connections);
 }
 
+#[test]
+#[real_time]
 fn actor_stop_releases_connection_relative_to_registry() {
     let previous = unsafe {
         hew_mqtt_connection_count()
@@ -73,19 +110,7 @@ fn actor_stop_releases_connection_relative_to_registry() {
     } == previous + 1);
     stop(client);
     stopped(client);
-    attempts = 0;
-    while unsafe {
-        hew_mqtt_connection_count()
-    } != previous && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
     assert(unsafe {
         hew_mqtt_connection_count()
     } == previous);
-}
-
-fn main() {
-    publish_subscribe_preserves_exact_message_and_timeout();
-    actor_stop_releases_connection_relative_to_registry();
 }

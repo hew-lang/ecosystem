@@ -15,25 +15,21 @@ fn main() {
     while attempts_left > 0 && !served {
         attempts_left = attempts_left - 1;
         match server.accept_one() {
-            .Ok(result) => match result {
-                .Ok(request) => {
-                    println(f"{request.method()} {request.path()}");
-                    match server.respond_text(200, "Hello from Hew!\n") {
-                        .Ok(response_result) => match response_result {
-                            .Ok(_) => {}
-                            .Err(error) => println(http.error_message(error)),
-                        }
-                        .Err(_) => println("HTTP server actor stopped before replying"),
-                    }
-                    served = true;
+            .Ok(request) => {
+                println(f"{request.method()} {request.path()}");
+                match server.respond_text(200, "Hello from Hew!\n") {
+                    .Ok(_) => {}
+                    .Err(.Failed(error)) => println(http.error_message(error)),
+                    .Err(_) => println("HTTP server actor stopped before replying"),
                 }
-                // An idle quarter second is the documented outcome of
-                // accept_one(), so it is a retry rather than a failure.
-                .Err(.Accept(_)) => {}
-                .Err(error) => {
-                    println(http.error_message(error));
-                    served = true;
-                }
+                served = true;
+            }
+            // An idle quarter second is the documented outcome of
+            // accept_one(), so it is a retry rather than a failure.
+            .Err(.Failed(.Accept(_))) => {}
+            .Err(.Failed(error)) => {
+                println(http.error_message(error));
+                served = true;
             }
             .Err(_) => {
                 println("HTTP server actor stopped before replying");
@@ -51,8 +47,12 @@ before anyone can send a request, so the only outcome a reader could ever
 observe is the `Accept` error.
 
 The checked example at [`examples/hello.hew`](examples/hello.hew) is this
-program with the listening banner and a message for the case where the thirty
-seconds elapse unused. Run it from the ecosystem checkout:
+program with the loop moved into `serve_one`, which returns the request line,
+plus the listening banner and a message for the case where the thirty seconds
+elapse unused. Its test serves one request while
+`std.net.http.http_client` sends `GET /hello`, then checks the body the client
+received and the request line the server saw. Run it from the ecosystem
+checkout:
 
 ```sh
 hew run --pkg-path . net/http/examples/hello.hew
@@ -68,7 +68,19 @@ The server prints `GET /hello` and exits; `curl` prints `Hello from Hew!`. With
 no request at all it prints `no request arrived within 30 seconds` and still
 exits successfully.
 
-All operations that can fail return `Result<_, HttpError>`. The actor retains
+`server.local_addr()` binds the actor's listener if needed and returns its
+actual local address. A successful call establishes readiness without
+accepting a request. For an OS-assigned port, spawn with `addr: "127.0.0.1:0"`
+and use the address it returns. Later calls and `accept_one()` use that same
+owned listener; a bind failure returns `HttpError.Listen`. The example's test
+uses this readiness call and an assigned port, so it does not depend on port
+8080 being free. Its checked client retains HTTP status and transport-error
+details when a request fails.
+
+Every `Server` method that can fail is declared `-> T fails HttpError`, so a
+call replies `Result<T, ActorError<HttpError>>`: the handler's error arrives as
+`.Err(.Failed(error))`, and any other `.Err` means the actor did not reply (for
+example `.Dead` after `stop`). The actor retains
 each accepted connection until a response method or actor stop releases it.
 It also releases listener and request handles from its stop hook, including
 failure and caller-abandonment paths.
@@ -84,7 +96,7 @@ Header and response methods return `HttpError.NoPending` when the server is
 open but no request is awaiting a response.
 
 `server.header(name)` performs a case-insensitive lookup on the pending
-request and returns `Err(HttpError.MissingHeader(name))` when the header is
+request and fails with `HttpError.MissingHeader(name)` when the header is
 absent. An empty header value is therefore distinct from a missing header.
 Incoming HTTP/1.1 requests must contain exactly one valid `Host` header.
 Response methods accept final status codes from 200 through 599; informational

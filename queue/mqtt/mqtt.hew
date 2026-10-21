@@ -3,7 +3,7 @@
 //! The actor owns one broker connection and serializes its public operations.
 //! Invalid QoS values are rejected rather than silently downgraded. A bounded
 //! receive reports `Receive.Missing` on timeout, while transport and lifecycle
-//! failures remain typed `Result` errors.
+//! failures are typed `MqttError` failures.
 //!
 //! # Examples
 //!
@@ -11,18 +11,15 @@
 //! import hew.queue.mqtt;
 //!
 //! fn main() {
-//!     let client = spawn mqtt.Conn(options: mqtt.Options {
-//!         host: "127.0.0.1", port: 11883,
-//!         client_id: "hew-example", keepalive_seconds: 30,
-//!     });
+//!     let client = spawn mqtt.Conn {
+//!         options: mqtt.Options { host: "127.0.0.1", port: 1883, client_id: "hew-example", keepalive_seconds: 30 },
+//!     };
 //!     let _ = client.subscribe("hew/example", mqtt.QoS.AtLeastOnce);
 //!     let _ = client.publish("hew/example", "hello", mqtt.QoS.AtLeastOnce, false);
 //!     match client.next_message(1000) {
-//!         .Ok(result) => match result {
-//!             .Ok(.Message(message)) => println(message.payload),
-//!             .Ok(.Missing) => println("no message arrived"),
-//!             .Err(error) => println(mqtt.error_message(error)),
-//!         },
+//!         .Ok(.Message(message)) => println(message.payload),
+//!         .Ok(.Missing) => println("no message arrived"),
+//!         .Err(.Failed(error)) => println(mqtt.error_message(error)),
 //!         .Err(_) => println("MQTT actor stopped before replying"),
 //!     }
 //!     stop(client);
@@ -38,8 +35,6 @@ pub enum MqttError {
     InvalidInput(string) @1;
     /// The broker or client rejected an operation.
     Operation(string) @2;
-    /// A bounded operation failed because its deadline elapsed.
-    Timeout(string) @3;
     /// The actor or native handle is already closed.
     Closed(string) @4;
     /// The native layer reported an unclassified failure.
@@ -52,7 +47,6 @@ pub fn error_message(error: MqttError) -> string {
         .Connection(message) => message,
         .InvalidInput(message) => message,
         .Operation(message) => message,
-        .Timeout(message) => message,
         .Closed(message) => message,
         .Internal(message) => message,
     }
@@ -113,7 +107,6 @@ fn native_error_from(kind: i32, message: string) -> MqttError {
         1 => MqttError.Connection(message),
         2 => MqttError.InvalidInput(message),
         3 => MqttError.Operation(message),
-        4 => MqttError.Timeout(message),
         5 => MqttError.Closed(message),
         _ => MqttError.Internal(message),
     }
@@ -184,11 +177,8 @@ pub actor Conn {
     }
 
     /// Publish a UTF-8 payload to a topic.
-    receive fn publish(topic: string, payload: string, qos: QoS, retain: bool) -> Result<(), MqttError> {
-        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn publish(topic: string, payload: string, qos: QoS, retain: bool) fails MqttError {
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let retain_flag: i32 = if retain {
             1
         } else {
@@ -197,52 +187,41 @@ pub actor Conn {
         let status = unsafe {
             hew_mqtt_publish(handle, topic, payload, qos_level(qos), retain_flag)
         };
-        if status == 0 {
-            .Ok(())
-        } else {
-            .Err(native_error())
+        if status != 0 {
+            return error native_error();
         }
     }
 
     /// Subscribe to a topic filter, including MQTT `+` and `#` wildcards.
-    receive fn subscribe(topic_filter: string, qos: QoS) -> Result<(), MqttError> {
-        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn subscribe(topic_filter: string, qos: QoS) fails MqttError {
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let status = unsafe {
             hew_mqtt_subscribe(handle, topic_filter, qos_level(qos))
         };
-        if status == 0 {
-            .Ok(())
-        } else {
-            .Err(native_error())
+        if status != 0 {
+            return error native_error();
         }
     }
 
     /// Wait for one delivery, preserving timeout as `Receive.Missing`.
-    receive fn next_message(timeout_ms: i64) -> Result<Receive, MqttError> {
-        let handle = match active_handle(native_handle, connect_error_kind, connect_error_message) {
-            .Ok(_hew_migrate_value) => _hew_migrate_value,
-            .Err(_hew_migrate_error) => return .Err(_hew_migrate_error),
-        };
+    receive fn next_message(timeout_ms: i64) -> Receive fails MqttError {
+        let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
         let result = NativeMessage { handle: unsafe {
             hew_mqtt_next_result(handle, timeout_ms)
         } };
         if result.handle == 0 {
             if unsafe {
                 hew_mqtt_last_error_kind()
-            } == 0 {
-                .Ok(Receive.Missing)
-            } else {
-                .Err(native_error())
+            } != 0 {
+                return error native_error();
             }
+            Receive.Missing
         } else {
             let topic = result.topic();
             let payload = result.payload();
             let message = Delivery { topic: topic.clone(), payload: payload.clone() };
             result.close();
-            .Ok(Receive.Message(message))
+            Receive.Message(message)
         }
     }
 

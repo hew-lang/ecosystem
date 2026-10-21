@@ -97,4 +97,25 @@ mod tests {
             vec![Param::Null, Param::Int(7), Param::Text("a".to_owned())]
         );
     }
+
+    #[test]
+    fn decodes_every_variant_hew_encodes() {
+        // tests/wire.hew asserts that cbor.encode of these six parameters
+        // produces exactly these bytes.
+        let data = [
+            0x86, 0x00, 0xa1, 0x01, 0xf5, 0xa1, 0x02, 0x07, 0xa1, 0x03, 0xf9, 0x3e, 0x00, 0xa1,
+            0x04, 0x61, 0x61, 0xa1, 0x05, 0x42, 0x00, 0xff,
+        ];
+        assert_eq!(
+            decode(&data).unwrap(),
+            vec![
+                Param::Null,
+                Param::Bool(true),
+                Param::Int(7),
+                Param::Float(1.5),
+                Param::Text("a".to_owned()),
+                Param::Bytes(vec![0x00, 0xff]),
+            ]
+        );
+    }
 }

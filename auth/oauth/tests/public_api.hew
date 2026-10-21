@@ -1,159 +1,349 @@
 //! End-to-end coverage for the public `hew.auth.oauth` API.
+//!
+//! Token requests go to a loopback `std.net.http` server owned by this
+//! program: the OAuth call runs in a fork while the main thread accepts the
+//! request, records it, and answers with a canned status and body.
 
 import hew.auth.oauth;
 
-extern "C" {
-    fn hew_oauth_client_count() -> i64;
-    fn hew_oauth_token_count() -> i64;
+import std.crypto.crypto;
+
+import std.encoding.base64;
+
+import std.net.http;
+
+import std.net.http.http_client;
+
+// What the token endpoint received.
+type Received {
+    method: string;
+    content_type: string;
+    form: string;
 }
 
-fn failed_token_exchange_releases_relative_token_count() {
-    let before = unsafe {
-        hew_oauth_token_count()
-    };
-    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
-    match client.client_credentials("not a URL", "") {
-        .Ok(result) => match result {
-            .Err(.Transport(message)) => assert(message.contains("transport_error")),
-            .Err(.TokenEndpoint(_, message)) => assert(!message.is_empty()),
-            _ => panic("expected a transport or token-endpoint error"),
+fn listen() -> http.Server {
+    match http.listen("127.0.0.1:0") {
+        .Ok(server) => server,
+        .Err(_) => panic(f"loopback listen failed: {http.listen_error()}"),
+    }
+}
+
+fn token_url(server: http.Server) -> string {
+    f"http://127.0.0.1:{http.server_port(server)}/token"
+}
+
+fn answer(server: http.Server, status: i64, body: string) -> Received {
+    let req = server.accept();
+    let received = Received { method: req.method(), content_type: req.header("Content-Type"), form: req.body("utf-8") };
+    match req.respond(status, "application/json", body) {
+        .Ok(_) => {}
+        .Err(_) => panic("loopback respond failed"),
+    }
+    req.close();
+    received
+}
+
+fn expect_token(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>) -> oauth.Token {
+    match reply {
+        .Ok(token) => token,
+        .Err(.Failed(error)) => panic(f"expected a token, got: {oauth.error_message(error)}"),
+        .Err(_) => panic("OAuth actor stopped before replying"),
+    }
+}
+
+fn expect_endpoint_error(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>, status: i64, message: string) {
+    match reply {
+        .Err(.Failed(.TokenEndpoint(got_status, got_message))) => {
+            assert(got_status == status);
+            assert(got_message == message);
         }
-        .Err(_) => panic("OAuth actor stopped during client_credentials"),
+        _ => panic("expected a token-endpoint error"),
     }
-    assert(unsafe {
-        hew_oauth_token_count()
-    } == before);
-    // close() is a fire-and-forget send; settle it so the next test samples
-    // a native client count this one has already given back.
+}
+
+fn expect_invalid_input(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>, message: string) {
+    match reply {
+        .Err(.Failed(.InvalidInput(got))) => assert(got == message),
+        _ => panic("expected an InvalidInput error"),
+    }
+}
+
+fn new_client() -> oauth.Client {
+    // A broken loopback exchange fails within seconds rather than at the
+    // client's 30 s default.
+    match http_client.set_timeout(5000) {
+        .Ok(_) => {}
+        .Err(_) => panic("set_timeout rejected 5000 ms"),
+    }
+    spawn oauth.Client { client_id: "client", client_secret: "s3cret&more" }
+}
+
+fn finish(client: oauth.Client) {
     stop(client);
     stopped(client);
-    sleep(20ms);
 }
 
-fn client_without_close(before: i64) -> oauth.Client {
-    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
-    sleep(20ms);
-    assert(unsafe {
-        hew_oauth_client_count()
-    } == before + 1);
-    client
+#[test]
+#[real_time]
+fn client_credentials_posts_form_and_reads_every_token_field() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.client_credentials(token_url(server), "read ü");
+    let received = answer(server, 200, "{\"access_token\":\"access-1\",\"token_type\":\"mac\",\"expires_in\":3600,\"refresh_token\":\"refresh-1\",\"scope\":\"read\"}");
+    server.close();
+    let token = expect_token(await pending);
+    assert(received.method == "POST");
+    assert(received.content_type == "application/x-www-form-urlencoded");
+    assert(received.form == "grant_type=client_credentials&client_id=client&client_secret=s3cret%26more&scope=read%20%C3%BC");
+    assert(token.access_token() == "access-1");
+    assert(token.token_type() == "mac");
+    match token.expires_in() {
+        .Some(seconds) => assert(seconds == 3600),
+        .None => panic("expected expires_in"),
+    }
+    match token.refresh_token() {
+        .Some(value) => assert(value == "refresh-1"),
+        .None => panic("expected a refresh token"),
+    }
+    match token.get_scope() {
+        .Some(value) => assert(value == "read"),
+        .None => panic("expected a scope"),
+    }
+    finish(client);
 }
 
-fn actor_stop_releases_relative_client_count() {
-    let before = unsafe {
-        hew_oauth_client_count()
+#[test]
+#[real_time]
+fn client_credentials_without_scope_omits_it_and_defaults_optional_fields() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.client_credentials(token_url(server), "");
+    let received = answer(server, 200, "{\"access_token\":\"bare\"}");
+    server.close();
+    let token = expect_token(await pending);
+    assert(!received.form.contains("scope="));
+    assert(token.access_token() == "bare");
+    assert(token.token_type() == "Bearer");
+    assert(token.expires_in().is_none());
+    assert(token.refresh_token().is_none());
+    assert(token.get_scope().is_none());
+    finish(client);
+}
+
+#[test]
+#[real_time]
+fn rejected_request_reports_status_and_endpoint_error() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.client_credentials(token_url(server), "");
+    let _ = answer(server, 400, "{\"error\":\"invalid_client\",\"error_description\":\"bad credentials\"}");
+    server.close();
+    expect_endpoint_error(await pending, 400, "invalid_client: bad credentials");
+    finish(client);
+}
+
+#[test]
+#[real_time]
+fn success_status_with_oauth_error_body_is_rejected() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.client_credentials(token_url(server), "");
+    let _ = answer(server, 200, "{\"error\":\"slow_down\"}");
+    server.close();
+    expect_endpoint_error(await pending, 200, "slow_down");
+    finish(client);
+}
+
+#[test]
+#[real_time]
+fn non_json_body_reports_invalid_json() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.client_credentials(token_url(server), "");
+    let _ = answer(server, 200, "<html>not a token</html>");
+    server.close();
+    match await pending {
+        .Err(.Failed(.TokenEndpoint(status, message))) => {
+            assert(status == 200);
+            assert(message.starts_with("invalid_json: "));
+        }
+        _ => panic("expected a token-endpoint error"),
+    }
+    finish(client);
+}
+
+#[test]
+#[real_time]
+fn missing_access_token_is_rejected() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.client_credentials(token_url(server), "");
+    let _ = answer(server, 200, "{\"token_type\":\"Bearer\"}");
+    server.close();
+    expect_endpoint_error(await pending, 200, "missing access_token in token response");
+    finish(client);
+}
+
+#[test]
+#[real_time]
+fn refused_connection_reports_transport_error() {
+    // Bind and release a port so nothing is listening on it.
+    let server = listen();
+    let url = token_url(server);
+    server.close();
+    let client = new_client();
+    match client.client_credentials(url, "") {
+        .Err(.Failed(.Transport(message))) => assert(message.starts_with("transport_error: ") && message.len() > 17),
+        _ => panic("expected a transport error"),
+    }
+    finish(client);
+}
+
+#[test]
+#[real_time]
+fn exchange_code_sends_the_verifier_auth_url_committed_to() {
+    let server = listen();
+    let client = new_client();
+    let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "", "caller-state") {
+        .Ok(value) => value,
+        _ => panic("expected an authorization URL"),
     };
-    let client = client_without_close(before);
-    stop(client);
-    stopped(client);
-    var attempts = 0;
-    while unsafe {
-        hew_oauth_client_count()
-    } != before && attempts < 100 {
-        sleep(5ms);
-        attempts = attempts + 1;
-    }
-    assert(unsafe {
-        hew_oauth_client_count()
-    } == before);
+    let verifier = match client.current_code_verifier() {
+        .Ok(.Some(value)) => value,
+        _ => panic("expected auth_url to retain a PKCE verifier"),
+    };
+    // RFC 7636: 43 unpadded base64url characters, and the URL carries the
+    // S256 challenge of exactly the verifier the exchange will send.
+    assert(verifier.len() == 43);
+    assert(!verifier.contains("="));
+    let challenge = base64.encode_url(crypto.sha256(verifier.to_bytes())).replace("=", "");
+    assert(url.contains(f"&code_challenge={challenge}&code_challenge_method=S256"));
+    let pending = fork client.exchange_code(token_url(server), "code 123", "https://app.example/callback");
+    let received = answer(server, 200, "{\"access_token\":\"exchanged\"}");
+    server.close();
+    let token = expect_token(await pending);
+    assert(token.access_token() == "exchanged");
+    assert(received.form == f"grant_type=authorization_code&code=code%20123&redirect_uri=https%3A%2F%2Fapp.example%2Fcallback&client_id=client&client_secret=s3cret%26more&code_verifier={verifier}");
+    finish(client);
 }
 
-fn empty_callback_state_returns_typed_error() {
-    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
+#[test]
+#[real_time]
+fn exchange_code_with_verifier_sends_the_supplied_verifier() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.exchange_code_with_verifier(token_url(server), "abc", "https://app.example/cb", "stored-verifier");
+    let received = answer(server, 200, "{\"access_token\":\"exchanged\"}");
+    server.close();
+    let _ = expect_token(await pending);
+    assert(received.form.starts_with("grant_type=authorization_code&code=abc&"));
+    assert(received.form.ends_with("&code_verifier=stored-verifier"));
+    finish(client);
+}
+
+#[test]
+#[real_time]
+fn refresh_posts_refresh_grant() {
+    let server = listen();
+    let client = new_client();
+    let pending = fork client.refresh(token_url(server), "refresh token");
+    let received = answer(server, 200, "{\"access_token\":\"new-access\",\"refresh_token\":\"next\"}");
+    server.close();
+    let token = expect_token(await pending);
+    assert(received.form == "grant_type=refresh_token&refresh_token=refresh%20token&client_id=client&client_secret=s3cret%26more");
+    assert(token.access_token() == "new-access");
+    match token.refresh_token() {
+        .Some(value) => assert(value == "next"),
+        .None => panic("expected the rotated refresh token"),
+    }
+    finish(client);
+}
+
+// Each of these is refused before any request is sent.
+#[test]
+#[real_time]
+fn local_preconditions_return_invalid_input() {
+    let client = new_client();
+    expect_invalid_input(client.exchange_code("http://127.0.0.1:9/token", "code", "https://app.example/cb"), "missing_code_verifier: call auth_url before exchange_code or use exchange_code_with_verifier");
+    expect_invalid_input(client.exchange_code_with_verifier("http://127.0.0.1:9/token", "code", "https://app.example/cb", ""), "PKCE verifier must not be empty");
+    expect_invalid_input(client.refresh("http://127.0.0.1:9/token", ""), "refresh token must not be empty");
+    expect_invalid_input(client.client_credentials("", ""), "token URL must not be empty");
     match client.validate_state("") {
-        .Ok(result) => match result {
-            .Err(.InvalidInput(message)) => assert(!message.is_empty()),
-            _ => panic("expected an InvalidInput error for an empty callback state"),
-        }
-        .Err(_) => panic("OAuth actor stopped during validate_state"),
+        .Err(.Failed(.InvalidInput(message))) => assert(message == "callback state must not be empty"),
+        _ => panic("expected an InvalidInput error for an empty callback state"),
     }
-    // close() is a fire-and-forget send; settle it so the next test samples
-    // a native client count this one has already given back.
-    stop(client);
-    stopped(client);
-    sleep(20ms);
+    match client.auth_url("", "https://app.example/cb", "", "") {
+        .Err(.Failed(.InvalidInput(_))) => {}
+        _ => panic("expected an InvalidInput error for an empty authorization URL"),
+    }
+    finish(client);
 }
 
-// The authorization URL is built entirely in process, so this is the success
-// half of the surface without an authorization server: long non-ASCII values
-// go into the native layer as managed strings and the built URL and the
-// retained state come back out.
-fn auth_url_round_trips_long_non_ascii_values() {
-    let client = spawn oauth.Client { client_id: "identité-du-client-2026", client_secret: "secret" };
+#[test]
+fn fresh_client_has_no_state_and_matches_nothing() {
+    let client = new_client();
+    match client.current_state() {
+        .Ok(.None) => {}
+        _ => panic("expected a fresh client with no state"),
+    }
+    match client.current_code_verifier() {
+        .Ok(.None) => {}
+        _ => panic("expected a fresh client with no verifier"),
+    }
+    match client.validate_state("anything") {
+        .Ok(matched) => assert(!matched),
+        _ => panic("expected a fresh client to reject every state"),
+    }
+    finish(client);
+}
+
+// The authorization URL is built entirely in process: long non-ASCII values
+// and an embedded NUL are percent-encoded byte for byte, and the caller's
+// state is retained.
+#[test]
+fn auth_url_encodes_non_ascii_and_nul_values() {
+    let client = spawn oauth.Client { client_id: "identité\0du-client-2026", client_secret: "secret" };
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "lecture écriture profil élargi", "état-de-rappel-vérifié-42") {
-        .Ok(result) => match result {
-            .Ok(value) => value,
-            .Err(_) => panic("expected an authorization URL"),
-        }
-        .Err(_) => panic("OAuth actor stopped during auth_url"),
+        .Ok(value) => value,
+        _ => panic("expected an authorization URL"),
     };
-    assert(url.contains("client_id=identit%C3%A9-du-client-2026"));
+    assert(url.starts_with("https://authorization.example/authorize?response_type=code&"));
+    assert(url.contains("client_id=identit%C3%A9%00du-client-2026"));
     assert(url.contains("scope=lecture%20%C3%A9criture%20profil%20%C3%A9largi"));
     assert(url.contains("state=%C3%A9tat-de-rappel-v%C3%A9rifi%C3%A9-42"));
     assert(url.contains("redirect_uri=https%3A%2F%2Fapp.example%2Fcallback"));
     match client.current_state() {
-        .Ok(result) => match result {
-            .Ok(.Some(value)) => assert(value == "état-de-rappel-vérifié-42"),
-            _ => panic("expected auth_url to retain the caller's state"),
-        }
-        .Err(_) => panic("OAuth actor stopped during current_state"),
+        .Ok(.Some(value)) => assert(value == "état-de-rappel-vérifié-42"),
+        _ => panic("expected auth_url to retain the caller's state"),
     }
-    stop(client);
-    stopped(client);
-    sleep(20ms);
+    finish(client);
 }
 
-fn auth_url_retains_state_and_pkce_verifier() {
-    let client = spawn oauth.Client { client_id: "demo", client_secret: "secret" };
+#[test]
+fn generated_state_validates_and_each_auth_url_rotates_it() {
+    let client = new_client();
     let url = match client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "") {
-        .Ok(result) => match result {
-            .Ok(value) => value,
-            .Err(_) => panic("expected an authorization URL"),
-        }
-        .Err(_) => panic("OAuth actor stopped during auth_url"),
+        .Ok(value) => value,
+        _ => panic("expected an authorization URL"),
     };
-    assert(url.contains("code_challenge_method=S256"));
     let state = match client.current_state() {
-        .Ok(result) => match result {
-            .Ok(.Some(value)) => value,
-            _ => panic("expected auth_url to retain a state value"),
-        }
-        .Err(_) => panic("OAuth actor stopped during current_state"),
+        .Ok(.Some(value)) => value,
+        _ => panic("expected auth_url to retain a state value"),
     };
-    assert(!state.is_empty());
-    assert(url.contains(f"state={state}"));
-    match client.current_code_verifier() {
-        .Ok(result) => match result {
-            .Ok(.Some(verifier)) => assert(!verifier.is_empty()),
-            _ => panic("expected auth_url to retain a PKCE verifier"),
-        }
-        .Err(_) => panic("OAuth actor stopped during current_code_verifier"),
-    }
+    assert(state.len() == 43);
+    assert(url.contains(f"&state={state}&"));
     match client.validate_state(state) {
-        .Ok(result) => match result {
-            .Ok(matched) => assert(matched),
-            .Err(_) => panic("expected the retained state to validate"),
-        }
-        .Err(_) => panic("OAuth actor stopped during validate_state"),
+        .Ok(matched) => assert(matched),
+        _ => panic("expected the retained state to validate"),
     }
     match client.validate_state("a state this client never issued") {
-        .Ok(result) => match result {
-            .Ok(matched) => assert(!matched),
-            .Err(_) => panic("expected a mismatched state to be rejected, not to error"),
-        }
-        .Err(_) => panic("OAuth actor stopped during validate_state"),
+        .Ok(matched) => assert(!matched),
+        _ => panic("expected a mismatched state to be rejected, not to error"),
     }
-    // close() is a fire-and-forget send; settle it so the next test samples
-    // a native client count this one has already given back.
-    stop(client);
-    stopped(client);
-    sleep(20ms);
-}
-
-fn main() {
-    failed_token_exchange_releases_relative_token_count();
-    actor_stop_releases_relative_client_count();
-    empty_callback_state_returns_typed_error();
-    auth_url_round_trips_long_non_ascii_values();
-    auth_url_retains_state_and_pkce_verifier();
+    let _ = client.auth_url("https://authorization.example/authorize", "https://app.example/callback", "profile", "");
+    match client.validate_state(state) {
+        .Ok(matched) => assert(!matched),
+        _ => panic("expected the previous state to be replaced"),
+    }
+    finish(client);
 }

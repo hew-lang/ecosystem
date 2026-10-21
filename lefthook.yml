@@ -1,14 +1,5 @@
-# Lefthook configuration — git hook manager
-# https://github.com/evilmartians/lefthook
-#
+# Lefthook pre-commit hooks: format staged files with the pinned formatters.
 # Per-developer overrides go in lefthook-local.yml (gitignored).
-#
-# Every formatter here is one the repository pins or gates: `hew fmt` is the
-# pinned compiler's, `cargo fmt` is the toolchain's, and the shell and TOML
-# formatters are run with the settings the tracked files already carry. A
-# formatter the repository does not pin rewrites files differently on different
-# machines, which turns an unrelated version bump into a diff, so Markdown,
-# YAML and JSON are formatted by hand here.
 
 output:
   - failure
@@ -27,13 +18,3 @@ pre-commit:
       glob: "*.rs"
       stage_fixed: true
       run: cargo fmt --quiet 2>/dev/null
-
-    fmt-toml:
-      glob: "*.toml"
-      stage_fixed: true
-      run: taplo fmt {staged_files} 2>/dev/null
-
-    fmt-shell:
-      glob: "*.sh"
-      stage_fixed: true
-      run: shfmt -i 4 -w {staged_files} 2>/dev/null

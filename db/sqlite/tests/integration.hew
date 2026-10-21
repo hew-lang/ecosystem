@@ -1,6 +1,6 @@
 import hew.db.sql.{Param};
 
-import hew.db.sqlite.{SqliteError, CellValue};
+import hew.db.sqlite.{SqliteError};
 
 extern "C" {
     fn hew_sqlite_connection_count() -> i64;
@@ -37,16 +37,17 @@ fn assert_bytes(actual: bytes, expected: bytes) {
     }
 }
 
-fn expect_count(result: Result<i64, SqliteError>, expected: i64) {
+fn expect_count(result: Result<i64, ActorError<SqliteError>>, expected: i64) {
     match result {
         .Ok(value) => assert(value == expected),
+        .Err(.Failed(error)) => panic(sqlite.error_message(error)),
         .Err(_) => assert(false),
     }
 }
 
-fn expect_query_error<T>(result: Result<T, SqliteError>) {
+fn expect_query_error<T>(result: Result<T, ActorError<SqliteError>>) {
     match result {
-        .Err(.Query(message)) => assert(!message.is_empty()),
+        .Err(.Failed(.Query(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
 }
@@ -55,22 +56,15 @@ fn database() -> sqlite.Db {
     spawn sqlite.Db { path: ":memory:" }
 }
 
+#[test]
+#[real_time]
 fn query_snapshot_preserves_values_null_empty_and_nul() {
     let db = database();
-    match db.execute("CREATE TABLE values_table (id INTEGER PRIMARY KEY, value TEXT NULL)") {
-        .Ok(result) => expect_count(result, 0),
-        .Err(_) => assert(false),
-    }
-    match db.execute_params("INSERT INTO values_table VALUES (?, ?)", insert_params()) {
-        .Ok(result) => expect_count(result, 1),
-        .Err(_) => assert(false),
-    }
-    match db.execute("INSERT INTO values_table VALUES (2, ''), (3, NULL)") {
-        .Ok(result) => expect_count(result, 2),
-        .Err(_) => assert(false),
-    }
+    expect_count(db.execute("CREATE TABLE values_table (id INTEGER PRIMARY KEY, value TEXT NULL)"), 0);
+    expect_count(db.execute_params("INSERT INTO values_table VALUES (?, ?)", insert_params()), 1);
+    expect_count(db.execute("INSERT INTO values_table VALUES (2, ''), (3, NULL)"), 2);
     match db.query("SELECT id, value FROM values_table ORDER BY id") {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             assert(query.columns.len() == 2);
             assert(query.rows.len() == 3);
             match query.rows[0].values[1] {
@@ -89,7 +83,7 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
         _ => assert(false),
     }
     match db.query_params("SELECT value FROM values_table WHERE id = ?", [Param.Int(1)]) {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             assert(query.rows.len() == 1);
             match query.rows[0].values[0] {
                 .Text(value) => assert_bytes(value, nul_value()),
@@ -99,7 +93,7 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
         _ => assert(false),
     }
     match db.query("SELECT x'ff00' AS binary_value") {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             var expected: bytes = bytes.new();
             expected.push(255);
             expected.push(0);
@@ -114,18 +108,14 @@ fn query_snapshot_preserves_values_null_empty_and_nul() {
     stopped(db);
 }
 
+#[test]
+#[real_time]
 fn actual_database_failures_are_typed() {
     let db = database();
-    match db.execute("NOT SQL") {
-        .Ok(result) => expect_query_error(result),
-        .Err(_) => assert(false),
-    }
-    match db.query("SELECT * FROM table_that_does_not_exist") {
-        .Ok(result) => expect_query_error(result),
-        .Err(_) => assert(false),
-    }
+    expect_query_error(db.execute("NOT SQL"));
+    expect_query_error(db.query("SELECT * FROM table_that_does_not_exist"));
     match db.query_params("SELECT ?", Vec.new()) {
-        .Ok(.Err(.Query(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.Query(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(db);
@@ -136,10 +126,12 @@ fn actual_database_failures_are_typed() {
     }
 }
 
+#[test]
+#[real_time]
 fn open_failure_is_typed() {
     let db = spawn sqlite.Db { path: "/hew-sql-beta-missing/parent/database.sqlite" };
     match db.query("SELECT 1") {
-        .Ok(.Err(.Open(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.Open(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(db);
@@ -149,7 +141,7 @@ fn open_failure_is_typed() {
 fn actor_without_close(previous: i64) -> sqlite.Db {
     let db = database();
     match db.query("SELECT 1") {
-        .Ok(.Ok(_)) => assert(true),
+        .Ok(_) => assert(true),
         _ => assert(false),
     }
     assert(unsafe {
@@ -158,6 +150,8 @@ fn actor_without_close(previous: i64) -> sqlite.Db {
     db
 }
 
+#[test]
+#[real_time]
 fn explicit_actor_stop_releases_connection() {
     let previous = unsafe {
         hew_sqlite_connection_count()
@@ -178,13 +172,15 @@ fn explicit_actor_stop_releases_connection() {
     } == previous);
 }
 
+#[test]
+#[real_time]
 fn typed_parameters_preserve_values() {
     let db = database();
     var binary = invalid_utf8();
     binary.push(0);
     let parameters = [Param.Null, Param.Bool(true), Param.Int(-9223372036854775807 - 1), Param.Int(9223372036854775807), Param.Float(1.25), Param.Text("first line\nZoë 雪's \\ path"), Param.Text(""), Param.Bytes(binary), Param.Bytes(bytes.new())];
     match db.query_params("SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?", parameters) {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             assert(query.rows.len() == 1);
             assert(query.columns.len() == 9);
             match query.rows[0].values[0] {
@@ -209,21 +205,13 @@ fn typed_parameters_preserve_values() {
                 _ => panic("empty binary parameter became NULL"),
             }
         }
-        .Ok(.Err(error)) => panic(sqlite.error_message(error)),
+        .Err(.Failed(error)) => panic(sqlite.error_message(error)),
         .Err(_) => panic("SQL actor stopped during typed query"),
     }
     match db.query_params("SELECT 1", Vec.new()) {
-        .Ok(.Ok(query)) => assert(query.rows.len() == 1),
+        .Ok(query) => assert(query.rows.len() == 1),
         _ => panic("empty parameter list failed"),
     }
     stop(db);
     stopped(db);
-}
-
-fn main() {
-    typed_parameters_preserve_values();
-    query_snapshot_preserves_values_null_empty_and_nul();
-    actual_database_failures_are_typed();
-    open_failure_is_typed();
-    explicit_actor_stop_releases_connection();
 }

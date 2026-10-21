@@ -1,6 +1,5 @@
 [workspace]
 members = [
-  "auth/oauth",
   "db/mongodb",
   "db/mysql",
   "db/postgres",
@@ -17,20 +16,17 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/hew-lang/ecosystem"
 
 [workspace.dependencies]
-hew-cabi = { git = "https://github.com/hew-lang/hew", rev = "6a446f773391f45d2c0ce0a799240b8b9afef54e" }
-libc = "0.2"
+hew-cabi = { git = "https://github.com/hew-lang/hew", rev = "dd0911184af12136eda7e89052e5b564d56ba643" }
 
 [patch.crates-io]
-# nuid 0.3.2 uses rand = ">=0.8" which resolves to rand 0.9 and breaks
-# (rand::distributions::Alphanumeric moved in rand 0.9). This local copy
-# changes the rand dep to "^0.8" so it stays on rand 0.8.x only.
-# Remove once nats upgrades to a nuid that pins rand = "^0.8" explicitly.
+# nuid 0.3.2 declares rand >=0.8, which resolves to an incompatible rand; this
+# copy pins rand ^0.8.
 nuid = { path = "vendor/nuid-fixed" }
 
 [workspace.lints.rust]

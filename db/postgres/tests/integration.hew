@@ -1,6 +1,6 @@
 import hew.db.sql.{Param};
 
-import hew.db.postgres.{PostgresError, CellValue};
+import hew.db.postgres.{PostgresError};
 
 extern "C" {
     fn hew_pg_connection_count() -> i64;
@@ -8,14 +8,6 @@ extern "C" {
 
 fn unicode_text() -> string {
     "Répertoire des requêtes traitées — 雪"
-}
-
-fn nul_value() -> bytes {
-    var value: bytes = bytes.new();
-    value.push(65);
-    value.push(0);
-    value.push(66);
-    value
 }
 
 fn invalid_utf8() -> bytes {
@@ -37,23 +29,24 @@ fn assert_bytes(actual: bytes, expected: bytes) {
     }
 }
 
-fn expect_count(result: Result<i64, PostgresError>, expected: i64) {
+fn expect_count(result: Result<i64, ActorError<PostgresError>>, expected: i64) {
     match result {
         .Ok(value) => assert(value == expected),
-        .Err(error) => panic(postgres.error_message(error)),
+        .Err(.Failed(error)) => panic(postgres.error_message(error)),
+        .Err(_) => assert(false),
     }
 }
 
-fn expect_query_error<T>(result: Result<T, PostgresError>) {
+fn expect_query_error<T>(result: Result<T, ActorError<PostgresError>>) {
     match result {
-        .Err(.Query(message)) => assert(!message.is_empty()),
+        .Err(.Failed(.Query(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
 }
 
-fn expect_query_error_reporting<T>(result: Result<T, PostgresError>, expected: string) {
+fn expect_query_error_reporting<T>(result: Result<T, ActorError<PostgresError>>, expected: string) {
     match result {
-        .Err(.Query(message)) => assert(message.contains(expected)),
+        .Err(.Failed(.Query(message))) => assert(message.contains(expected)),
         _ => assert(false),
     }
 }
@@ -62,26 +55,16 @@ fn connection() -> postgres.Conn {
     spawn postgres.Conn { connstr: "host=127.0.0.1 port=5432 user=hew password=hew dbname=hew_test" }
 }
 
+#[test]
+#[real_time]
 fn query_snapshot_preserves_values_null_and_empty() {
     let db = connection();
-    match db.execute("DROP TABLE IF EXISTS hew_sql_beta") {
-        .Ok(result) => expect_count(result, 0),
-        .Err(_) => assert(false),
-    }
-    match db.execute("CREATE TABLE hew_sql_beta (id BIGINT PRIMARY KEY, value TEXT NULL)") {
-        .Ok(result) => expect_count(result, 0),
-        .Err(_) => assert(false),
-    }
-    match db.execute_params("INSERT INTO hew_sql_beta VALUES ($1::bigint, $2::text)", [Param.Int(1), Param.Text("value")]) {
-        .Ok(result) => expect_count(result, 1),
-        .Err(_) => panic("actor stopped during parameter insert"),
-    }
-    match db.execute("INSERT INTO hew_sql_beta VALUES (2, ''), (3, NULL)") {
-        .Ok(result) => expect_count(result, 2),
-        .Err(_) => assert(false),
-    }
+    expect_count(db.execute("DROP TABLE IF EXISTS hew_sql_beta"), 0);
+    expect_count(db.execute("CREATE TABLE hew_sql_beta (id BIGINT PRIMARY KEY, value TEXT NULL)"), 0);
+    expect_count(db.execute_params("INSERT INTO hew_sql_beta VALUES ($1::bigint, $2::text)", [Param.Int(1), Param.Text("value")]), 1);
+    expect_count(db.execute("INSERT INTO hew_sql_beta VALUES (2, ''), (3, NULL)"), 2);
     match db.query("SELECT id, value FROM hew_sql_beta ORDER BY id") {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             assert(query.columns.len() == 2);
             assert(query.rows.len() == 3);
             match query.rows[0].values[1] {
@@ -100,7 +83,7 @@ fn query_snapshot_preserves_values_null_and_empty() {
         _ => assert(false),
     }
     match db.query_params("SELECT value FROM hew_sql_beta WHERE id = $1::bigint", [Param.Int(1)]) {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             assert(query.rows.len() == 1);
             match query.rows[0].values[0] {
                 .Text(value) => assert_bytes(value, "value".to_bytes()),
@@ -110,7 +93,7 @@ fn query_snapshot_preserves_values_null_and_empty() {
         _ => assert(false),
     }
     match db.query("SELECT CAST('Répertoire des requêtes traitées — 雪' AS text) AS value") {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             assert(query.rows.len() == 1);
             match query.rows[0].values[0] {
                 .Text(value) => assert_bytes(value, unicode_text().to_bytes()),
@@ -120,7 +103,7 @@ fn query_snapshot_preserves_values_null_and_empty() {
         _ => assert(false),
     }
     match db.query("SELECT decode('ff00', 'hex') AS binary_value") {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             var expected: bytes = bytes.new();
             expected.push(255);
             expected.push(0);
@@ -135,26 +118,16 @@ fn query_snapshot_preserves_values_null_and_empty() {
     stopped(db);
 }
 
+#[test]
+#[real_time]
 fn actual_database_failures_are_typed() {
     let db = connection();
-    match db.execute("NOT SQL") {
-        .Ok(result) => expect_query_error(result),
-        .Err(_) => assert(false),
-    }
-    match db.query("SELECT * FROM table_that_does_not_exist") {
-        .Ok(result) => expect_query_error(result),
-        .Err(_) => assert(false),
-    }
-    match db.query("SELECT CAST('Répertoire des requêtes traitées — 雪' AS bigint)") {
-        .Ok(result) => expect_query_error_reporting(result, unicode_text()),
-        .Err(_) => assert(false),
-    }
-    match db.query_params("SELECT $1::text", [Param.Text("A\0B")]) {
-        .Ok(result) => expect_query_error(result),
-        .Err(_) => assert(false),
-    }
+    expect_query_error(db.execute("NOT SQL"));
+    expect_query_error(db.query("SELECT * FROM table_that_does_not_exist"));
+    expect_query_error_reporting(db.query("SELECT CAST('Répertoire des requêtes traitées — 雪' AS bigint)"), unicode_text());
+    expect_query_error(db.query_params("SELECT $1::text", [Param.Text("A\0B")]));
     match db.query_params("SELECT $1::text", Vec.new()) {
-        .Ok(.Err(.Query(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.Query(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(db);
@@ -168,7 +141,7 @@ fn actual_database_failures_are_typed() {
 fn actor_without_close(previous: i64) -> postgres.Conn {
     let db = connection();
     match db.query("SELECT 1") {
-        .Ok(.Ok(_)) => assert(true),
+        .Ok(_) => assert(true),
         _ => assert(false),
     }
     assert(unsafe {
@@ -177,6 +150,8 @@ fn actor_without_close(previous: i64) -> postgres.Conn {
     db
 }
 
+#[test]
+#[real_time]
 fn explicit_actor_stop_releases_connection() {
     let previous = unsafe {
         hew_pg_connection_count()
@@ -197,13 +172,15 @@ fn explicit_actor_stop_releases_connection() {
     } == previous);
 }
 
+#[test]
+#[real_time]
 fn typed_parameters_preserve_values() {
     let db = connection();
     var binary = invalid_utf8();
     binary.push(0);
     let parameters = [Param.Null, Param.Bool(true), Param.Int(-9223372036854775807 - 1), Param.Int(9223372036854775807), Param.Float(1.25), Param.Text("first line\nZoë 雪's \\ path"), Param.Text(""), Param.Bytes(binary), Param.Bytes(bytes.new())];
     match db.query_params("SELECT CAST($1 AS text), $2, $3, $4, $5, $6, $7, $8, $9", parameters) {
-        .Ok(.Ok(query)) => {
+        .Ok(query) => {
             assert(query.rows.len() == 1);
             assert(query.columns.len() == 9);
             match query.rows[0].values[0] {
@@ -228,20 +205,13 @@ fn typed_parameters_preserve_values() {
                 _ => panic("empty binary parameter became NULL"),
             }
         }
-        .Ok(.Err(error)) => panic(postgres.error_message(error)),
+        .Err(.Failed(error)) => panic(postgres.error_message(error)),
         .Err(_) => panic("SQL actor stopped during typed query"),
     }
     match db.query_params("SELECT 1", Vec.new()) {
-        .Ok(.Ok(query)) => assert(query.rows.len() == 1),
+        .Ok(query) => assert(query.rows.len() == 1),
         _ => panic("empty parameter list failed"),
     }
     stop(db);
     stopped(db);
-}
-
-fn main() {
-    typed_parameters_preserve_values();
-    query_snapshot_preserves_values_null_and_empty();
-    actual_database_failures_are_typed();
-    explicit_actor_stop_releases_connection();
 }

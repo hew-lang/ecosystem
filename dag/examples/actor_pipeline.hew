@@ -1,15 +1,10 @@
 // actor_pipeline.hew — route an input through LIVE per-node actors.
 //
-// The DAG library supplies the runtime spec loading, validation, and
-// topological order; this example supplies the *actors*. Each node is a live
-// `Stage` actor; the driver asks them in topo order, feeding each node the
-// merged output of its predecessors.
-//
-// The `await` driver loop is open-coded here rather than passed to
-// `route_with` as a closure: on the current substrate an `await` inside a
-// closure compiles and then yields a value that is not the actor's reply, so
-// the ask has to happen at statement level. (See WALLS.md.) The DAG library
-// supplies parsing, validation, and the topological sort.
+// The DAG library supplies the runtime spec loading, validation, topological
+// order and routing; this example supplies the *actors*. Each node is a live
+// `Stage` actor, and the `route_with` dispatch asks the node's actor for its
+// output. `route_with` takes a `fn[suspends]` dispatch, so the dispatch can
+// wait on an actor directly.
 //
 //   node0 (add 1) ──> node1 (multiply 10) ──> node2 (add 100)
 //
@@ -18,43 +13,36 @@
 // Run from the ecosystem root:  hew run dag/examples/actor_pipeline.hew
 import hew.dag;
 
-// A live graph node. `op_code`/`operand` are the same encoding the library uses,
-// so the actor reuses the library's pure operation kernel.
+// A live graph node. The operation is decoded once, before the actor is
+// spawned, so `process` cannot meet an unknown operation code.
 actor Stage {
-    let op_code: i64;
+    let op: dag.NodeOp;
     let operand: i64;
-    receive fn process(x: i64) -> Result<i64, dag.DagError> {
-        match dag.op_of_code(op_code) {
-            .Ok(op) => .Ok(dag.apply_op(op, x, operand)),
-            .Err(error) => .Err(error),
-        }
+
+    receive fn process(x: i64) -> i64 {
+        dag.apply_op(op, x, operand)
     }
 }
 
-// Stop every stage spawned for a run. The driver calls this on both successful
-// completion and every failure path after the stage vector exists.
+// Spawn one `Stage` per node, or report the first node whose operation code
+// this version does not know.
+fn spawn_stages(spec: dag.DagSpec) -> Vec<Stage> fails dag.DagError {
+    var stages: Vec<Stage> = Vec.new();
+    for i in 0..dag.node_count(spec) {
+        let node = dag.node_at(spec, i);
+        let op = dag.op_of_code(node.op_code) handle error {
+            stop_stages(stages);
+            return error error;
+        };
+        stages.push(spawn Stage { op: op, operand: node.operand });
+    }
+    stages
+}
+
 fn stop_stages(stages: Vec<Stage>) {
     for stage in stages {
         stop(stage);
         stopped(stage);
-    }
-}
-
-// The input fed to `node`: sum of its predecessors' outputs, or the initial
-// input when the node is a source.
-fn gather(spec: dag.DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> i64 {
-    var feed = 0;
-    var has_pred = false;
-    for e in 0..dag.edge_count(spec) {
-        if dag.edge_dst(spec, e) == node {
-            feed = feed + outputs[dag.edge_src(spec, e)];
-            has_pred = true;
-        }
-    }
-    if has_pred {
-        feed
-    } else {
-        initial
     }
 }
 
@@ -63,63 +51,24 @@ fn main() {
     println(f"loading spec: {spec_text}");
     match dag.parse_spec(spec_text) {
         .Ok(spec) => {
-            match dag.validate(spec) {
-                .Ok(_) => {
-                    // Spawn one live actor per node.
-                    var stages: Vec<Stage> = Vec.new();
-                    for i in 0..dag.node_count(spec) {
-                        let ns = dag.node_at(spec, i);
-                        stages.push(spawn Stage { op_code: ns.op_code, operand: ns.operand });
-                    }
-                    // Route input 5 through the topological order, asking each
-                    // live actor and feeding results forward along the edges.
-                    match dag.topo_order(spec) {
-                        .Ok(order) => {
-                            var outputs: Vec<i64> = Vec.new();
-                            for _i in 0..dag.node_count(spec) {
-                                outputs.push(0);
-                            }
-                            let initial = 5;
-                            var failed = false;
-                            for node in order {
-                                if !failed {
-                                    let input = gather(spec, outputs, node, initial);
-                                    // `node` comes from topo_order, so it is always a
-                                    // valid index into the one-actor-per-node Vec.
-                                    let pid = stages[node];
-                                    let r = pid.process(input);
-                                    match r {
-                                        .Ok(result) => match result {
-                                            .Ok(v) => {
-                                                outputs.set(node, v);
-                                                println(f"node {node}: in={input} -> out={v}");
-                                            }
-                                            .Err(error) => {
-                                                println(dag.describe(error));
-                                                failed = true;
-                                            }
-                                        }
-                                        .Err(_) => {
-                                            println(f"node {node}: actor ask failed");
-                                            failed = true;
-                                        }
-                                    }
-                                }
-                            }
-                            if failed {
-                                stop_stages(stages);
-                            } else {
-                                let sink = outputs[order[order.len() - 1]];
-                                println(f"sink output = {sink}");
-                                stop_stages(stages);
-                                assert(sink == 160);
-                                println("actor_pipeline: routed through live actors in topo order, all assertions passed");
-                            }
+            match spawn_stages(spec) {
+                .Ok(stages) => {
+                    // Each node's output is its own actor's reply. An ask that
+                    // gets no reply stops the run at that node.
+                    let report = dag.route_with(spec, 5, |node: i64, input: i64| -> i64 fails dag.DagError {
+                        let output = stages[node].process(input).map_err(|_| dag.DagError.Dispatch(node))?;
+                        println(f"node {node}: in={input} -> out={output}");
+                        output
+                    });
+                    stop_stages(stages);
+                    match report {
+                        .Ok(r) => {
+                            let sink = dag.sink_output(r);
+                            println(f"sink output = {sink}");
+                            assert(sink == 160);
+                            println("actor_pipeline: routed through live actors in topo order");
                         }
-                        .Err(e) => {
-                            println(dag.describe(e));
-                            stop_stages(stages);
-                        }
+                        .Err(f) => println(dag.describe(dag.error_of(f))),
                     }
                 }
                 .Err(e) => println(dag.describe(e)),
@@ -127,4 +76,9 @@ fn main() {
         }
         .Err(e) => println(dag.describe(e)),
     }
+}
+
+#[test]
+fn runs_to_completion() {
+    main();
 }

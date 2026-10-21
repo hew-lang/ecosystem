@@ -1,0 +1,106 @@
+//! The shared types cross the native boundary through Hew's CBOR codec. These
+//! tests pin the encoding the drivers' Rust decoder reads (`src/lib.rs` decodes
+//! the same bytes) and check that the values the README calls distinct survive
+//! the codec as distinct values.
+
+import std.encoding.cbor;
+
+import hew.db.sql.{Param, CellValue, Row, QueryResult};
+
+fn bytes_of(values: Vec<i64>) -> bytes {
+    var out: bytes = bytes.new();
+    for value in values {
+        out.push(value as u8);
+    }
+    out
+}
+
+fn assert_bytes(actual: bytes, expected: bytes) {
+    assert(actual.len() == expected.len());
+    for i in 0..expected.len() {
+        match actual.get(i) {
+            .Some(left) => match expected.get(i) {
+                .Some(right) => assert(left as i64 == right as i64),
+                .None => assert(false),
+            }
+            .None => assert(false),
+        }
+    }
+}
+
+// A NUL byte and a byte that is never valid UTF-8.
+fn binary() -> bytes {
+    bytes_of([0, 255])
+}
+
+#[test]
+fn params_encode_as_the_native_decoder_expects() {
+    // Unit variants are their tag; payload variants are a one-entry map from
+    // tag to payload. `decodes_every_variant_hew_encodes` in src/lib.rs reads
+    // these bytes.
+    let params = [Param.Null, Param.Bool(true), Param.Int(7), Param.Float(1.5), Param.Text("a"), Param.Bytes(binary())];
+    let expected = bytes_of([0x86, 0x00, 0xa1, 0x01, 0xf5, 0xa1, 0x02, 0x07, 0xa1, 0x03, 0xf9, 0x3e, 0x00, 0xa1, 0x04, 0x61, 0x61, 0xa1, 0x05, 0x42, 0x00, 0xff]);
+    assert_bytes(cbor.encode(params), expected);
+}
+
+#[test]
+fn null_and_empty_params_stay_distinct() {
+    let params = [Param.Null, Param.Text(""), Param.Bytes(bytes.new()), Param.Text("First line\nSecond line"), Param.Bytes(binary())];
+    let decoded: Result<Vec<Param>, _> = cbor.decode(cbor.encode(params));
+    match decoded {
+        .Ok(values) => {
+            assert(values.len() == 5);
+            match values[0] {
+                .Null => assert(true),
+                _ => assert(false),
+            }
+            match values[1] {
+                .Text(text) => assert(text.is_empty()),
+                _ => assert(false),
+            }
+            match values[2] {
+                .Bytes(data) => assert(data.len() == 0),
+                _ => assert(false),
+            }
+            match values[3] {
+                .Text(text) => assert(text == "First line\nSecond line"),
+                _ => assert(false),
+            }
+            match values[4] {
+                .Bytes(data) => assert_bytes(data, binary()),
+                _ => assert(false),
+            }
+        }
+        .Err(_) => assert(false),
+    }
+}
+
+#[test]
+fn query_results_keep_null_empty_and_binary_cells_apart() {
+    let result = QueryResult { columns: ["value", "note"], rows: [Row { values: [CellValue.Null, CellValue.Text(bytes.new())] }, Row { values: [CellValue.Text(binary()), CellValue.Null] }] };
+    let decoded: Result<QueryResult, _> = cbor.decode(cbor.encode(result));
+    match decoded {
+        .Ok(query) => {
+            assert(query.columns.len() == 2);
+            assert(query.columns[1] == "note");
+            assert(query.rows.len() == 2);
+            match query.rows[0].values[0] {
+                .Null => assert(true),
+                .Text(_) => assert(false),
+            }
+            match query.rows[0].values[1] {
+                .Text(value) => assert(value.len() == 0),
+                .Null => assert(false),
+            }
+            match query.rows[1].values[0] {
+                .Text(value) => assert_bytes(value, binary()),
+                .Null => assert(false),
+            }
+            match query.rows[1].values[1] {
+                .Null => assert(true),
+                .Text(_) => assert(false),
+            }
+        }
+        .Err(_) => assert(false),
+    }
+}

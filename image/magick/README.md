@@ -17,26 +17,19 @@ sudo apt-get install libmagickwand-dev pkg-config   # Debian/Ubuntu
 
 ## Linking
 
-`magick_rust` emits its link directives when it builds, but those directives do
-not survive the trip through this package's staticlib into the final link line,
-and a `hew.toml` `[native]` section has no way to name a system library that
-the current compiler acts on. Until it does, the MagickWand libraries are named
-on the command line:
+`magick_rust`'s link directives do not survive the trip through this package's
+staticlib, so `hew.toml` names the libraries itself with
+`pkg-config = ["MagickWand"]` in `[native]`. Every program that imports
+`hew.image.magick` links MagickWand without extra flags:
 
 ```sh
-hew run --pkg-path "$PWD" \
-  $(pkg-config --libs MagickWand | sed 's/\([^ ][^ ]*\)/--link-lib \1/g') \
-  image/magick/examples/basic.hew
+hew run --pkg-path . image/magick/examples/basic.hew
 ```
-
-From the ecosystem checkout, `make magick-example` runs exactly that. Any
-program importing `hew.image.magick` needs the same flags. Without them the
-link fails with `undefined symbol: MagickWandGenesis` and a few dozen siblings.
 
 ## Example
 
 Save this as `main.hew` in a project depending on
-`hew.image.magick = "0.3.0"`:
+`hew.image.magick = "0.4.0"`:
 
 ```hew
 import hew.image.magick;
@@ -46,10 +39,7 @@ fn main() {
     let _ = image.thumbnail(160, 120);
     let _ = image.sharpen(0.0, 0.5);
     let png = match image.write_blob("PNG") {
-        .Ok(result) => match result {
-            .Ok(value) => value,
-            .Err(_) => bytes.new(),
-        }
+        .Ok(value) => value,
         .Err(_) => bytes.new(),
     };
     stop(image);
@@ -60,10 +50,8 @@ fn main() {
     // blob rather than on `image` itself.
     let decoded = spawn magick.Image { source: Source.Blob(png) };
     match decoded.format() {
-        .Ok(result) => match result {
-            .Ok(value) => println(value),
-            .Err(error) => println(magick.error_message(error)),
-        }
+        .Ok(value) => println(value),
+        .Err(.Failed(error)) => println(magick.error_message(error)),
         .Err(_) => println("image actor stopped before replying"),
     }
     stop(decoded);
@@ -73,6 +61,14 @@ fn main() {
 
 The checked example lives at [`examples/basic.hew`](examples/basic.hew); it
 writes `magick-example.png` beside you and prints `magick-example.png is PNG`.
+
+Every `Image` method declares `fails MagickError`, so a call replies
+`Result<T, ActorError<MagickError>>`: `.Ok(value)` on success,
+`.Err(.Failed(error))` for an image error, and another `.Err` variant when the
+actor could not answer (for example `.Dead` after it stopped). The transforms
+(`resize`, `crop`, `rotate`, `blur`, `sharpen`, `flip`, `flop`, `thumbnail`)
+and `write` reply `()` on success; `width`, `height`, `format` and
+`write_blob` reply the value.
 
 `write_blob` explicitly selects the encoded format. File output remains
 available through `write`, where ImageMagick infers the format from the path.

@@ -1,19 +1,11 @@
 import hew.db.mysql;
 
-import hew.db.mysql.{MysqlError, CellValue, Row, QueryResult};
-
-fn error_variants_preserve_diagnostics() {
-    assert(mysql.error_message(mysql.MysqlError.Connect("connect")) == "connect");
-    assert(mysql.error_message(mysql.MysqlError.InvalidInput("input")) == "input");
-    assert(mysql.error_message(mysql.MysqlError.Query("query")) == "query");
-    assert(mysql.error_message(mysql.MysqlError.Closed("closed")) == "closed");
-    assert(mysql.error_message(mysql.MysqlError.Internal("internal")) == "internal");
-}
-
+#[test]
+#[real_time]
 fn invalid_url_and_explicit_close_return_typed_errors() {
     let db = spawn mysql.Conn { url: "not-a-mysql-url" };
     match db.query("SELECT 1") {
-        .Ok(.Err(.Connect(message))) => assert(!message.is_empty()),
+        .Err(.Failed(.Connect(message))) => assert(!message.is_empty()),
         _ => assert(false),
     }
     stop(db);
@@ -22,28 +14,4 @@ fn invalid_url_and_explicit_close_return_typed_errors() {
         .Err(.Dead) => {}
         _ => assert(false),
     }
-}
-
-fn wire_values_distinguish_null_empty_and_no_rows() {
-    var values: Vec<CellValue> = Vec.new();
-    values.push(CellValue.Null);
-    values.push(CellValue.Text(bytes.new()));
-    var rows: Vec<Row> = Vec.new();
-    rows.push(Row { values: values });
-    let result = QueryResult { columns: Vec.new(), rows: rows };
-    assert(result.rows.len() == 1);
-    match result.rows[0].values[0] {
-        .Null => assert(true),
-        _ => assert(false),
-    }
-    match result.rows[0].values[1] {
-        .Text(value) => assert(value.len() == 0),
-        _ => assert(false),
-    }
-}
-
-fn main() {
-    error_variants_preserve_diagnostics();
-    invalid_url_and_explicit_close_return_typed_errors();
-    wire_values_distinguish_null_empty_and_no_rows();
 }

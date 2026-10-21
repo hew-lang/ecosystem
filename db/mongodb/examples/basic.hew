@@ -3,20 +3,22 @@ import hew.db.mongodb;
 fn main() {
     let db = spawn mongodb.Conn { uri: "mongodb://127.0.0.1:27017", database: "example" };
     match db.insert_one("users", "{\"name\":\"Alice\",\"age\":30}") {
-        .Ok(result) => match result {
-            .Ok(id) => println(f"inserted {id}"),
-            .Err(error) => println(mongodb.error_message(error)),
-        }
+        .Ok(id) => println(f"inserted {id}"),
+        .Err(.Failed(error)) => println(mongodb.error_message(error)),
         .Err(_) => println("MongoDB actor stopped before replying"),
     }
     match db.find_one("users", "{\"name\":\"Alice\"}") {
-        .Ok(result) => match result {
-            .Ok(.Found(document)) => println(document),
-            .Ok(.Missing) => println("user not found"),
-            .Err(error) => println(mongodb.error_message(error)),
-        }
+        .Ok(.Found(document)) => println(document),
+        .Ok(.Missing) => println("user not found"),
+        .Err(.Failed(error)) => println(mongodb.error_message(error)),
         .Err(_) => println("MongoDB actor stopped before replying"),
     }
     stop(db);
     stopped(db);
+}
+
+#[test]
+#[real_time]
+fn runs_to_completion() {
+    main();
 }

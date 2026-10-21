@@ -1,8 +1,11 @@
 # hew.db.postgres
 
 `hew.db.postgres` owns each PostgreSQL connection in an actor. Operations
-return typed `Result` values, query replies are immutable wire-safe snapshots,
-and SQL `NULL` is represented by `CellValue.Null`.
+fail with a typed `PostgresError`, which a call reports as
+`.Err(.Failed(error))`; query replies are immutable wire-safe snapshots,
+and SQL `NULL` is represented by `CellValue.Null`. `QueryResult`, `Row` and
+`CellValue` come from [`hew.db.sql`](../sql/README.md), shared with SQLite and
+MySQL.
 
 The package wraps the native Rust `postgres` crate over a C ABI: cell values
 cross that boundary as UTF-8 `bytes` text snapshots, not typed columns.
@@ -14,13 +17,11 @@ import std.encoding.utf8;
 fn main() {
     let db = spawn postgres.Conn { connstr: "host=127.0.0.1 user=hew password=hew dbname=hew_test" };
     match db.query("SELECT 41::bigint AS value") {
-        .Ok(result) => match result {
-            .Ok(query) => match query.rows[0].values[0] {
-                .Text(value) => println(utf8.decode_lossy(value)),
-                .Null => println("value is NULL"),
-            }
-            .Err(error) => println(postgres.error_message(error)),
+        .Ok(query) => match query.rows[0].values[0] {
+            .Text(value) => println(utf8.decode_lossy(value)),
+            .Null => println("value is NULL"),
         }
+        .Err(.Failed(error)) => println(postgres.error_message(error)),
         .Err(_) => println("PostgreSQL actor stopped before replying"),
     }
     stop(db);
