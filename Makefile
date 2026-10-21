@@ -120,3 +120,24 @@ native-sqlite:
 	mkdir -p "$$(dirname "$$archive")"; \
 	cd db/sqlite && "$(HEW)" native build \
 		--target x86_64-unknown-linux-gnu --output "$$archive"
+
+# Native attachment cohorts use an official SDK, never the source-built publisher.
+NATIVE_COHORT ?= all
+NATIVE_HOST ?= x86_64
+NATIVE_SDK_ROOT ?=
+NATIVE_SDK_VERSION ?=
+NATIVE_OUTPUT ?= $(CURDIR)/.tooling/native-packages
+NATIVE_RELEASE_ARGS ?=
+
+.PHONY: native-plan native-build native-publish test-native-release
+native-plan:
+	python3 scripts/native-release.py plan --packages "$(NATIVE_COHORT)" --hosts "$(NATIVE_HOST)"
+
+native-build:
+	python3 scripts/native-release.py batch --packages "$(NATIVE_COHORT)" --host "$(NATIVE_HOST)" --sdk "$(NATIVE_SDK_ROOT)" --version "$(NATIVE_SDK_VERSION)" --output "$(NATIVE_OUTPUT)" $(NATIVE_RELEASE_ARGS)
+
+native-publish:
+	$(MAKE) native-build NATIVE_RELEASE_ARGS="--publish $(NATIVE_RELEASE_ARGS)"
+
+test-native-release:
+	python3 -m unittest discover -s scripts/tests -p 'test_native_release.py'
