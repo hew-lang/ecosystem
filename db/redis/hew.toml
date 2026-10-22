@@ -1,8 +1,8 @@
 [package]
 name = "hew.db.redis"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2026"
-hew = ">=0.6.2, <0.7.0"
+hew = ">=0.6.2, <0.8.0"
 description = "Actor-owned Redis client with typed errors, explicit misses, pipelines, and bounded pub/sub"
 authors = ["Hew Contributors"]
 license = "MIT OR Apache-2.0"
