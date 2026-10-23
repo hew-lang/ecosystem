@@ -28,11 +28,10 @@ running a test.
 
 ## Compatibility
 
-Every package's `hew.toml` declares its supported compiler range. Native
-packages require Hew 0.6.2 because their Rust crates use its managed-string
-ABI; update the compiler and `hew-cabi` pins together before publishing them.
-Pure Hew packages retain their older minimum where their source remains
-compatible. CI validates the exact pinned revision.
+Every package's `hew.toml` declares its supported compiler range. The 0.5.0
+package cohort requires Hew 0.8 and admits versions below 0.9. Native crates
+use the matching `hew-cabi` revision; update the compiler and C ABI pins
+together before publishing native attachments. CI validates the exact pinned revision.
 
 ## Checks
 
