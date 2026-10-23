@@ -71,7 +71,7 @@ fn expect_invalid_input(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>
 fn new_client() -> oauth.Client {
     // A broken loopback exchange fails within seconds rather than at the
     // client's 30 s default.
-    match http_client.set_timeout(5000) {
+    match http_client.set_timeout(5s) {
         .Ok(_) => {}
         .Err(_) => panic("set_timeout rejected 5000 ms"),
     }
