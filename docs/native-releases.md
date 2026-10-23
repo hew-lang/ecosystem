@@ -3,14 +3,14 @@
 Native attachments are qualified for one Hew SDK version, Rust toolchain and
 Linux host. Source package versions change when their contents or compatibility
 range change. Each compiler release gets its own native attachment identity.
-The `0.4.1` packages admit Hew 0.6 and 0.7; their implementation is unchanged.
+The `0.5.0` package cohort admits Hew 0.8 and uses its matching C ABI.
 
 After the next official SDK is published, run the existing **Publish packages**
 workflow on `main`, setting:
 
 - `native_packages`: `all`, or package paths such as `net/http db/postgres`.
 - `native_hosts`: `both`, `x86_64`, or `aarch64`.
-- `native_sdk_version`: the exact official release, for example `0.7.0`.
+- `native_sdk_version`: the exact official release, for example `0.8.0`.
 
 The native jobs use `ubuntu-24.04` and `ubuntu-24.04-arm`. They download the
 matching official SDK and verify its release checksum and reported version.
@@ -36,7 +36,7 @@ Both Linux hosts have an executable build path for every native manifest:
 
 | Package path | Build and consumer prerequisites |
 | --- | --- |
-| `db/sqlite` | SQLite is bundled in the Rust archive. The existing 0.6.3 x64 attachment is qualified. |
+| `db/sqlite` | SQLite is bundled in the Rust archive. |
 | `db/postgres` | Native Rust client; PostgreSQL service needed for functional tests. |
 | `db/mysql` | Rust client with rustls; MySQL service needed for functional tests. |
 | `db/redis` | Native Rust client; Redis service needed for functional tests. |
@@ -61,7 +61,7 @@ consumer execution with the next SDK is a separate qualification result.
 make native-plan NATIVE_COHORT=all NATIVE_HOST=both
 make test-native-release
 make native-build NATIVE_COHORT=net/http NATIVE_HOST=x86_64 \
-  NATIVE_SDK_ROOT=/path/to/official/sdk NATIVE_SDK_VERSION=0.7.0
+  NATIVE_SDK_ROOT=/path/to/official/sdk NATIVE_SDK_VERSION=0.8.0
 ```
 
 `native-build` builds missing archives locally. `native-publish` additionally
