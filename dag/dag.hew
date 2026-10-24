@@ -262,7 +262,7 @@ fn parse_node(token: string, id: i64) -> Result<NodeSpec, DagError> {
     if !is_i64_text(operand_text) {
         return .Err(DagError.Malformed(id));
     }
-    let operand = match string.to_int(operand_text) {
+    let operand = match operand_text.to_int() {
         .Ok(value) => value,
         .Err(_) => return .Err(DagError.Malformed(id)),
     };
@@ -335,11 +335,11 @@ pub fn parse_spec(text: string) -> Result<DagSpec, DagError> {
             .Some(s) => s.trim(),
             .None => return .Err(DagError.Malformed(i)),
         };
-        let src = match string.to_int(src_text) {
+        let src = match src_text.to_int() {
             .Ok(value) => value,
             .Err(_) => return .Err(DagError.Malformed(i)),
         };
-        let dst = match string.to_int(dst_text) {
+        let dst = match dst_text.to_int() {
             .Ok(value) => value,
             .Err(_) => return .Err(DagError.Malformed(i)),
         };

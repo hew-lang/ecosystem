@@ -6,8 +6,8 @@ errors. Tokens expose optional expiry, refresh-token, and scope values as
 `Option`s.
 
 The package is pure Hew: token requests are form-encoded POSTs sent with
-`std.net.http.http_client`, PKCE and state values come from
-`std.crypto.crypto`, and token responses are read with `std.encoding.json`.
+`std.net.http.client`, PKCE and state values come from
+`std.crypto.hash`, and token responses are read with `std.encoding.json`.
 It has no native library to build.
 
 ```hew

@@ -6,13 +6,13 @@
 
 import hew.auth.oauth;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.base64;
 
-import std.net.http;
+import std.net.http.server as http;
 
-import std.net.http.http_client;
+import std.net.http.client;
 
 // What the token endpoint received.
 type Received {
@@ -24,22 +24,21 @@ type Received {
 fn listen() -> http.Server {
     match http.listen("127.0.0.1:0") {
         .Ok(server) => server,
-        .Err(_) => panic(f"loopback listen failed: {http.listen_error()}"),
+        .Err(error) => panic(f"loopback listen failed: {error}"),
     }
 }
 
 fn token_url(server: http.Server) -> string {
-    f"http://127.0.0.1:{http.server_port(server)}/token"
+    f"http://127.0.0.1:{server.port()}/token"
 }
 
 fn answer(server: http.Server, status: i64, body: string) -> Received {
-    let req = server.accept();
-    let received = Received { method: req.method(), content_type: req.header("Content-Type"), form: req.body("utf-8") };
+    let req = server.accept().expect("loopback request arrives");
+    let received = Received { method: req.method(), content_type: req.header("Content-Type").expect("read request header").expect("Content-Type is present"), form: req.body("utf-8").expect("request body is UTF-8") };
     match req.respond(status, "application/json", body) {
         .Ok(_) => {}
         .Err(_) => panic("loopback respond failed"),
     }
-    req.close();
     received
 }
 
@@ -71,7 +70,7 @@ fn expect_invalid_input(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>
 fn new_client() -> oauth.Client {
     // A broken loopback exchange fails within seconds rather than at the
     // client's 30 s default.
-    match http_client.set_timeout(5s) {
+    match client.set_timeout(5s) {
         .Ok(_) => {}
         .Err(_) => panic("set_timeout rejected 5000 ms"),
     }
@@ -216,7 +215,7 @@ fn exchange_code_sends_the_verifier_auth_url_committed_to() {
     // S256 challenge of exactly the verifier the exchange will send.
     assert(verifier.len() == 43);
     assert(!verifier.contains("="));
-    let challenge = base64.encode_url(crypto.sha256(verifier.to_bytes())).replace("=", "");
+    let challenge = base64.encode_url(hash.sha256(verifier.to_bytes())).replace("=", "");
     assert(url.contains(f"&code_challenge={challenge}&code_challenge_method=S256"));
     let pending = fork client.exchange_code(token_url(server), "code 123", "https://app.example/callback");
     let received = answer(server, 200, "{\"access_token\":\"exchanged\"}");

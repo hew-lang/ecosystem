@@ -16,7 +16,7 @@ import hew.queue.mqtt;
 
 fn broker_port() -> i64 {
     match os.env("HEW_MQTT_PORT") {
-        .Some(text) => string.to_int(text) handle _ { 1883 },
+        .Some(text) => text.to_int() handle _ { 1883 },
         .None => 1883,
     }
 }

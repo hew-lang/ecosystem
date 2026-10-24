@@ -2,7 +2,7 @@
 //!
 //! Supports client credentials (machine-to-machine), PKCE-protected
 //! authorization code URL generation, token exchange, and token refresh.
-//! Token requests are form-encoded POSTs sent with `std.net.http.http_client`.
+//! Token requests are form-encoded POSTs sent with `std.net.http.client`.
 //!
 //! # Examples
 //!
@@ -42,13 +42,13 @@
 //! }
 //! ```
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.base64;
 
 import std.encoding.json;
 
-import std.net.http.http_client;
+import std.net.http.client;
 
 import std.net.url;
 
@@ -83,6 +83,12 @@ pub fn error_message(error: OAuthError) -> string {
         .Transport(message) => message,
         .TokenEndpoint(_, message) => message,
         .Internal(message) => message,
+    }
+}
+
+impl From<client.HttpError> for OAuthError {
+    fn from(value: client.HttpError) -> OAuthError {
+        .Transport(f"transport_error: {value}")
     }
 }
 
@@ -144,7 +150,7 @@ fn base64url_unpadded(data: bytes) -> string {
 // 32 CSPRNG bytes encode to 43 characters: a state value, or a verifier at the
 // lower bound of RFC 7636's 43..128 range.
 fn random_urlsafe() -> Result<string, OAuthError> {
-    match crypto.random_bytes(32) {
+    match hash.random_bytes(32) {
         .Ok(data) => .Ok(base64url_unpadded(data)),
         .Err(_) => .Err(OAuthError.Internal("system entropy source is unavailable")),
     }
@@ -152,7 +158,7 @@ fn random_urlsafe() -> Result<string, OAuthError> {
 
 // The S256 code challenge for a verifier (RFC 7636 §4.2).
 fn code_challenge(verifier: string) -> string {
-    base64url_unpadded(crypto.sha256(verifier.to_bytes()))
+    base64url_unpadded(hash.sha256(verifier.to_bytes()))
 }
 
 // ── Token endpoint ────────────────────────────────────────────────────
@@ -219,22 +225,18 @@ fn parse_token(status: i64, text: string) -> Result<Token, OAuthError> {
     .Ok(Token { access: access, kind: string_field_or(body, "token_type", "Bearer"), expires_secs: int_field_or_absent(body, "expires_in"), refresh: string_field_or(body, "refresh_token", ""), granted_scope: string_field_or(body, "scope", "") })
 }
 
-// POST a form-encoded grant. A status of -1 is a transport failure, and the
-// client then carries its diagnostic in the body.
-fn post_token(token_url: string, form: string) -> Result<Token, OAuthError> {
+// POST a form-encoded grant, preserving HTTP failures as OAuth transport errors.
+fn post_token(token_url: string, form: string) -> Token fails OAuthError {
     if token_url.is_empty() {
-        return .Err(OAuthError.InvalidInput("token URL must not be empty"));
+        return error OAuthError.InvalidInput("token URL must not be empty");
     }
     var headers: Vec<(string, string)> = Vec.new();
     headers.push(("Content-Type", "application/x-www-form-urlencoded"));
-    let response = http_client.request("POST", token_url, form, headers);
+    let response = client.request("POST", token_url, form, headers)?;
     let status = response.status();
-    let text = response.body();
+    let text = response.body()?;
     response.close();
-    if status < 0 {
-        return .Err(OAuthError.Transport(f"transport_error: {text}"));
-    }
-    parse_token(status, text)
+    parse_token(status, text)?
 }
 
 fn authorization_code_form(code: string, redirect_uri: string, client_id: string, client_secret: string, code_verifier: string) -> string {
@@ -292,7 +294,7 @@ pub actor Client {
         if callback_state.is_empty() {
             return error OAuthError.InvalidInput("callback state must not be empty");
         }
-        !pending_state.is_empty() && crypto.constant_time_eq(pending_state.to_bytes(), callback_state.to_bytes())
+        !pending_state.is_empty() && hash.constant_time_eq(pending_state.to_bytes(), callback_state.to_bytes())
     }
 
     // Exchange an authorization code for a token using the verifier from auth_url.
