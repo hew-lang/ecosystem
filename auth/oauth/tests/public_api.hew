@@ -6,13 +6,13 @@
 
 import hew.auth.oauth;
 
-import std.crypto.crypto;
+import std.crypto.hash;
 
 import std.encoding.base64;
 
-import std.net.http;
+import std.net.http.server as http;
 
-import std.net.http.http_client;
+import std.net.http.client;
 
 // What the token endpoint received.
 type Received {
@@ -71,7 +71,7 @@ fn expect_invalid_input(reply: Result<oauth.Token, ActorError<oauth.OAuthError>>
 fn new_client() -> oauth.Client {
     // A broken loopback exchange fails within seconds rather than at the
     // client's 30 s default.
-    match http_client.set_timeout(5s) {
+    match client.set_timeout(5s) {
         .Ok(_) => {}
         .Err(_) => panic("set_timeout rejected 5000 ms"),
     }
@@ -216,7 +216,7 @@ fn exchange_code_sends_the_verifier_auth_url_committed_to() {
     // S256 challenge of exactly the verifier the exchange will send.
     assert(verifier.len() == 43);
     assert(!verifier.contains("="));
-    let challenge = base64.encode_url(crypto.sha256(verifier.to_bytes())).replace("=", "");
+    let challenge = base64.encode_url(hash.sha256(verifier.to_bytes())).replace("=", "");
     assert(url.contains(f"&code_challenge={challenge}&code_challenge_method=S256"));
     let pending = fork client.exchange_code(token_url(server), "code 123", "https://app.example/callback");
     let received = answer(server, 200, "{\"access_token\":\"exchanged\"}");

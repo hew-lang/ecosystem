@@ -13,7 +13,7 @@
 
 import hew.net.http;
 
-import std.net.http.http_client;
+import std.net.http.client;
 
 import std.os;
 
@@ -89,7 +89,7 @@ fn answers_one_request_over_http() {
         var attempts_left = 40;
         while body.is_none() && attempts_left > 0 {
             attempts_left = attempts_left - 1;
-            let response = http_client.get(f"http://{addr}/hello");
+            let response = client.get(f"http://{addr}/hello");
             if response.status() < 0 {
                 last_error = response.body();
             } else {

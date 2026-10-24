@@ -14,7 +14,7 @@ extern "C" {
 // The test broker's host port. `make test` exports it from docker-compose.yml.
 fn broker_port() -> i64 {
     match os.env("HEW_MQTT_PORT") {
-        .Some(text) => match string.to_int(text) {
+        .Some(text) => match text.to_int() {
             .Ok(port) => port,
             .Err(_) => panic(f"HEW_MQTT_PORT is not a port number: {text}"),
         }

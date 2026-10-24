@@ -1,8 +1,8 @@
 [package]
 name = "hew.db.sqlite"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2026"
-hew = ">=0.8.0, <0.9.0"
+hew = ">=0.9.0, <0.10.0"
 description = "Actor-owned SQLite client with typed errors and query snapshots"
 authors = ["Hew Contributors"]
 license = "MIT OR Apache-2.0"
@@ -13,4 +13,4 @@ repository = "https://github.com/hew-lang/ecosystem"
 crate = "."
 
 [dependencies]
-"hew.db.sql" = "0.5.0"
+"hew.db.sql" = "0.6.0"
