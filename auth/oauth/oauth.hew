@@ -86,6 +86,12 @@ pub fn error_message(error: OAuthError) -> string {
     }
 }
 
+impl From<client.HttpError> for OAuthError {
+    fn from(error: client.HttpError) -> OAuthError {
+        .Transport(f"transport_error: {error}")
+    }
+}
+
 // ── Token methods ─────────────────────────────────────────────────────
 trait TokenMethods {
     /// The access token string.
@@ -219,21 +225,17 @@ fn parse_token(status: i64, text: string) -> Result<Token, OAuthError> {
     .Ok(Token { access: access, kind: string_field_or(body, "token_type", "Bearer"), expires_secs: int_field_or_absent(body, "expires_in"), refresh: string_field_or(body, "refresh_token", ""), granted_scope: string_field_or(body, "scope", "") })
 }
 
-// POST a form-encoded grant. A status of -1 is a transport failure, and the
-// client then carries its diagnostic in the body.
+// POST a form-encoded grant, preserving HTTP failures as OAuth transport errors.
 fn post_token(token_url: string, form: string) -> Result<Token, OAuthError> {
     if token_url.is_empty() {
         return .Err(OAuthError.InvalidInput("token URL must not be empty"));
     }
     var headers: Vec<(string, string)> = Vec.new();
     headers.push(("Content-Type", "application/x-www-form-urlencoded"));
-    let response = client.request("POST", token_url, form, headers);
+    let response = client.request("POST", token_url, form, headers)?;
     let status = response.status();
-    let text = response.body();
+    let text = response.body()?;
     response.close();
-    if status < 0 {
-        return .Err(OAuthError.Transport(f"transport_error: {text}"));
-    }
     parse_token(status, text)
 }
 

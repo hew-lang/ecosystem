@@ -24,17 +24,17 @@ type Received {
 fn listen() -> http.Server {
     match http.listen("127.0.0.1:0") {
         .Ok(server) => server,
-        .Err(_) => panic(f"loopback listen failed: {http.listen_error()}"),
+        .Err(error) => panic(f"loopback listen failed: {error}"),
     }
 }
 
 fn token_url(server: http.Server) -> string {
-    f"http://127.0.0.1:{http.server_port(server)}/token"
+    f"http://127.0.0.1:{server.port()}/token"
 }
 
 fn answer(server: http.Server, status: i64, body: string) -> Received {
-    let req = server.accept();
-    let received = Received { method: req.method(), content_type: req.header("Content-Type"), form: req.body("utf-8") };
+    let req = server.accept().expect("loopback request arrives");
+    let received = Received { method: req.method(), content_type: req.header("Content-Type").expect("read request header").expect("Content-Type is present"), form: req.body("utf-8").expect("request body is UTF-8") };
     match req.respond(status, "application/json", body) {
         .Ok(_) => {}
         .Err(_) => panic("loopback respond failed"),
