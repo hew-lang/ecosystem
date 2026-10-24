@@ -22,7 +22,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/hew-lang/ecosystem"
 
 [workspace.dependencies]
-hew-cabi = { git = "https://github.com/hew-lang/hew", rev = "9322b962e46f92cc9c595b7cf742f73202751d1a" }
+hew-cabi = { git = "https://github.com/hew-lang/hew", rev = "bc7a2a016798eeaf111f369d39c64cdd7fff21bf" }
 
 [patch.crates-io]
 # nuid 0.3.2 declares rand >=0.8, which resolves to an incompatible rand; this
