@@ -1104,8 +1104,8 @@ dependencies = [
 
 [[package]]
 name = "hew-cabi"
-version = "0.9.0"
-source = "git+https://github.com/hew-lang/hew?rev=bc7a2a016798eeaf111f369d39c64cdd7fff21bf#bc7a2a016798eeaf111f369d39c64cdd7fff21bf"
+version = "0.9.1"
+source = "git+https://github.com/hew-lang/hew?rev=17e06579cb14a167be1e369bdda5388e14e95f80#17e06579cb14a167be1e369bdda5388e14e95f80"
 dependencies = [
  "libc",
 ]
