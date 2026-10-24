@@ -39,7 +39,6 @@ fn answer(server: http.Server, status: i64, body: string) -> Received {
         .Ok(_) => {}
         .Err(_) => panic("loopback respond failed"),
     }
-    req.close();
     received
 }
 
