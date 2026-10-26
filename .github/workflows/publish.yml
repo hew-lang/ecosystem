@@ -94,11 +94,6 @@ jobs:
       - name: Build selected publisher CLI
         shell: bash
         run: |
-          # Remove once Hew build metadata requests an explicit abbreviation.
-          git_config_count="${GIT_CONFIG_COUNT:-0}"
-          export "GIT_CONFIG_KEY_${git_config_count}=core.abbrev"
-          export "GIT_CONFIG_VALUE_${git_config_count}=10"
-          export GIT_CONFIG_COUNT="$((git_config_count + 1))"
           HEW_SOURCE=.tooling/hew make toolchain \
             HEW_REVISION="$PUBLISHER_REVISION" HEW_VERSION="$PUBLISHER_VERSION"
 
