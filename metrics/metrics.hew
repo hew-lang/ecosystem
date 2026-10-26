@@ -87,11 +87,7 @@ pub fn error_message(error: MetricsError) -> string {
 }
 
 fn live_handle(handle: i64) -> Result<i64, MetricsError> {
-    if handle == 0 {
-        .Err(MetricsError.Closed("metrics registry is closed"))
-    } else {
-        .Ok(handle)
-    }
+    if handle == 0 { .Err(MetricsError.Closed("metrics registry is closed")) } else { .Ok(handle) }
 }
 
 fn registered(value: i64) -> Result<i64, MetricsError> {

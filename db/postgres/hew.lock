@@ -2,7 +2,7 @@
 
 [[package]]
 name = "hew.db.sql"
-requirement = "0.6.0"
-version = "0.6.0"
+requirement = "0.7.0-rc1"
+version = "0.7.0-rc1"
 source = "path"
 path = "../sql"

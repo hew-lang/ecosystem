@@ -73,16 +73,8 @@ pub fn render(tmpl: string, ctx: string) -> string {
         };
         rendered += tmpl[cursor..opening];
         let raw = opening + 2 < template_len && (tmpl.get(opening + 2) ?? '\0') == '{';
-        let key_start = if raw {
-            opening + 3
-        } else {
-            opening + 2
-        };
-        let closing_len = if raw {
-            3
-        } else {
-            2
-        };
+        let key_start = if raw { opening + 3 } else { opening + 2 };
+        let closing_len = if raw { 3 } else { 2 };
         let closing = match find_marker(tmpl, key_start, '}', closing_len) {
             .Some(index) => index,
             .None => {
@@ -95,11 +87,7 @@ pub fn render(tmpl: string, ctx: string) -> string {
             .Some(found) => found,
             .None => "",
         };
-        let substitution = if raw {
-            value
-        } else {
-            escape(value)
-        };
+        let substitution = if raw { value } else { escape(value) };
         rendered += substitution;
         cursor = closing + closing_len;
     }
@@ -115,11 +103,7 @@ fn parse_context(ctx: string) -> HashMap<string, string> {
     let lines = ctx.split("\n");
     var index = 0;
     while index < lines.len() {
-        let value = if index + 1 < lines.len() {
-            lines[index + 1]
-        } else {
-            ""
-        };
+        let value = if index + 1 < lines.len() { lines[index + 1] } else { "" };
         vars.insert(lines[index], value);
         index = index + 2;
     }

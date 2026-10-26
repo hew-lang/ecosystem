@@ -1,8 +1,8 @@
 [package]
 name = "hew.queue.mqtt"
-version = "0.6.0"
+version = "0.7.0-rc1"
 edition = "2026"
-hew = ">=0.9.0, <0.10.0"
+hew = ">=0.10.0, <0.11.0"
 description = "Typed, actor-owned MQTT 3.1.1 publish/subscribe client"
 authors = ["Hew Contributors"]
 license = "MIT OR Apache-2.0"

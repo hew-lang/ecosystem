@@ -225,11 +225,7 @@ pub fn add_edge(var spec: DagSpec, src: i64, dst: i64) -> Result<DagSpec, DagErr
 
 // ── Runtime spec loading (text -> DagSpec) ──────────────────────────────────
 fn is_i64_text(text: string) -> bool {
-    let digits = if text.starts_with("-") {
-        text[1..]
-    } else {
-        text
-    };
+    let digits = if text.starts_with("-") { text[1..] } else { text };
     if digits.is_empty() {
         return false;
     }
@@ -464,11 +460,7 @@ fn gather_input(spec: DagSpec, outputs: Vec<i64>, node: i64, initial: i64) -> Re
             has_pred = true;
         }
     }
-    if has_pred {
-        .Ok(feed)
-    } else {
-        .Ok(initial)
-    }
+    if has_pred { .Ok(feed) } else { .Ok(initial) }
 }
 
 /// Route `initial` through a caller-supplied per-node `dispatch(node_id, input)`
@@ -995,11 +987,7 @@ fn test_route_with_inline_closure_dispatch() {
             let report = route_with(spec, 5, |node: i64, input: i64| -> i64 fails DagError {
                 if node == 0 {
                     input + 1
-                } else if node == 1 {
-                    input * 10
-                } else {
-                    input + 100
-                }
+                } else if node == 1 { input * 10 } else { input + 100 }
             });
             match report {
                 .Ok(r) => {

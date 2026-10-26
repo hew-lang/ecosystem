@@ -85,19 +85,11 @@ fn native_error() -> S3Error {
 }
 
 fn bucket_handle(handle: i64, kind: i32, status: i32, message: string) -> Result<i64, S3Error> {
-    if handle == 0 {
-        .Err(native_error_from(kind, status, message))
-    } else {
-        .Ok(handle)
-    }
+    if handle == 0 { .Err(native_error_from(kind, status, message)) } else { .Ok(handle) }
 }
 
 fn unit_result(status: i32) -> Result<(), S3Error> {
-    if status == 0 {
-        .Ok(())
-    } else {
-        .Err(native_error())
-    }
+    if status == 0 { .Ok(()) } else { .Err(native_error()) }
 }
 
 #[resource]

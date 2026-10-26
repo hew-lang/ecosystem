@@ -53,19 +53,11 @@ fn native_error() -> MagickError {
 }
 
 fn image_handle(handle: i64, kind: i32, message: string) -> Result<i64, MagickError> {
-    if handle == 0 {
-        .Err(native_error_from(kind, message))
-    } else {
-        .Ok(handle)
-    }
+    if handle == 0 { .Err(native_error_from(kind, message)) } else { .Ok(handle) }
 }
 
 fn operation(status: i32) -> Result<(), MagickError> {
-    if status == 0 {
-        .Ok(())
-    } else {
-        .Err(native_error())
-    }
+    if status == 0 { .Ok(()) } else { .Err(native_error()) }
 }
 
 /// A mailbox-serialized owner of one ImageMagick image.
@@ -224,11 +216,7 @@ pub actor Image {
         }
         let width_scale = max_width as f64 / width as f64;
         let height_scale = max_height as f64 / height as f64;
-        let scale = if width_scale < height_scale {
-            width_scale
-        } else {
-            height_scale
-        };
+        let scale = if width_scale < height_scale { width_scale } else { height_scale };
         operation(unsafe {
             hew_magick_resize(handle, (width as f64 * scale) as i32, (height as f64 * scale) as i32)
         })?

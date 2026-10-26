@@ -108,11 +108,7 @@ fn native_error() -> NatsError {
 }
 
 fn active_handle(handle: i64, error_kind: i32, error_message: string) -> Result<i64, NatsError> {
-    if handle == 0 {
-        .Err(native_error_from(error_kind, error_message))
-    } else {
-        .Ok(handle)
-    }
+    if handle == 0 { .Err(native_error_from(error_kind, error_message)) } else { .Ok(handle) }
 }
 
 #[resource]
@@ -154,11 +150,7 @@ impl NativeMessage {
 
 fn snapshot(consume result: NativeMessage) -> Delivery {
     let reply = result.reply();
-    let reply_to = if result.has_reply() {
-        ReplyTo.Subject(reply.clone())
-    } else {
-        ReplyTo.Missing
-    };
+    let reply_to = if result.has_reply() { ReplyTo.Subject(reply.clone()) } else { ReplyTo.Missing };
     let subject = result.subject();
     let data = result.data();
     let message = Delivery { subject: subject.clone(), data: data.clone(), reply_to: reply_to };

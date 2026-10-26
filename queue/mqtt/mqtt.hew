@@ -122,11 +122,7 @@ fn native_error() -> MqttError {
 }
 
 fn active_handle(handle: i64, error_kind: i32, error_message: string) -> Result<i64, MqttError> {
-    if handle == 0 {
-        .Err(native_error_from(error_kind, error_message))
-    } else {
-        .Ok(handle)
-    }
+    if handle == 0 { .Err(native_error_from(error_kind, error_message)) } else { .Ok(handle) }
 }
 
 #[resource]
@@ -179,11 +175,7 @@ pub actor Conn {
     /// Publish a UTF-8 payload to a topic.
     receive fn publish(topic: string, payload: string, qos: QoS, retain: bool) fails MqttError {
         let handle = active_handle(native_handle, connect_error_kind, connect_error_message)?;
-        let retain_flag: i32 = if retain {
-            1
-        } else {
-            0
-        };
+        let retain_flag: i32 = if retain { 1 } else { 0 };
         let status = unsafe {
             hew_mqtt_publish(handle, topic, payload, qos_level(qos), retain_flag)
         };
