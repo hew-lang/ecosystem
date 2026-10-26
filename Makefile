@@ -97,9 +97,10 @@ toolchain:
 	rm -rf "$(TOOLCHAIN_TARGET)/std"
 	cp -a "$(HEW_SOURCE)/std" "$(TOOLCHAIN_TARGET)/std"
 	@actual_version="$$("$(HEW_BIN)" --version)"; \
-	if [ "$$actual_version" != "hew $(HEW_VERSION)" ]; then \
+	expected_version="hew $(HEW_VERSION)"; \
+	if [ "$${actual_version%%+*}" != "$${expected_version%%+*}" ]; then \
 		printf 'toolchain version mismatch\nexpected: %s\nactual: %s\n' \
-			"hew $(HEW_VERSION)" "$$actual_version" >&2; \
+			"$$expected_version" "$$actual_version" >&2; \
 		exit 1; \
 	fi
 	@echo "pinned toolchain: $(HEW_BIN)"
