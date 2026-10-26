@@ -187,11 +187,7 @@ pub fn median(data: Vec<f64>) -> Result<f64, StatsError> {
         return .Err(StatsError.InsufficientData(0));
     }
     let sorted: Vec<f64> = sort_f64(data);
-    if n % 2 == 1 {
-        .Ok(sorted[n / 2])
-    } else {
-        .Ok((sorted[n / 2 - 1] + sorted[n / 2]) / 2.0)
-    }
+    if n % 2 == 1 { .Ok(sorted[n / 2]) } else { .Ok((sorted[n / 2 - 1] + sorted[n / 2]) / 2.0) }
 }
 
 // ── Percentiles & Quartiles ─────────────────────────────────────────
@@ -455,11 +451,7 @@ impl RunningMethods for Running {
         self.n
     }
     fn mean(self) -> Result<f64, StatsError> {
-        if self.n == 0 {
-            .Err(StatsError.InsufficientData(0))
-        } else {
-            .Ok(self.mean_val)
-        }
+        if self.n == 0 { .Err(StatsError.InsufficientData(0)) } else { .Ok(self.mean_val) }
     }
     fn variance(self) -> Result<f64, StatsError> {
         if self.n == 0 {
@@ -472,18 +464,10 @@ impl RunningMethods for Running {
         math.sqrt(self.variance()?)
     }
     fn min(self) -> Result<f64, StatsError> {
-        if self.n == 0 {
-            .Err(StatsError.InsufficientData(0))
-        } else {
-            .Ok(self.min_val)
-        }
+        if self.n == 0 { .Err(StatsError.InsufficientData(0)) } else { .Ok(self.min_val) }
     }
     fn max(self) -> Result<f64, StatsError> {
-        if self.n == 0 {
-            .Err(StatsError.InsufficientData(0))
-        } else {
-            .Ok(self.max_val)
-        }
+        if self.n == 0 { .Err(StatsError.InsufficientData(0)) } else { .Ok(self.max_val) }
     }
 }
 

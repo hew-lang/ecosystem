@@ -118,11 +118,7 @@ impl TokenMethods for Token {
         self.kind
     }
     fn expires_in(self) -> Option<i64> {
-        if self.expires_secs < 0 {
-            .None
-        } else {
-            .Some(self.expires_secs)
-        }
+        if self.expires_secs < 0 { .None } else { .Some(self.expires_secs) }
     }
     fn refresh_token(self) -> Option<string> {
         present(self.refresh)
@@ -133,11 +129,7 @@ impl TokenMethods for Token {
 }
 
 fn present(value: string) -> Option<string> {
-    if value.is_empty() {
-        .None
-    } else {
-        .Some(value)
-    }
+    if value.is_empty() { .None } else { .Some(value) }
 }
 
 // ── PKCE and state values ─────────────────────────────────────────────
@@ -267,11 +259,7 @@ pub actor Client {
         if auth_url.is_empty() || redirect_uri.is_empty() {
             return error OAuthError.InvalidInput("authorization and redirect URLs must not be empty");
         }
-        let chosen_state = if state.is_empty() {
-            random_urlsafe()?
-        } else {
-            state
-        };
+        let chosen_state = if state.is_empty() { random_urlsafe()? } else { state };
         let verifier = random_urlsafe()?;
         pending_state = chosen_state;
         pending_code_verifier = verifier;

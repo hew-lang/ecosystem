@@ -104,11 +104,7 @@ fn native_error_from(kind: i32, message: string) -> HttpError {
 }
 
 fn valid_status(status: i64) -> Result<i64, HttpError> {
-    if status >= 200 && status <= 599 {
-        .Ok(status)
-    } else {
-        .Err(HttpError.InvalidStatus(status))
-    }
+    if status >= 200 && status <= 599 { .Ok(status) } else { .Err(HttpError.InvalidStatus(status)) }
 }
 
 fn valid_header_value(name: string, value: string) -> Result<string, HttpError> {

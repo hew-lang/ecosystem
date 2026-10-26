@@ -222,11 +222,7 @@ fn checked_count(value: i64) -> Result<i64, RedisError> {
 }
 
 fn connection_handle(handle: i64, error_kind: i32, error_message: string) -> Result<i64, RedisError> {
-    if handle == 0 {
-        .Err(native_error_from(error_kind, error_message))
-    } else {
-        .Ok(handle)
-    }
+    if handle == 0 { .Err(native_error_from(error_kind, error_message)) } else { .Ok(handle) }
 }
 
 fn native_error_from(kind: i32, message: string) -> RedisError {
@@ -324,11 +320,7 @@ pub actor Conn {
         })?;
         if seconds == -2 {
             KeyTtl.Missing
-        } else if seconds == -1 {
-            KeyTtl.Persistent
-        } else {
-            KeyTtl.Seconds(seconds)
-        }
+        } else if seconds == -1 { KeyTtl.Persistent } else { KeyTtl.Seconds(seconds) }
     }
 
     /// Atomically increment an integer value and return the new value.

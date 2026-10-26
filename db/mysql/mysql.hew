@@ -51,11 +51,7 @@ fn native_error() -> MysqlError {
 }
 
 fn connection_handle(handle: i64, error_kind: i32, error_message: string) -> Result<i64, MysqlError> {
-    if handle == 0 {
-        .Err(error_from_kind(error_kind, error_message))
-    } else {
-        .Ok(handle)
-    }
+    if handle == 0 { .Err(error_from_kind(error_kind, error_message)) } else { .Ok(handle) }
 }
 
 #[resource]
