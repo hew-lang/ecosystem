@@ -104,7 +104,10 @@ From `applications/`, run `hew install --offline`, then
 `hew install --offline --locked` to check the resulting lock. `hew build
 main.hew` builds the native crate from the workspace member. Cargo and rustc
 must match the compiler/runtime toolchain, and the ecosystem's `hew-cabi` pin
-must match that compiler. No prebuilt archive or remote publication is needed.
+must provide its expected ABI. Use matching compiler and C ABI pins for new
+native cohorts; the independently qualified SQL/SQLite source ranges are
+described under [toolchain compatibility](toolchain.md#compatibility).
+No prebuilt archive or remote publication is needed.
 Add other package directories to the same workspace as needed.
 
 `--pkg-path` changes module lookup; it does not change a dependency's locked
