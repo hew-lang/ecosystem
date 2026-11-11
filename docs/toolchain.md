@@ -33,6 +33,14 @@ package cohort requires Hew 0.8 and admits versions below 0.9. Native crates
 use the matching `hew-cabi` revision; update the compiler and C ABI pins
 together before publishing native attachments. CI validates the exact pinned revision.
 
+`hew.db.sql` and `hew.db.sqlite` also support source builds on the Hew 0.11
+compiler line. Their wire-format and native SQLite tests are qualified with
+both the 0.10 and 0.11 toolchains. The string and byte-buffer ABI used by these
+packages remains compatible with the existing `hew-cabi` pin; no other native
+package gains a wider compiler range from this qualification. This does not
+make native attachments portable between toolchains: their recorded compiler,
+runtime, target and source identities must still match the consumer.
+
 ## Checks
 
 ```sh
