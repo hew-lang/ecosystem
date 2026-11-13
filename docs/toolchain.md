@@ -28,18 +28,15 @@ running a test.
 
 ## Compatibility
 
-Every package's `hew.toml` declares its supported compiler range. The 0.5.0
-package cohort requires Hew 0.8 and admits versions below 0.9. Native crates
-use the matching `hew-cabi` revision; update the compiler and C ABI pins
-together before publishing native attachments. CI validates the exact pinned revision.
+Every package's `hew.toml` declares its supported compiler range. The 0.7.0
+source cohort supports Hew 0.10 and 0.11. CI validates the exact pinned
+revision, and the release qualification also exercises the published compiler
+versions.
 
-`hew.db.sql` and `hew.db.sqlite` also support source builds on the Hew 0.11
-compiler line. Their wire-format and native SQLite tests are qualified with
-both the 0.10 and 0.11 toolchains. The string and byte-buffer ABI used by these
-packages remains compatible with the existing `hew-cabi` pin; no other native
-package gains a wider compiler range from this qualification. This does not
-make native attachments portable between toolchains: their recorded compiler,
-runtime, target and source identities must still match the consumer.
+Native attachments are specific to their recorded compiler, runtime, target
+and source identities. A source package that supports more than one compiler
+version still needs a matching attachment for each version; otherwise a
+consumer can build the native crate from source.
 
 ## Checks
 

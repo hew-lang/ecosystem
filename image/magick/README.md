@@ -29,7 +29,7 @@ hew run --pkg-path . image/magick/examples/basic.hew
 ## Example
 
 Save this as `main.hew` in a project depending on
-`hew.image.magick = "0.4.0"`:
+`hew.image.magick = "0.7.0"`:
 
 ```hew
 import hew.image.magick;

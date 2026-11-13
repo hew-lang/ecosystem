@@ -59,7 +59,7 @@ tests.
 
 The root [`hew.toml`](../hew.toml) lists every package as a workspace member.
 Inside the workspace a member's requirement on another member, such as
-`"hew.db.sql" = "0.4.0"`, resolves to that member's directory, so packages
+`"hew.db.sql" = "0.7.0"`, resolves to that member's directory, so packages
 bumped together are checked together before anything is on the registry.
 
 `make publish-check` runs `hew publish --workspace --dry-run`: it validates
@@ -96,8 +96,8 @@ The application keeps ordinary version requirements:
 
 ```toml
 [dependencies]
-"hew.db.sql" = "0.4.0"
-"hew.db.sqlite" = "0.4.0"
+"hew.db.sql" = "0.7.0"
+"hew.db.sqlite" = "0.7.0"
 ```
 
 From `applications/`, run `hew install --offline`, then
@@ -131,24 +131,8 @@ the source, builds its Rust static library and records the source checksum,
 target and compiler/runtime identity in the archive. Cargo and rustc are
 required on the build machine.
 
-Use the same released Hew 0.6.3 executable to build and publish the archive:
-
-```sh
-make native-sqlite HEW="$HEW"
-make publish-check HEW="$HEW" NATIVE_ARCHIVES=.tooling/native-packages/hew.db.sqlite.tar.zst
-make publish HEW="$HEW" NATIVE_ARCHIVES=.tooling/native-packages/hew.db.sqlite.tar.zst
-```
-
-Set `HEW` to that executable's path before running these commands.
-`NATIVE_ARCHIVES` accepts a space-separated list of archive paths. The publisher
-matches each archive to its source package and validates its recorded source,
-target and compiler identity. Source and native archives use one publication
-plan and authentication grant; existing identical publications are retained.
-The existing publication workflow accepts `native_sqlite: true` to build and
-attach this archive using the selected publisher.
-Select a Hew 0.6.3 publisher revision and version together when dispatching it.
-The initial consumer qualification scope is Linux x86_64 SQLite: O0/O2 queries
-without Cargo or rustc, locked/offline installation, source fallback, integrity
-and identity refusal, and repeated publication with matching source checksums.
-Native archives are selected for their recorded compiler and Rust toolchain
-identity. Rebuild them for each supported release identity.
+Use the matching released SDK for the compiler identity being packaged. The
+[native release guide](native-releases.md) describes the current workflow,
+host selection, archive verification and consumer qualification. Native
+archives are selected by their recorded source, compiler, runtime and target
+identities; build a matching attachment for each supported SDK.
