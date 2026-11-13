@@ -318,9 +318,11 @@ pub actor Conn {
         let seconds = checked_count(unsafe {
             hew_redis_ttl(handle, key)
         })?;
-        if seconds == -2 {
-            KeyTtl.Missing
-        } else if seconds == -1 { KeyTtl.Persistent } else { KeyTtl.Seconds(seconds) }
+        match seconds {
+            -2 => KeyTtl.Missing,
+            -1 => KeyTtl.Persistent,
+            _ => KeyTtl.Seconds(seconds),
+        }
     }
 
     /// Atomically increment an integer value and return the new value.

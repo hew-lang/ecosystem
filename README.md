@@ -9,8 +9,8 @@ to read in a sitting.
 ## Packages
 
 Every package uses a dotted name (`hew.math.stats`) and lives in the directory
-that matches it. The source manifests are at `0.4.0`. Native packages require
-Hew 0.6.2; pure Hew packages declare their compatible minimum in `hew.toml`.
+that matches it. The source manifests are at `0.7.0` and support Hew 0.10 and
+0.11. Each package declares its compiler range in `hew.toml`.
 Check a package's published versions with `hew info <PACKAGE>`.
 
 | Package | Directory | What it gives you |
