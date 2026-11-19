@@ -68,8 +68,11 @@ registry which versions it already holds. `make publish` does the same and
 then uploads, signs and reads back each new version. A version the registry
 already holds with the same tree is skipped; a version it holds with a
 different tree fails with `E_PUBLISH_VERSION_DRIFT`, so a package that changes
-needs a new version. The publish workflow runs `make publish` with trusted
-publishing (`--auth github-actions`) on every push to `main`; a local
+needs a new version. Native source archives include the workspace `Cargo.lock`,
+so refreshing the lock changes every native package in the cohort.
+
+The publish workflow runs `make publish` with trusted publishing
+(`--auth github-actions`) on every push to `main`. A local
 `make publish` uses the credentials from `hew login` and `hew key generate`.
 
 ## Consuming local native sources
@@ -97,7 +100,7 @@ The application keeps ordinary version requirements:
 ```toml
 [dependencies]
 "hew.db.sql" = "0.7.0"
-"hew.db.sqlite" = "0.7.0"
+"hew.db.sqlite" = "0.7.1"
 ```
 
 From `applications/`, run `hew install --offline`, then

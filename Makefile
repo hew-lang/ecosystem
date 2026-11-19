@@ -13,7 +13,7 @@
 # `make test`, `make test-native` and `make test-crates` need the
 # docker-compose.yml services: `docker compose up --detach --wait`. `make test-native` also needs the
 # system libraries its packages link: ImageMagick 7 development files with
-# pkg-config, and OpenSSL.
+# pkg-config.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -42,7 +42,7 @@ HEW_SOURCES = $(shell git ls-files '*.hew')
 # Every package: each directory holding a hew.toml, outside the hew/ mirror.
 PACKAGES := $(filter-out hew/%,$(patsubst %/hew.toml,%,$(wildcard */hew.toml */*/hew.toml)))
 # Packages whose native crates link system libraries beyond the base image.
-NATIVE_PACKAGES := image/magick storage/s3
+NATIVE_PACKAGES := image/magick
 # Packages that depend on another member. `hew install` links that member into
 # the package's .hew/packages, following the tracked hew.lock.
 LOCKED_PACKAGES := $(filter-out hew/%,$(patsubst %/hew.lock,%,$(wildcard */hew.lock */*/hew.lock)))

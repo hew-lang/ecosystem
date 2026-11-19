@@ -182,8 +182,8 @@ struct Bucket {
 
 fn request_error_message(method: &str, bucket: &Bucket, key: &str, error: &ureq::Error) -> String {
     let status = match error {
-        ureq::Error::Status(status, _) => status.to_string(),
-        ureq::Error::Transport(_) => "network".to_owned(),
+        ureq::Error::StatusCode(status) => status.to_string(),
+        _ => "network".to_owned(),
     };
     format!(
         "S3 {method} failed: bucket={:?} key={key:?} status={status}",
@@ -203,43 +203,14 @@ fn classify_http_status(status: u16) -> ErrorKind {
 
 fn set_request_error(method: &str, bucket: &Bucket, key: &str, error: &ureq::Error) {
     let (kind, status) = match error {
-        ureq::Error::Status(status, _) => (classify_http_status(*status), i32::from(*status)),
-        ureq::Error::Transport(_) => (ErrorKind::Network, 0),
+        ureq::Error::StatusCode(status) => (classify_http_status(*status), i32::from(*status)),
+        _ => (ErrorKind::Network, 0),
     };
     set_error_with_status(
         kind,
         status,
         request_error_message(method, bucket, key, error),
     );
-}
-
-/// Decode a `%XX`-percent-encoded key from a LIST response.
-///
-/// `rusty_s3::ListObjectsV2` always requests `encoding-type=url` but returns
-/// the still-encoded key text; every non-ASCII or reserved byte in an object
-/// key would otherwise reach Hew code percent-escaped.
-fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hi = (bytes[i + 1] as char).to_digit(16);
-            let lo = (bytes[i + 2] as char).to_digit(16);
-            if let (Some(hi), Some(lo)) = (hi, lo) {
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "hi and lo are each a single hex digit, so the combined value fits one byte"
-                )]
-                out.push(((hi << 4) | lo) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8(out).unwrap_or_else(|_| value.to_owned())
 }
 
 fn response_error_message(
@@ -354,11 +325,12 @@ pub unsafe extern "C" fn hew_s3_connect(
         Bucket {
             client: bucket,
             credentials: rusty_s3::Credentials::new(access_key, secret_key),
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(10))
-                .timeout_read(Duration::from_secs(30))
-                .timeout_write(Duration::from_secs(30))
-                .build(),
+            agent: ureq::Agent::config_builder()
+                .timeout_connect(Some(Duration::from_secs(10)))
+                .timeout_per_read(Some(Duration::from_secs(30)))
+                .timeout_per_write(Some(Duration::from_secs(30)))
+                .build()
+                .into(),
             name: bucket_name.to_owned(),
         },
         &BUCKETS,
@@ -420,8 +392,8 @@ pub unsafe extern "C" fn hew_s3_put(
     match conn
         .agent
         .put(url.as_str())
-        .set("Content-Type", content_type)
-        .send_bytes(body)
+        .header("Content-Type", content_type)
+        .send(body)
     {
         Ok(_) => {
             clear_error();
@@ -452,9 +424,9 @@ pub unsafe extern "C" fn hew_s3_get(handle: i64, key: *const HewString) -> i64 {
         .sign(Duration::from_mins(5));
     match conn.agent.get(url.as_str()).call() {
         Ok(response) => {
-            let status = response.status();
+            let status = response.status().as_u16();
             let mut value = Vec::new();
-            if let Err(error) = response.into_reader().read_to_end(&mut value) {
+            if let Err(error) = response.into_body().into_reader().read_to_end(&mut value) {
                 set_error(
                     ErrorKind::Decode,
                     response_error_message(
@@ -470,7 +442,7 @@ pub unsafe extern "C" fn hew_s3_get(handle: i64, key: *const HewString) -> i64 {
             clear_error();
             register(GetResult { status: 1, value }, &GET_RESULTS)
         }
-        Err(ureq::Error::Status(404, _)) => {
+        Err(ureq::Error::StatusCode(404)) => {
             clear_error();
             register(
                 GetResult {
@@ -554,7 +526,7 @@ pub unsafe extern "C" fn hew_s3_exists(handle: i64, key: *const HewString) -> i3
             clear_error();
             1
         }
-        Err(ureq::Error::Status(404, _)) => {
+        Err(ureq::Error::StatusCode(404)) => {
             clear_error();
             0
         }
@@ -587,15 +559,15 @@ pub unsafe extern "C" fn hew_s3_list(handle: i64, prefix: *const HewString) -> i
             action.with_continuation_token(token);
         }
         let url = action.sign(Duration::from_mins(5));
-        let response = match conn.agent.get(url.as_str()).call() {
+        let mut response = match conn.agent.get(url.as_str()).call() {
             Ok(response) => response,
             Err(error) => {
                 set_request_error("LIST", &conn, prefix, &error);
                 return 0;
             }
         };
-        let status = response.status();
-        let xml = match response.into_string() {
+        let status = response.status().as_u16();
+        let xml = match response.body_mut().read_to_string() {
             Ok(xml) => xml,
             Err(error) => {
                 set_error(
@@ -621,12 +593,13 @@ pub unsafe extern "C" fn hew_s3_list(handle: i64, prefix: *const HewString) -> i
                 return 0;
             }
         };
-        entries.extend(response.contents.into_iter().map(|v| {
-            (
-                percent_decode(&v.key),
-                i64::try_from(v.size).unwrap_or(i64::MAX),
-            )
-        }));
+        for entry in response.contents {
+            let Some(size) = entry.size else {
+                set_error(ErrorKind::Decode, "S3 LIST response omitted an object size");
+                return 0;
+            };
+            entries.push((entry.key, i64::try_from(size).unwrap_or(i64::MAX)));
+        }
         match response.next_continuation_token {
             Some(token) if !token.is_empty() => continuation = Some(token),
             _ => break,
@@ -834,18 +807,6 @@ mod tests {
             !message.contains("https://"),
             "request URL leaked: {message}"
         );
-    }
-
-    #[test]
-    fn percent_decode_reverses_the_list_response_url_encoding() {
-        assert_eq!(percent_decode("plain-key.txt"), "plain-key.txt");
-        assert_eq!(
-            percent_decode("na%C3%AFve-%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"),
-            "naïve-日本語.txt"
-        );
-        assert_eq!(percent_decode("100%25"), "100%");
-        assert_eq!(percent_decode("trailing%"), "trailing%");
-        assert_eq!(percent_decode("bad%zzhex"), "bad%zzhex");
     }
 
     #[test]

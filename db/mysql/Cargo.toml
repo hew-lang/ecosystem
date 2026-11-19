@@ -12,7 +12,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 hew-ecosystem-db-sql = { path = "../sql" }
-mysql = { version = "25", default-features = false, features = ["minimal-rust", "rustls-tls"] }
+mysql = { version = "28", default-features = false, features = ["minimal-rust", "rustls-tls"] }
 hew-cabi.workspace = true
 
 [features]

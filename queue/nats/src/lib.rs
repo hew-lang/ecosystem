@@ -5,12 +5,15 @@
 //! handles are freshly allocated owners the caller releases. Registry locks
 //! are released before every broker operation and bounded wait.
 
+use futures_util::StreamExt;
 use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use tokio::runtime::{Builder, Runtime};
+use tokio::sync::Mutex as AsyncMutex;
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,8 +62,18 @@ struct NatsMessage {
 }
 
 struct NatsConnection {
-    inner: nats::Connection,
+    inner: async_nats::Client,
+    runtime: &'static Runtime,
     subscriptions: Mutex<HashSet<i64>>,
+}
+
+impl NatsConnection {
+    fn publish(&self, subject: &str, data: &str) -> Result<(), async_nats::client::PublishError> {
+        self.runtime.block_on(
+            self.inner
+                .publish(subject.to_owned(), data.as_bytes().to_vec().into()),
+        )
+    }
 }
 
 impl std::fmt::Debug for NatsConnection {
@@ -72,7 +85,8 @@ impl std::fmt::Debug for NatsConnection {
 }
 
 struct NatsSubscription {
-    inner: nats::Subscription,
+    inner: AsyncMutex<async_nats::Subscriber>,
+    runtime: &'static Runtime,
 }
 
 impl std::fmt::Debug for NatsSubscription {
@@ -98,10 +112,21 @@ impl Drop for NatsConnection {
     }
 }
 
+static RUNTIME: OnceLock<std::io::Result<Runtime>> = OnceLock::new();
 static CONNECTIONS: OnceLock<Mutex<HashMap<i64, Arc<NatsConnection>>>> = OnceLock::new();
 static SUBSCRIPTIONS: OnceLock<Mutex<HashMap<i64, Arc<NatsSubscription>>>> = OnceLock::new();
 static MESSAGES: OnceLock<Mutex<HashMap<i64, NatsMessage>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
+
+// Broker I/O continues between synchronous calls from Hew workers.
+fn runtime() -> &'static std::io::Result<Runtime> {
+    RUNTIME.get_or_init(|| {
+        Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+    })
+}
 
 fn connections() -> &'static Mutex<HashMap<i64, Arc<NatsConnection>>> {
     CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -167,11 +192,11 @@ fn message(handle: i64) -> Option<NatsMessage> {
     value
 }
 
-fn snapshot(message: nats::Message) -> NatsMessage {
+fn snapshot(message: async_nats::Message) -> NatsMessage {
     NatsMessage {
-        subject: message.subject,
-        reply: message.reply,
-        data: message.data,
+        subject: message.subject.to_string(),
+        reply: message.reply.map(|reply| reply.to_string()),
+        data: message.payload.to_vec(),
     }
 }
 
@@ -195,7 +220,17 @@ pub unsafe extern "C" fn hew_nats_connect(url: *const HewString) -> i64 {
         set_error(ErrorKind::InvalidInput, "NATS URL must not be empty");
         return 0;
     }
-    match nats::connect(url) {
+    let runtime = match runtime() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            set_error(
+                ErrorKind::Connection,
+                format!("NATS runtime failed: {error}"),
+            );
+            return 0;
+        }
+    };
+    match runtime.block_on(async_nats::connect(url)) {
         Ok(inner) => {
             clear_error();
             let handle = next_handle();
@@ -204,6 +239,7 @@ pub unsafe extern "C" fn hew_nats_connect(url: *const HewString) -> i64 {
                     handle,
                     Arc::new(NatsConnection {
                         inner,
+                        runtime,
                         subscriptions: Mutex::new(HashSet::new()),
                     }),
                 );
@@ -241,7 +277,7 @@ pub unsafe extern "C" fn hew_nats_publish(
     let subject = unsafe { string_as_str(subject) };
     // SAFETY: required by this function's contract.
     let data = unsafe { string_as_str(data) };
-    match connection.inner.publish(subject, data.as_bytes()) {
+    match connection.publish(subject, data) {
         Ok(()) => {
             clear_error();
             0
@@ -268,7 +304,10 @@ pub unsafe extern "C" fn hew_nats_subscribe(
     };
     // SAFETY: required by this function's contract.
     let subject = unsafe { string_as_str(subject) };
-    let inner = match connection.inner.subscribe(subject) {
+    let inner = match connection
+        .runtime
+        .block_on(connection.inner.subscribe(subject.to_owned()))
+    {
         Ok(inner) => inner,
         Err(error) => {
             set_error(
@@ -280,7 +319,13 @@ pub unsafe extern "C" fn hew_nats_subscribe(
     };
     let handle = next_handle();
     if let Ok(mut registry) = subscriptions().lock() {
-        registry.insert(handle, Arc::new(NatsSubscription { inner }));
+        registry.insert(
+            handle,
+            Arc::new(NatsSubscription {
+                inner: AsyncMutex::new(inner),
+                runtime: connection.runtime,
+            }),
+        );
     } else {
         set_error(
             ErrorKind::Operation,
@@ -316,23 +361,23 @@ pub extern "C" fn hew_nats_next_result(handle: i64, timeout_ms: i64) -> i64 {
         );
         return 0;
     };
-    match subscription
-        .inner
-        .next_timeout(Duration::from_millis(timeout_ms))
-    {
-        Ok(message) => {
+    let received = subscription.runtime.block_on(async {
+        tokio::time::timeout(Duration::from_millis(timeout_ms), async {
+            subscription.inner.lock().await.next().await
+        })
+        .await
+    });
+    match received {
+        Ok(Some(message)) => {
             clear_error();
             register_message(snapshot(message))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+        Err(_) => {
             clear_error();
             0
         }
-        Err(error) => {
-            set_error(
-                ErrorKind::Operation,
-                format!("NATS receive failed: {error}"),
-            );
+        Ok(None) => {
+            set_error(ErrorKind::Operation, "NATS subscription ended");
             0
         }
     }
@@ -361,16 +406,18 @@ pub unsafe extern "C" fn hew_nats_request(
         );
         return 0;
     };
-    match connection.inner.request_timeout(
-        subject,
-        data.as_bytes(),
-        Duration::from_millis(timeout_ms),
-    ) {
+    let request = async_nats::Request::new()
+        .payload(data.as_bytes().to_vec().into())
+        .timeout(Some(Duration::from_millis(timeout_ms)));
+    match connection
+        .runtime
+        .block_on(connection.inner.send_request(subject.to_owned(), request))
+    {
         Ok(message) => {
             clear_error();
             register_message(snapshot(message))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+        Err(error) if error.kind() == async_nats::RequestErrorKind::TimedOut => {
             clear_error();
             0
         }
@@ -403,7 +450,7 @@ pub unsafe extern "C" fn hew_nats_reply(
         set_error(ErrorKind::InvalidInput, "NATS message has no reply subject");
         return -1;
     }
-    match connection.inner.publish(reply_subject, data.as_bytes()) {
+    match connection.publish(reply_subject, data) {
         Ok(()) => {
             clear_error();
             0

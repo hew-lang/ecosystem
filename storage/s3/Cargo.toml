@@ -12,8 +12,8 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 hew-cabi.workspace = true
-rusty-s3 = "0.5"
-ureq = { version = "2", features = ["native-tls"] }
+rusty-s3 = "0.12"
+ureq = "3.5"
 url = "2"
 
 [features]

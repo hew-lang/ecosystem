@@ -3,7 +3,7 @@
 Native attachments are qualified for one Hew SDK version, Rust toolchain and
 Linux host. Source package versions change when their contents or compatibility
 range change. Each compiler release gets its own native attachment identity.
-The `0.7.0` source cohort admits Hew 0.10 and 0.11.
+The `0.7.1` native source cohort admits Hew 0.10 and 0.11.
 
 After the next official SDK is published, run the existing **Publish packages**
 workflow on `main`, setting:
@@ -44,7 +44,7 @@ Both Linux hosts have an executable build path for every native manifest:
 | `net/http` | Native HTTP parser/server adapter. |
 | `queue/mqtt` | Plain TCP client; MQTT broker needed for functional tests. |
 | `queue/nats` | Native client; NATS service needed for functional tests. |
-| `storage/s3` | OpenSSL development files for building and matching runtime libraries for consumers. |
+| `storage/s3` | Rustls HTTPS client; S3-compatible service needed for functional tests. |
 | `metrics` | Native Prometheus adapter. |
 | `image/magick` | ImageMagick 7 MagickWand, delegates and development headers; matching runtime libraries remain required by consumers. |
 

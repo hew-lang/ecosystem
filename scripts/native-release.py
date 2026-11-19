@@ -27,7 +27,6 @@ HOSTS = {
 }
 SYSTEM = {
     "image/magick": "ImageMagick 7 (MagickWand), its delegates and development headers",
-    "storage/s3": "OpenSSL development headers and runtime libraries",
 }
 
 
@@ -138,14 +137,7 @@ def batch(args):
                     dependencies.add(kind)
                     dependencies.add("base")
             elif path in SYSTEM:
-                probe = "MagickWand" if path == "image/magick" else "openssl"
-                run(
-                    [
-                        "pkg-config",
-                        "--atleast-version=" + ("7" if probe == "MagickWand" else "1"),
-                        probe,
-                    ]
-                )
+                run(["pkg-config", "--atleast-version=7", "MagickWand"])
             archive = (
                 args.output.resolve()
                 / f"{package['name']}-{args.version}-{args.host}.tar.zst"
