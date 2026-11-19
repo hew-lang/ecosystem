@@ -266,8 +266,7 @@ fn query_result(
     let mut statement = connection.inner.prepare(sql)?;
     let columns = statement
         .column_names()
-        .iter()
-        .map(|name| (*name).to_owned())
+        .map(str::to_owned)
         .collect::<Vec<_>>();
     let column_count = columns.len();
     let mapped = statement.query_map(params, |row| {

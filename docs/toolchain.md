@@ -28,10 +28,9 @@ running a test.
 
 ## Compatibility
 
-Every package's `hew.toml` declares its supported compiler range. The 0.7.0
-source cohort supports Hew 0.10 and 0.11. CI validates the exact pinned
-revision, and the release qualification also exercises the published compiler
-versions.
+Each `hew.toml` declares the package's compiler range. The current native
+and pure Hew packages support Hew 0.10 and 0.11. CI validates the pinned
+revision, and release qualification exercises both published SDKs.
 
 Native attachments are specific to their recorded compiler, runtime, target
 and source identities. A source package that supports more than one compiler
@@ -65,7 +64,7 @@ build.
 | --- | --- | --- |
 | `check` | `hew fmt --check` and `hew check --Werror` over every tracked `.hew` file | nothing |
 | `test` | `hew test` over every package directory except `NATIVE_PACKAGES`: inline module tests, `tests/`, and the test in every example | the `docker-compose.yml` services |
-| `test-native` | the same over `NATIVE_PACKAGES` (ImageMagick and S3) | the above, plus ImageMagick 7 development files, `pkg-config` and OpenSSL |
+| `test-native` | the same over `NATIVE_PACKAGES` (ImageMagick) | the above, plus ImageMagick 7 development files and `pkg-config` |
 | `test-crates` | `cargo test` over every native crate, with the integration tests | the `docker-compose.yml` services and the `test-native` libraries |
 | `publish-check` | `hew publish --workspace --dry-run` | read access to the registry |
 

@@ -7,7 +7,7 @@ releases connection, reply, collection, and pipeline resources.
 ## Example
 
 Run Redis locally on its default port, then save this as `main.hew` in a
-project that depends on `hew.db.redis = "0.7.0"`:
+project that depends on `hew.db.redis = "0.7.1"`:
 
 ```hew
 import hew.db.redis;

@@ -12,7 +12,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 hew-cabi.workspace = true
-magick_rust = "1"
+magick_rust = "2"
 
 [lints]
 workspace = true

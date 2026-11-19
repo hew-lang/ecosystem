@@ -12,7 +12,7 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 hew-ecosystem-db-sql = { path = "../sql" }
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 hew-cabi.workspace = true
 
 [lints]

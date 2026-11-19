@@ -57,9 +57,9 @@ fn binary_round_trip_and_missing_are_distinct() {
 
 #[test]
 #[real_time]
-fn put_then_get_and_list_round_trip_unicode_key() {
+fn put_then_get_and_list_round_trip_encoded_key() {
     let client = store();
-    let key = "hew/naïve-résumé-日本語-object.txt";
+    let key = "hew/naïve-résumé-日本語 %2F + object.txt";
     let text = "hello from the naïve résumé, 日本語 payload";
     match client.put(key, text.to_bytes(), "text/plain; charset=utf-8") {
         .Ok(_) => {}

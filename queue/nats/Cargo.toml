@@ -12,7 +12,9 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 hew-cabi.workspace = true
-nats = "0.25"
+async-nats = { version = "0.53", default-features = false, features = ["ring"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 
 [features]
 integration = []
