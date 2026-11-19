@@ -9,9 +9,7 @@ to read in a sitting.
 ## Packages
 
 Every package uses a dotted name (`hew.math.stats`) and lives in the directory
-that matches it. Native-backed packages are at `0.7.1` and pure Hew
-packages are at `0.7.0`. Each `hew.toml` declares support for Hew 0.10 and
-0.11.
+that matches it. Each `hew.toml` declares support for Hew 0.10 and 0.11.
 Check a package's published versions with `hew info <PACKAGE>`.
 
 | Package | Directory | What it gives you |

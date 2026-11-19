@@ -109,6 +109,13 @@ impl Drop for NatsConnection {
                 registry.remove(&id);
             }
         }
+
+        // Closing the command channel can stop the client before it writes a
+        // queued reply. Flush while the connection is still live, matching
+        // the close behaviour of the previous synchronous client.
+        self.runtime.block_on(async {
+            let _ = tokio::time::timeout(Duration::from_secs(5), self.inner.flush()).await;
+        });
     }
 }
 
