@@ -7,7 +7,7 @@
 //! allocated owners the caller releases.
 
 use hew_cabi::string::{string_as_str, string_from_str, HewString};
-use rumqttc::{Client, Event, MqttOptions, Packet, QoS};
+use rumqttc::{Client, Event, MqttOptions, Packet, Publish, QoS};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -69,15 +69,9 @@ fn qos(value: i32) -> Option<QoS> {
     }
 }
 
-#[derive(Debug, Clone)]
-struct MqttMessage {
-    topic: String,
-    payload: Vec<u8>,
-}
-
 struct MqttConnection {
     client: Client,
-    receiver: Mutex<mpsc::Receiver<MqttMessage>>,
+    receiver: Mutex<mpsc::Receiver<Publish>>,
     reader: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -102,14 +96,14 @@ impl Drop for MqttConnection {
 
 type ConnectionRegistry = OnceLock<Mutex<HashMap<i64, Arc<MqttConnection>>>>;
 static CONNECTIONS: ConnectionRegistry = OnceLock::new();
-static MESSAGES: OnceLock<Mutex<HashMap<i64, MqttMessage>>> = OnceLock::new();
+static MESSAGES: OnceLock<Mutex<HashMap<i64, Arc<Publish>>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
 
 fn connections() -> &'static Mutex<HashMap<i64, Arc<MqttConnection>>> {
     CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn messages() -> &'static Mutex<HashMap<i64, MqttMessage>> {
+fn messages() -> &'static Mutex<HashMap<i64, Arc<Publish>>> {
     MESSAGES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -146,10 +140,10 @@ fn connection(handle: i64) -> Option<Arc<MqttConnection>> {
     value
 }
 
-fn register_message(message: MqttMessage) -> i64 {
+fn register_message(message: Publish) -> i64 {
     let handle = next_handle();
     if let Ok(mut registry) = messages().lock() {
-        registry.insert(handle, message);
+        registry.insert(handle, Arc::new(message));
         handle
     } else {
         set_error(ErrorKind::Operation, "MQTT message registry is unavailable");
@@ -157,7 +151,7 @@ fn register_message(message: MqttMessage) -> i64 {
     }
 }
 
-fn message(handle: i64) -> Option<MqttMessage> {
+fn message(handle: i64) -> Option<Arc<Publish>> {
     let value = messages()
         .lock()
         .ok()
@@ -243,13 +237,7 @@ pub unsafe extern "C" fn hew_mqtt_connect(
         for event in eventloop.iter() {
             match event {
                 Ok(Event::Incoming(Packet::Publish(publish))) => {
-                    if sender
-                        .send(MqttMessage {
-                            topic: publish.topic,
-                            payload: publish.payload.to_vec(),
-                        })
-                        .is_err()
-                    {
+                    if sender.send(publish).is_err() {
                         break;
                     }
                 }
@@ -466,12 +454,14 @@ mod tests {
     fn message_lifecycle_is_registry_guarded() {
         let _counts = registry_counts();
         let before = hew_mqtt_message_count();
-        let handle = register_message(MqttMessage {
-            topic: "weather/edmonton".to_owned(),
-            payload: b"21".to_vec(),
-        });
+        let handle = register_message(Publish::new(
+            "weather/edmonton",
+            QoS::AtMostOnce,
+            b"21\xff".to_vec(),
+        ));
         assert_eq!(hew_mqtt_message_count(), before + 1);
         let topic = hew_mqtt_message_topic(handle);
+        let payload = hew_mqtt_message_payload(handle);
         assert!(!topic.is_null());
         // SAFETY: the accessor just returned this owner.
         assert_eq!(unsafe { owned_text(topic) }, "weather/edmonton");
@@ -480,6 +470,8 @@ mod tests {
         assert_eq!(hew_mqtt_message_count(), before);
         assert!(hew_mqtt_message_topic(handle).is_null());
         assert_eq!(hew_mqtt_last_error_kind(), ErrorKind::Closed as i32);
+        // SAFETY: the accessor returned a managed owner before the free.
+        assert_eq!(unsafe { owned_text(payload) }, "21�");
     }
 
     #[test]

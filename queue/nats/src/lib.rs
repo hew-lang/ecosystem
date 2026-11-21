@@ -5,6 +5,7 @@
 //! handles are freshly allocated owners the caller releases. Registry locks
 //! are released before every broker operation and bounded wait.
 
+use async_nats::Message;
 use futures_util::StreamExt;
 use hew_cabi::string::{string_as_str, string_from_str, HewString};
 use std::cell::RefCell;
@@ -52,13 +53,6 @@ fn set_error(kind: ErrorKind, message: impl Into<String>) {
         state.kind = kind;
         state.message = message.into();
     });
-}
-
-#[derive(Debug, Clone)]
-struct NatsMessage {
-    subject: String,
-    reply: Option<String>,
-    data: Vec<u8>,
 }
 
 struct NatsConnection {
@@ -122,7 +116,7 @@ impl Drop for NatsConnection {
 static RUNTIME: OnceLock<std::io::Result<Runtime>> = OnceLock::new();
 static CONNECTIONS: OnceLock<Mutex<HashMap<i64, Arc<NatsConnection>>>> = OnceLock::new();
 static SUBSCRIPTIONS: OnceLock<Mutex<HashMap<i64, Arc<NatsSubscription>>>> = OnceLock::new();
-static MESSAGES: OnceLock<Mutex<HashMap<i64, NatsMessage>>> = OnceLock::new();
+static MESSAGES: OnceLock<Mutex<HashMap<i64, Arc<Message>>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
 
 // Broker I/O continues between synchronous calls from Hew workers.
@@ -143,7 +137,7 @@ fn subscriptions() -> &'static Mutex<HashMap<i64, Arc<NatsSubscription>>> {
     SUBSCRIPTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn messages() -> &'static Mutex<HashMap<i64, NatsMessage>> {
+fn messages() -> &'static Mutex<HashMap<i64, Arc<Message>>> {
     MESSAGES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -177,10 +171,10 @@ fn subscription(handle: i64) -> Option<Arc<NatsSubscription>> {
     value
 }
 
-fn register_message(message: NatsMessage) -> i64 {
+fn register_message(message: Message) -> i64 {
     let handle = next_handle();
     if let Ok(mut registry) = messages().lock() {
-        registry.insert(handle, message);
+        registry.insert(handle, Arc::new(message));
         handle
     } else {
         set_error(ErrorKind::Operation, "NATS message registry is unavailable");
@@ -188,7 +182,7 @@ fn register_message(message: NatsMessage) -> i64 {
     }
 }
 
-fn message(handle: i64) -> Option<NatsMessage> {
+fn message(handle: i64) -> Option<Arc<Message>> {
     let value = messages()
         .lock()
         .ok()
@@ -197,14 +191,6 @@ fn message(handle: i64) -> Option<NatsMessage> {
         set_error(ErrorKind::Closed, "NATS message is closed");
     }
     value
-}
-
-fn snapshot(message: async_nats::Message) -> NatsMessage {
-    NatsMessage {
-        subject: message.subject.to_string(),
-        reply: message.reply.map(|reply| reply.to_string()),
-        data: message.payload.to_vec(),
-    }
 }
 
 #[no_mangle]
@@ -377,7 +363,7 @@ pub extern "C" fn hew_nats_next_result(handle: i64, timeout_ms: i64) -> i64 {
     match received {
         Ok(Some(message)) => {
             clear_error();
-            register_message(snapshot(message))
+            register_message(message)
         }
         Err(_) => {
             clear_error();
@@ -422,7 +408,7 @@ pub unsafe extern "C" fn hew_nats_request(
     {
         Ok(message) => {
             clear_error();
-            register_message(snapshot(message))
+            register_message(message)
         }
         Err(error) if error.kind() == async_nats::RequestErrorKind::TimedOut => {
             clear_error();
@@ -473,7 +459,7 @@ pub unsafe extern "C" fn hew_nats_reply(
 pub extern "C" fn hew_nats_message_subject(handle: i64) -> *mut HewString {
     message(handle).map_or(std::ptr::null_mut(), |message| {
         clear_error();
-        string_from_str(&message.subject)
+        string_from_str(message.subject.as_ref())
     })
 }
 
@@ -481,7 +467,7 @@ pub extern "C" fn hew_nats_message_subject(handle: i64) -> *mut HewString {
 pub extern "C" fn hew_nats_message_data(handle: i64) -> *mut HewString {
     message(handle).map_or(std::ptr::null_mut(), |message| {
         clear_error();
-        string_from_str(String::from_utf8_lossy(&message.data).as_ref())
+        string_from_str(String::from_utf8_lossy(&message.payload).as_ref())
     })
 }
 
@@ -584,19 +570,24 @@ mod tests {
     fn message_strings_round_trip_and_lifecycle_is_guarded() {
         let _counts = registry_counts();
         let before = hew_nats_message_count();
-        let handle = register_message(NatsMessage {
-            subject: "events.created".to_owned(),
+        let handle = register_message(Message {
+            subject: "events.created".into(),
             reply: None,
-            data: b"payload".to_vec(),
+            payload: (&b"payload\xff"[..]).into(),
+            headers: None,
+            status: None,
+            description: None,
+            length: 8,
         });
         let data = hew_nats_message_data(handle);
-        // SAFETY: the accessor just returned this owner.
-        assert_eq!(unsafe { owned_text(data) }, "payload");
         assert_eq!(hew_nats_message_has_reply(handle), 0);
         hew_nats_message_free(handle);
         hew_nats_message_free(handle);
         assert_eq!(hew_nats_message_count(), before);
         assert!(hew_nats_message_subject(handle).is_null());
+        assert_eq!(hew_nats_last_error_kind(), ErrorKind::Closed as i32);
+        // SAFETY: the accessor returned a managed owner before the free.
+        assert_eq!(unsafe { owned_text(data) }, "payload�");
     }
 
     #[test]
