@@ -3,10 +3,6 @@
     reason = "C ABI entry points validate pointer/length and registered-handle contracts before each unsafe call"
 )]
 #![expect(
-    clippy::option_option,
-    reason = "the outer option reports an invalid index while the inner option represents SQL NULL"
-)]
-#![expect(
     clippy::single_match_else,
     reason = "explicit match arms keep fail-closed registry and numeric conversion paths visible"
 )]
@@ -584,7 +580,12 @@ pub extern "C" fn hew_pg_result_column(handle: i64, index: i64) -> BytesTriple {
     }
 }
 
-fn result_cell(handle: i64, row: i64, column: i64) -> Option<Option<Vec<u8>>> {
+fn with_result_cell<T>(
+    handle: i64,
+    row: i64,
+    column: i64,
+    read: impl FnOnce(Option<&[u8]>) -> T,
+) -> Option<T> {
     let Ok(row) = usize::try_from(row) else {
         set_error(
             ErrorKind::InvalidInput,
@@ -601,7 +602,7 @@ fn result_cell(handle: i64, row: i64, column: i64) -> Option<Option<Vec<u8>>> {
     };
     let result = result(handle)?;
     match result.rows.get(row).and_then(|values| values.get(column)) {
-        Some(value) => Some(value.clone()),
+        Some(value) => Some(read(value.as_deref())),
         None => {
             set_error(
                 ErrorKind::InvalidInput,
@@ -615,24 +616,20 @@ fn result_cell(handle: i64, row: i64, column: i64) -> Option<Option<Vec<u8>>> {
 #[no_mangle]
 pub extern "C" fn hew_pg_result_cell_kind(handle: i64, row: i64, column: i64) -> i32 {
     clear_error();
-    match result_cell(handle, row, column) {
-        Some(None) => 0,
-        Some(Some(_)) => 1,
-        None => -1,
-    }
+    with_result_cell(handle, row, column, |cell| i32::from(cell.is_some())).unwrap_or(-1)
 }
 
 #[no_mangle]
 pub extern "C" fn hew_pg_result_cell(handle: i64, row: i64, column: i64) -> BytesTriple {
     clear_error();
-    match result_cell(handle, row, column) {
-        Some(Some(value)) => owned_bytes(&value),
-        Some(None) => {
+    with_result_cell(handle, row, column, |cell| match cell {
+        Some(value) => owned_bytes(value),
+        None => {
             set_error(ErrorKind::InvalidInput, "PostgreSQL cell is NULL");
             empty_bytes()
         }
-        None => empty_bytes(),
-    }
+    })
+    .unwrap_or_else(empty_bytes)
 }
 
 #[no_mangle]
